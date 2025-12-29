@@ -23,13 +23,17 @@ export function cleanupMenuStyles(menu){
 export function closeAllSubmenus(){
   const colorMenu = document.getElementById('colorMenu');
   const eraserMenu = document.getElementById('eraserMenu');
+  const moreMenu = document.getElementById('moreMenu');
   const colorTool = document.getElementById('colorTool');
   const eraserTool = document.getElementById('eraserTool');
+  const moreTool = document.getElementById('moreTool');
   // Do not close menus that are pinned (they should persist)
   if (colorMenu && colorMenu.classList.contains('open') && colorMenu.dataset.pinned!=='true') { cleanupMenuStyles(colorMenu); colorMenu.classList.remove('open'); colorMenu.setAttribute('aria-hidden','true'); try{ Message.emit(EVENTS.SUBMENU_CLOSE, { id: colorMenu.id }); }catch(e){} }
   if (eraserMenu && eraserMenu.classList.contains('open') && eraserMenu.dataset.pinned!=='true') { cleanupMenuStyles(eraserMenu); eraserMenu.classList.remove('open'); eraserMenu.setAttribute('aria-hidden','true'); try{ Message.emit(EVENTS.SUBMENU_CLOSE, { id: eraserMenu.id }); }catch(e){} }
+  if (moreMenu && moreMenu.classList.contains('open') && moreMenu.dataset.pinned!=='true') { cleanupMenuStyles(moreMenu); moreMenu.classList.remove('open'); moreMenu.setAttribute('aria-hidden','true'); try{ Message.emit(EVENTS.SUBMENU_CLOSE, { id: moreMenu.id }); }catch(e){} }
   if (colorTool) colorTool.classList.remove('active');
   if (eraserTool) eraserTool.classList.remove('active');
+  if (moreTool) moreTool.classList.remove('active');
 }
 
 export function positionMenu(menu, openerEl, pinned){
@@ -237,7 +241,7 @@ function detachDragFromPinned(menu){
 
 // auto-init: reposition pinned menus on window resize
 window.addEventListener('resize', ()=>{
-  ['colorMenu','eraserMenu'].forEach(id=>{
+  ['colorMenu','eraserMenu','moreMenu'].forEach(id=>{
     const menu = document.getElementById(id);
     if (menu && menu.classList.contains('open') && menu.dataset.pinned==='true'){
       const opener = menu.parentElement && menu.parentElement.querySelector('.tool-btn');
@@ -251,8 +255,10 @@ window.addEventListener('resize', ()=>{
 function smartRepositionOpenSubmenus(){
   const colorMenu = document.getElementById('colorMenu');
   const eraserMenu = document.getElementById('eraserMenu');
+  const moreMenu = document.getElementById('moreMenu');
   const colorTool = document.getElementById('colorTool');
   const eraserTool = document.getElementById('eraserTool');
+  const moreTool = document.getElementById('moreTool');
   
   // reposition color submenu if open and unpinned
   if (colorMenu && colorMenu.classList.contains('open') && colorMenu.dataset.pinned !== 'true' && colorTool) {
@@ -262,6 +268,11 @@ function smartRepositionOpenSubmenus(){
   // reposition eraser submenu if open and unpinned
   if (eraserMenu && eraserMenu.classList.contains('open') && eraserMenu.dataset.pinned !== 'true' && eraserTool) {
     smartRepositionMenu(eraserMenu, eraserTool);
+  }
+
+  // reposition more submenu if open and unpinned
+  if (moreMenu && moreMenu.classList.contains('open') && moreMenu.dataset.pinned !== 'true' && moreTool) {
+    smartRepositionMenu(moreMenu, moreTool);
   }
 }
 

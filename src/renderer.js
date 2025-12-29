@@ -23,9 +23,22 @@ let _rafId = null;
 // history snapshots for undo/redo
 const history = [];
 let historyIndex = -1;
-const HISTORY_LIMIT = 60;
+// 减少历史快照数量以节省内存
+const HISTORY_LIMIT = 30;
 
-function snapshotOps() { return JSON.parse(JSON.stringify(ops)); }
+// 深拷贝并对超长笔画点数组进行下采样，防止单个操作占用过多内存
+function snapshotOps() {
+  const cloned = JSON.parse(JSON.stringify(ops));
+  for (const op of cloned) {
+    if (op && op.type === 'stroke' && Array.isArray(op.points) && op.points.length > 600) {
+      const maxPoints = 600;
+      const step = Math.ceil(op.points.length / maxPoints);
+      op.points = op.points.filter((p, i) => (i % step) === 0);
+    }
+  }
+  return cloned;
+}
+
 function pushHistory() {
   if (historyIndex < history.length - 1) history.splice(historyIndex + 1);
   history.push(snapshotOps());
@@ -34,7 +47,8 @@ function pushHistory() {
 }
 
 function updateCanvasSize(){
-  const dpr = window.devicePixelRatio || 1;
+  // 限制设备像素比，过高的 DPR 会显著增加画布像素占用（内存）。在高 DPI 屏幕上可调低以节省内存。
+  const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
   const widthCss = Math.max(document.documentElement.clientWidth || 0, window.innerWidth || 0);
   const heightCss = Math.max(document.documentElement.clientHeight || 0, window.innerHeight || 0);
   canvas.style.width = widthCss + 'px';

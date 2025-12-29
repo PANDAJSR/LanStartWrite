@@ -9,6 +9,8 @@ const colorTool = document.getElementById('colorTool');
 const colorMenu = document.getElementById('colorMenu');
 const eraserTool = document.getElementById('eraserTool');
 const eraserMenu = document.getElementById('eraserMenu');
+const moreTool = document.getElementById('moreTool');
+const moreMenu = document.getElementById('moreMenu');
 const clearBtn = document.getElementById('clear');
 const undoBtn = document.getElementById('undoBtn');
 const redoBtn = document.getElementById('redoBtn');
@@ -35,6 +37,23 @@ if (eraserTool) {
     showSubmenu(eraserMenu, eraserTool);
     updateEraserModeLabel();
   });
+}
+
+if (moreTool) {
+  moreTool.addEventListener('click', ()=>{
+    if (!moreMenu) return;
+    // 更多菜单不改变画笔/橡皮状态，仅切换子菜单显示
+    if (colorTool) colorTool.classList.remove('active');
+    if (eraserTool) eraserTool.classList.remove('active');
+    showSubmenu(moreMenu, moreTool);
+  });
+  // simple action hooks
+  const exportBtn = document.getElementById('exportBtn');
+  const settingsBtn = document.getElementById('settingsBtn');
+  const aboutBtn = document.getElementById('aboutBtn');
+  if (exportBtn) exportBtn.addEventListener('click', ()=>{ closeAllSubmenus(); Message.emit(EVENTS.REQUEST_EXPORT, {}); });
+  if (settingsBtn) settingsBtn.addEventListener('click', ()=>{ closeAllSubmenus(); Message.emit(EVENTS.OPEN_SETTINGS, {}); });
+  if (aboutBtn) aboutBtn.addEventListener('click', ()=>{ closeAllSubmenus(); Message.emit(EVENTS.OPEN_ABOUT, {}); });
 }
 
 // submenu logic moved to more_decide_windows.js

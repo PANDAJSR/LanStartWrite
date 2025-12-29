@@ -20,6 +20,15 @@ function createWindow() {
   // mainWindow.webContents.openDevTools();
 }
 
+// 尝试优先使用 ANGLE (Direct3D) 来利用系统 GPU 驱动，可能改善绘制性能并降低 CPU/内存占用。
+// 在某些 Windows 机器上这有助于偏向核显/集成显卡的渲染路径。
+try {
+  app.commandLine.appendSwitch('use-angle', 'd3d11');
+} catch (e) {}
+
+// 明确启用硬件加速（Electron 默认启用，但显式调用以表明意图）
+try { app.enableHardwareAcceleration(); } catch (e) {}
+
 app.whenReady().then(createWindow);
 
 app.on('window-all-closed', () => {
