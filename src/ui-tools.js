@@ -125,6 +125,7 @@ function collectInteractiveRects(){
 
   pushEl(document.querySelector('.floating-panel'));
   document.querySelectorAll('.submenu.open').forEach(pushEl);
+  document.querySelectorAll('.recognition-ui.open').forEach(pushEl);
   const settingsModal = document.getElementById('settingsModal');
   if (settingsModal && settingsModal.classList.contains('open')) pushEl(settingsModal);
   pushEl(document.getElementById('pageToolbar'));

@@ -85,6 +85,16 @@ export function setMultiTouchPenEnabled(enabled){
   multiTouchPenEnabled = !!enabled;
 }
 
+let _inkSeq = 0;
+let _inkDebounceId = 0;
+let _inkHoldId = 0;
+let _inkPending = [];
+let _inkPreview = null;
+let _inkUi = null;
+let _inkAutoConfirmId = 0;
+let _activePointerId = 0;
+let _inkLastScheduleAt = 0;
+
 function applyViewTransform(){
   canvas.style.transformOrigin = '0 0';
   canvas.style.transform = `translate(${viewOffsetX}px, ${viewOffsetY}px) scale(${viewScale})`;
@@ -171,6 +181,7 @@ function finalizeOp(op){
   if (op.type === 'stroke' || op.type === 'erase' || op.type === 'clearRect') {
     ops.push(op);
     pushHistory();
+    if (op.type === 'stroke') _enqueueInkRecognition(op);
   }
 }
 
@@ -188,6 +199,10 @@ function finalizeMultiTouchStroke(e){
 
 function pointerDown(e){
   if (!inputEnabled) return;
+  _inkSeq += 1;
+  _inkLastScheduleAt = 0;
+  _cancelInkTimers();
+  _dismissInkPreview(true);
   const { x, y } = screenToCanvas(e.clientX, e.clientY);
 
   if (shouldUseMultiTouchStroke(e)) {
@@ -213,7 +228,8 @@ function pointerDown(e){
   drawing = true;
   lastX = x; lastY = y;
   // pointer capture to avoid lost events and reduce touch-related delays
-  try { if (e.pointerId && canvas.setPointerCapture) canvas.setPointerCapture(e.pointerId); } catch(err) {}
+  _activePointerId = (e && e.pointerId) || 0;
+  try { if (_activePointerId && canvas.setPointerCapture) canvas.setPointerCapture(_activePointerId); } catch(err) {}
   // start smoothing buffer
   _strokePoints.length = 0;
   _strokePoints.push({x, y});
@@ -257,6 +273,7 @@ function pointerMove(e){
   if (currentOp && (currentOp.type === 'stroke' || currentOp.type === 'erase')) {
     currentOp.points.push({x, y});
     if (currentOp.type === 'stroke') {
+      _scheduleInkHoldFromMove(currentOp);
       // smoothing: store points and draw smoothed quad segments via RAF
       _strokePoints.push({x, y});
       if (!_drawPending) {
@@ -283,6 +300,7 @@ function pointerUp(evt){
   }
   // release pointer capture
   try { if (evt && evt.pointerId && canvas.releasePointerCapture) canvas.releasePointerCapture(evt.pointerId); } catch(err) {}
+  _activePointerId = 0;
 }
 
 function drawBufferedStrokeSegment(op, flush = false) {
@@ -338,13 +356,55 @@ function drawBufferedStrokeSegment(op, flush = false) {
   }
 }
 
-function finalizeCurrentOp() { if (!currentOp) return; if (currentOp.type === 'stroke' || currentOp.type === 'erase' || currentOp.type === 'clearRect') { ops.push(currentOp); pushHistory(); } currentOp = null; }
+function finalizeCurrentOp() {
+  if (!currentOp) return;
+  if (currentOp.type === 'stroke' || currentOp.type === 'erase' || currentOp.type === 'clearRect') {
+    const op = currentOp;
+    ops.push(op);
+    pushHistory();
+    if (op.type === 'stroke') _enqueueInkRecognition(op);
+  }
+  currentOp = null;
+}
 
-function redrawAll() { ctx.clearRect(0, 0, canvas.width, canvas.height); for (const op of ops) { if (op.type === 'stroke') drawOp(op, 'source-over'); else if (op.type === 'erase') drawOp(op, 'destination-out'); else if (op.type === 'clearRect') { ctx.save(); ctx.globalCompositeOperation = 'destination-out'; ctx.fillStyle = 'rgba(0,0,0,1)'; ctx.fillRect(op.x, op.y, op.w, op.h); ctx.restore(); } } }
+function redrawAll() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  for (const op of ops) {
+    if (op.type === 'stroke') drawOp(op, 'source-over');
+    else if (op.type === 'erase') drawOp(op, 'destination-out');
+    else if (op.type === 'clearRect') {
+      ctx.save();
+      ctx.globalCompositeOperation = 'destination-out';
+      ctx.fillStyle = 'rgba(0,0,0,1)';
+      ctx.fillRect(op.x, op.y, op.w, op.h);
+      ctx.restore();
+    }
+  }
+  if (_inkPreview && Array.isArray(_inkPreview.previewOps) && _inkPreview.previewOps.length) {
+    for (const op of _inkPreview.previewOps) drawPreviewOp(op);
+  }
+}
 
 function drawOp(op, composite) { ctx.save(); ctx.globalCompositeOperation = composite || 'source-over'; if (op.type === 'stroke') ctx.strokeStyle = op.color || '#000'; else ctx.strokeStyle = 'rgba(0,0,0,1)'; ctx.lineWidth = op.size || 1; ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.beginPath(); const pts = op.points; if (!pts || pts.length === 0) { ctx.restore(); return; } ctx.moveTo(pts[0].x, pts[0].y); for (let i=1;i<pts.length;i++) ctx.lineTo(pts[i].x, pts[i].y); ctx.stroke(); ctx.restore(); }
 
 function drawOpSegment(op, x0, y0, x1, y1) { ctx.save(); ctx.globalCompositeOperation = (op.type === 'erase') ? 'destination-out' : 'source-over'; ctx.lineWidth = op.size || 1; ctx.lineCap='round'; ctx.lineJoin='round'; if (op.type === 'stroke') ctx.strokeStyle = op.color || '#000'; else ctx.strokeStyle='rgba(0,0,0,1)'; ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke(); ctx.restore(); }
+
+function drawPreviewOp(op) {
+  const pts = op && op.points;
+  if (!pts || pts.length === 0) return;
+  ctx.save();
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.globalAlpha = 0.6;
+  ctx.strokeStyle = (op && op.color) || '#3b82f6';
+  ctx.lineWidth = (op && op.size) || 2;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  ctx.beginPath();
+  ctx.moveTo(pts[0].x, pts[0].y);
+  for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
+  ctx.stroke();
+  ctx.restore();
+}
 
 function drawRectOverlay(x0,y0,x1,y1) { ctx.save(); ctx.setLineDash([6,4]); ctx.strokeStyle='rgba(0,0,0,0.6)'; ctx.lineWidth=1; ctx.strokeRect(Math.min(x0,x1), Math.min(y0,y1), Math.abs(x1-x0), Math.abs(y1-y0)); ctx.restore(); }
 
@@ -466,6 +526,430 @@ export function replaceStrokeColors(oldColor, newColor){
   });
   
   redrawAll();
+}
+
+function _cancelInkTimers(){
+  if (_inkDebounceId) { try{ clearTimeout(_inkDebounceId); }catch(e){} _inkDebounceId = 0; }
+  if (_inkHoldId) { try{ clearTimeout(_inkHoldId); }catch(e){} _inkHoldId = 0; }
+}
+
+function _dismissInkPreview(keepPending){
+  if (_inkAutoConfirmId) { try{ clearTimeout(_inkAutoConfirmId); }catch(e){} _inkAutoConfirmId = 0; }
+  const hadPreview = !!_inkPreview;
+  if (_inkUi && _inkUi.parentElement) {
+    try{ _inkUi.classList.remove('open'); }catch(e){}
+  }
+  _inkPreview = null;
+  if (!keepPending) _inkPending = [];
+  if (hadPreview) redrawAll();
+}
+
+function _ensureInkUi(){
+  if (_inkUi) return _inkUi;
+  const wrap = document.createElement('div');
+  wrap.className = 'recognition-ui';
+  wrap.innerHTML = `<button type="button" data-action="confirm">确认</button><button type="button" data-action="cancel">取消</button>`;
+  wrap.addEventListener('click', (e)=>{
+    const btn = e.target && e.target.closest ? e.target.closest('button') : null;
+    if (!btn) return;
+    const act = btn.dataset && btn.dataset.action;
+    if (act === 'confirm') _confirmInkPreview();
+    else if (act === 'cancel') _dismissInkPreview(false);
+  });
+  document.body.appendChild(wrap);
+  _inkUi = wrap;
+  return _inkUi;
+}
+
+function _positionInkUiAtInternalPoint(p){
+  try{
+    const rect = canvas.getBoundingClientRect();
+    const x = rect.left + (p.x / canvas.width) * rect.width;
+    const y = rect.top + (p.y / canvas.height) * rect.height;
+    const ui = _ensureInkUi();
+    const pad = 10;
+    ui.style.left = Math.max(pad, Math.min(window.innerWidth - pad, x)) + 'px';
+    ui.style.top = Math.max(pad, Math.min(window.innerHeight - pad, y)) + 'px';
+    ui.classList.add('open');
+  }catch(e){}
+}
+
+function _confirmInkPreview(){
+  if (!_inkPreview || !_inkPreview.replacements || _inkPreview.replacements.length === 0) { _dismissInkPreview(false); return; }
+  const reps = _inkPreview.replacements.slice();
+  for (const r of reps) {
+    const idx = ops.indexOf(r.opRef);
+    if (idx >= 0) ops[idx] = r.newOp;
+  }
+  _dismissInkPreview(true);
+  pushHistory();
+}
+
+function _enqueueInkRecognition(opRef){
+  if (!opRef || opRef.type !== 'stroke' || !Array.isArray(opRef.points) || opRef.points.length < 5) return;
+  _inkPending.push({ opRef });
+  const seqAtSchedule = _inkSeq;
+  _cancelInkTimers();
+  _inkDebounceId = setTimeout(()=>{
+    if (seqAtSchedule !== _inkSeq) return;
+    _inkHoldId = setTimeout(()=>{
+      if (seqAtSchedule !== _inkSeq) return;
+      _runInkRecognition();
+    }, 2000);
+  }, 300);
+}
+
+function _runInkRecognition(){
+  if (!_inkPending || _inkPending.length === 0) return;
+  const candidates = _inkPending.slice();
+  _inkPending = [];
+
+  const replacements = [];
+  const previewOps = [];
+  let anchor = null;
+
+  for (const c of candidates) {
+    const op = c && c.opRef;
+    if (!op || op.type !== 'stroke' || !Array.isArray(op.points) || op.points.length < 5) continue;
+    const res = _recognizeInk(op.points);
+    if (!res) continue;
+    const newOp = { type: 'stroke', color: op.color, size: op.size, points: res.pointsInternal };
+    const previewOp = { type: 'stroke', color: '#3b82f6', size: Math.max(2, Number(op.size) || 2), points: res.pointsInternal };
+    replacements.push({ opRef: op, newOp });
+    previewOps.push(previewOp);
+    anchor = (op.points && op.points.length) ? op.points[op.points.length - 1] : anchor;
+  }
+
+  if (replacements.length === 0) return;
+
+  _inkPreview = { replacements, previewOps };
+  redrawAll();
+  if (anchor) _positionInkUiAtInternalPoint(anchor);
+  if (_inkAutoConfirmId) { try{ clearTimeout(_inkAutoConfirmId); }catch(e){} }
+  _inkAutoConfirmId = setTimeout(()=>{ _confirmInkPreview(); }, 1500);
+}
+
+function _recognizeInk(pointsInternal){
+  const sampledInternal = _downsampleInternalPoints(pointsInternal, 256);
+  const pts = _toDipPoints(sampledInternal);
+  if (!pts || pts.length < 5) return null;
+  const pathLen = _pathLength(pts);
+  if (pathLen <= 0.01) return null;
+
+  const line = _tryLine(pts);
+  if (line) return { kind: 'line', pointsInternal: _fromDipPoints(line) };
+
+  const circle = _tryCircle(pts, pathLen);
+  if (circle) return { kind: 'circle', pointsInternal: _fromDipPoints(circle) };
+
+  const rect = _tryPolygon(pts, 4, pathLen);
+  if (rect) return { kind: 'rect', pointsInternal: _fromDipPoints(rect) };
+
+  const tri = _tryPolygon(pts, 3, pathLen);
+  if (tri) return { kind: 'tri', pointsInternal: _fromDipPoints(tri) };
+
+  return null;
+}
+
+function _downsampleInternalPoints(pointsInternal, maxPoints){
+  const pts = Array.isArray(pointsInternal) ? pointsInternal : [];
+  const n = pts.length;
+  const maxN = Math.max(5, Number(maxPoints) || 256);
+  if (n <= maxN) return pts;
+  const step = Math.ceil(n / maxN);
+  const out = [];
+  out.push(pts[0]);
+  for (let i = step; i < n - 1; i += step) out.push(pts[i]);
+  out.push(pts[n - 1]);
+  return out.length >= 5 ? out : pts.slice(0, 5);
+}
+
+function _scheduleInkHoldFromMove(opRef){
+  if (!opRef || opRef.type !== 'stroke' || !Array.isArray(opRef.points) || opRef.points.length < 5) return;
+  const now = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+  if (now - _inkLastScheduleAt < 80) return;
+  _inkLastScheduleAt = now;
+  const seqAtSchedule = _inkSeq;
+  _cancelInkTimers();
+  _inkDebounceId = setTimeout(()=>{
+    if (seqAtSchedule !== _inkSeq) return;
+    _inkHoldId = setTimeout(()=>{
+      if (seqAtSchedule !== _inkSeq) return;
+      if (!drawing) return;
+      if (currentOp !== opRef) return;
+      _finalizeCurrentStrokeFromHold();
+    }, 2000);
+  }, 300);
+}
+
+function _finalizeCurrentStrokeFromHold(){
+  if (!drawing) return;
+  if (!currentOp || currentOp.type !== 'stroke') return;
+  drawing = false;
+  try { if (_activePointerId && canvas.releasePointerCapture) canvas.releasePointerCapture(_activePointerId); } catch(e) {}
+  _activePointerId = 0;
+  finalizeCurrentOp();
+  _cancelInkTimers();
+  _runInkRecognition();
+}
+
+function _getUnscaledCssSize(){
+  const rect = canvas.getBoundingClientRect();
+  const s = Math.max(0.0001, viewScale || 1);
+  return { w: rect.width / s, h: rect.height / s };
+}
+
+function _toDipPoints(pointsInternal){
+  const size = _getUnscaledCssSize();
+  const sx = size.w / canvas.width;
+  const sy = size.h / canvas.height;
+  const out = new Array(pointsInternal.length);
+  for (let i = 0; i < pointsInternal.length; i++) {
+    const p = pointsInternal[i];
+    out[i] = { x: (p.x * sx), y: (p.y * sy) };
+  }
+  return out;
+}
+
+function _fromDipPoints(pointsDip){
+  const size = _getUnscaledCssSize();
+  const sx = canvas.width / size.w;
+  const sy = canvas.height / size.h;
+  const out = new Array(pointsDip.length);
+  for (let i = 0; i < pointsDip.length; i++) {
+    const p = pointsDip[i];
+    out[i] = { x: (p.x * sx), y: (p.y * sy) };
+  }
+  return out;
+}
+
+function _pathLength(pts){
+  let len = 0;
+  for (let i = 1; i < pts.length; i++) len += Math.hypot(pts[i].x - pts[i-1].x, pts[i].y - pts[i-1].y);
+  return len;
+}
+
+function _bbox(pts){
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const p of pts) { if (!p) continue; minX = Math.min(minX, p.x); minY = Math.min(minY, p.y); maxX = Math.max(maxX, p.x); maxY = Math.max(maxY, p.y); }
+  return { minX, minY, maxX, maxY, w: maxX - minX, h: maxY - minY };
+}
+
+function _resample(pts, count){
+  if (!pts || pts.length === 0) return [];
+  if (pts.length === 1) return [pts[0]];
+  const total = _pathLength(pts);
+  if (total <= 0.001) return [{ x: pts[0].x, y: pts[0].y }];
+  const step = total / (count - 1);
+  const out = new Array(count);
+  out[0] = { x: pts[0].x, y: pts[0].y };
+  let distSoFar = 0;
+  let target = step;
+  let oi = 1;
+  for (let i = 1; i < pts.length && oi < count - 1; i++) {
+    const prev = pts[i - 1];
+    const cur = pts[i];
+    let seg = Math.hypot(cur.x - prev.x, cur.y - prev.y);
+    if (seg <= 0.0001) continue;
+    while (distSoFar + seg >= target && oi < count - 1) {
+      const t = (target - distSoFar) / seg;
+      out[oi++] = { x: prev.x + (cur.x - prev.x) * t, y: prev.y + (cur.y - prev.y) * t };
+      target += step;
+    }
+    distSoFar += seg;
+  }
+  out[oi++] = { x: pts[pts.length - 1].x, y: pts[pts.length - 1].y };
+  return out.slice(0, oi);
+}
+
+function _angleDegBetween(v1, v2){
+  const a = Math.hypot(v1.x, v1.y);
+  const b = Math.hypot(v2.x, v2.y);
+  if (a <= 0.0001 || b <= 0.0001) return 0;
+  const dot = (v1.x * v2.x + v1.y * v2.y) / (a * b);
+  const clamped = Math.max(-1, Math.min(1, dot));
+  return Math.acos(clamped) * 180 / Math.PI;
+}
+
+function _tryLine(pts){
+  const first = pts[0];
+  const last = pts[pts.length - 1];
+  const dx = last.x - first.x;
+  const dy = last.y - first.y;
+  const d = Math.hypot(dx, dy);
+  if (d < 20) return null;
+
+  let meanX = 0, meanY = 0;
+  for (const p of pts) { meanX += p.x; meanY += p.y; }
+  meanX /= pts.length; meanY /= pts.length;
+  let covXX = 0, covYY = 0, covXY = 0;
+  for (const p of pts) {
+    const ux = p.x - meanX;
+    const uy = p.y - meanY;
+    covXX += ux * ux;
+    covYY += uy * uy;
+    covXY += ux * uy;
+  }
+  covXX /= pts.length; covYY /= pts.length; covXY /= pts.length;
+  const theta = 0.5 * Math.atan2(2 * covXY, covXX - covYY);
+  const dir = { x: Math.cos(theta), y: Math.sin(theta) };
+  let avgDist = 0;
+  for (const p of pts) {
+    const vx = p.x - meanX;
+    const vy = p.y - meanY;
+    const proj = vx * dir.x + vy * dir.y;
+    const px = meanX + proj * dir.x;
+    const py = meanY + proj * dir.y;
+    avgDist += Math.hypot(p.x - px, p.y - py);
+  }
+  avgDist /= pts.length;
+
+  const endAngle = Math.atan2(dy, dx);
+  const fitAngle = Math.atan2(dir.y, dir.x);
+  let diff = Math.abs((endAngle - fitAngle) * 180 / Math.PI);
+  while (diff > 180) diff -= 180;
+  if (diff > 90) diff = 180 - diff;
+
+  if (avgDist > 5) return null;
+  if (diff > 3) return null;
+  return [first, last];
+}
+
+function _tryCircle(pts, pathLen){
+  const first = pts[0];
+  const last = pts[pts.length - 1];
+  const closure = 1 - (Math.hypot(last.x - first.x, last.y - first.y) / Math.max(1, pathLen || _pathLength(pts)));
+  if (closure < 0.9) return null;
+
+  const b = _bbox(pts);
+  const ar = b.h > 0 ? (b.w / b.h) : 0;
+  if (ar < 0.75 || ar > 1.33) return null;
+  if (Math.max(b.w, b.h) < 20) return null;
+
+  let meanX = 0, meanY = 0;
+  for (const p of pts) { meanX += p.x; meanY += p.y; }
+  meanX /= pts.length; meanY /= pts.length;
+  let Suu = 0, Suv = 0, Svv = 0, Suuu = 0, Svvv = 0, Suvv = 0, Svuu = 0;
+  for (const p of pts) {
+    const u = p.x - meanX;
+    const v = p.y - meanY;
+    const uu = u * u;
+    const vv = v * v;
+    Suu += uu;
+    Svv += vv;
+    Suv += u * v;
+    Suuu += uu * u;
+    Svvv += vv * v;
+    Suvv += u * vv;
+    Svuu += v * uu;
+  }
+  const det = (Suu * Svv - Suv * Suv);
+  if (Math.abs(det) < 1e-6) return null;
+  const rhs1 = 0.5 * (Suuu + Suvv);
+  const rhs2 = 0.5 * (Svvv + Svuu);
+  const uc = (rhs1 * Svv - rhs2 * Suv) / det;
+  const vc = (rhs2 * Suu - rhs1 * Suv) / det;
+  const cx = meanX + uc;
+  const cy = meanY + vc;
+  let r = 0;
+  for (const p of pts) r += Math.hypot(p.x - cx, p.y - cy);
+  r /= pts.length;
+  if (!(r > 5)) return null;
+
+  let err = 0;
+  for (const p of pts) {
+    const dr = Math.hypot(p.x - cx, p.y - cy) - r;
+    err += dr * dr;
+  }
+  err = Math.sqrt(err / pts.length);
+  if (err > Math.max(3, r * 0.12)) return null;
+
+  const steps = 64;
+  const out = new Array(steps + 1);
+  for (let i = 0; i <= steps; i++) {
+    const a = (i / steps) * Math.PI * 2;
+    out[i] = { x: cx + Math.cos(a) * r, y: cy + Math.sin(a) * r };
+  }
+  return out;
+}
+
+function _tryPolygon(pts, cornersExpected, pathLen){
+  const first = pts[0];
+  const last = pts[pts.length - 1];
+  const closure = 1 - (Math.hypot(last.x - first.x, last.y - first.y) / Math.max(1, pathLen || _pathLength(pts)));
+  if (closure < 0.88) return null;
+  const sample = _resample(pts, 64);
+  if (sample.length < 10) return null;
+
+  const turns = [];
+  for (let i = 1; i < sample.length - 1; i++) {
+    const a = sample[i - 1], b = sample[i], c = sample[i + 1];
+    const v1 = { x: b.x - a.x, y: b.y - a.y };
+    const v2 = { x: c.x - b.x, y: c.y - b.y };
+    const ang = _angleDegBetween(v1, v2);
+    if (ang > 35) turns.push({ i, ang });
+  }
+  if (turns.length < cornersExpected) return null;
+  turns.sort((p, q) => q.ang - p.ang);
+  const picked = [];
+  const minSep = Math.floor(sample.length / (cornersExpected * 2));
+  for (const t of turns) {
+    if (picked.length >= cornersExpected) break;
+    if (picked.some(p => Math.abs(p.i - t.i) < minSep)) continue;
+    picked.push(t);
+  }
+  if (picked.length !== cornersExpected) return null;
+  picked.sort((p, q) => p.i - q.i);
+  const verts = picked.map(p => sample[p.i]);
+
+  if (cornersExpected === 4) {
+    const edges = [];
+    for (let k = 0; k < 4; k++) {
+      const p0 = verts[k];
+      const p1 = verts[(k + 1) % 4];
+      edges.push({ x: p1.x - p0.x, y: p1.y - p0.y });
+    }
+    const ang01 = _angleDegBetween(edges[0], edges[1]);
+    const ang12 = _angleDegBetween(edges[1], edges[2]);
+    const ang23 = _angleDegBetween(edges[2], edges[3]);
+    const ang30 = _angleDegBetween(edges[3], edges[0]);
+    const okA = (Math.abs(ang01 - 90) <= 25) && (Math.abs(ang12 - 90) <= 25) && (Math.abs(ang23 - 90) <= 25) && (Math.abs(ang30 - 90) <= 25);
+    if (!okA) return null;
+    const a02 = _angleDegBetween(edges[0], edges[2]);
+    const a13 = _angleDegBetween(edges[1], edges[3]);
+    if (Math.min(a02, 180 - a02) > 20) return null;
+    if (Math.min(a13, 180 - a13) > 20) return null;
+
+    const rot = Math.atan2(edges[0].y, edges[0].x);
+    const cos = Math.cos(-rot), sin = Math.sin(-rot);
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const p of pts) {
+      const rx = (p.x * cos - p.y * sin);
+      const ry = (p.x * sin + p.y * cos);
+      minX = Math.min(minX, rx);
+      minY = Math.min(minY, ry);
+      maxX = Math.max(maxX, rx);
+      maxY = Math.max(maxY, ry);
+    }
+    const rect = [
+      { x: minX, y: minY },
+      { x: maxX, y: minY },
+      { x: maxX, y: maxY },
+      { x: minX, y: maxY },
+      { x: minX, y: minY }
+    ];
+    const cos2 = Math.cos(rot), sin2 = Math.sin(rot);
+    return rect.map(p => ({ x: (p.x * cos2 - p.y * sin2), y: (p.x * sin2 + p.y * cos2) }));
+  }
+
+  if (cornersExpected === 3) {
+    const a = verts[0], b = verts[1], c = verts[2];
+    const tri = [a, b, c, a];
+    const bb = _bbox(tri);
+    if (Math.max(bb.w, bb.h) < 20) return null;
+    return tri;
+  }
+  return null;
 }
 
 function _loadDocState(key){

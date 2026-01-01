@@ -118,7 +118,7 @@ function canvasClientToCanvasInternal(clientX, clientY){
 function _isUiEventTarget(target){
   try{
     if (!target || !target.closest) return false;
-    return !!target.closest('.floating-panel, .submenu, #settingsModal, .settings-modal, #pageToolbar');
+    return !!target.closest('.floating-panel, .submenu, .recognition-ui, #settingsModal, .settings-modal, #pageToolbar');
   }catch(e){
     return false;
   }
