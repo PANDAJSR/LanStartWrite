@@ -32,6 +32,17 @@
         <label><input type="checkbox" id="optTooltips"> 显示工具提示</label>
         <label><input type="checkbox" id="optMultiTouchPen"> 触摸多指书写</label>
         <fieldset style="border:1px solid #eee;padding:8px;border-radius:8px">
+          <legend>批注</legend>
+          <label>默认笔颜色 <input type="color" id="optAnnotationPenColor" value="#FF0000"></label>
+        </fieldset>
+        <label>批注默认笔颜色
+          <input id="optAnnotationPenColor" type="color" value="#FF0000">
+        </label>
+        <fieldset style="border:1px solid #eee;padding:8px;border-radius:8px">
+          <legend>智能功能</legend>
+          <label><input type="checkbox" id="optSmartInk"> 图形与直线智能识别</label>
+        </fieldset>
+        <fieldset style="border:1px solid #eee;padding:8px;border-radius:8px">
           <legend>快捷键</legend>
           <label>撤销: <input id="keyUndo" type="text" placeholder="Ctrl+Z" maxlength="20"></label>
           <label>重做: <input id="keyRedo" type="text" placeholder="Ctrl+Y" maxlength="20"></label>
@@ -45,6 +56,22 @@
     <div class="settings-footer">
       <button id="resetSettings">重置为默认</button>
       <button id="saveSettings">保存</button>
+    </div>
+  </div>
+</div>
+
+<div id="aboutModal" class="settings-modal" role="dialog" aria-hidden="true">
+  <div class="settings-backdrop"></div>
+  <div class="settings-panel">
+    <div class="settings-header">
+      <h3>关于</h3>
+      <button id="closeAbout" class="tool-btn">✕</button>
+    </div>
+    <div class="settings-body" style="text-align:center">
+      <div style="padding:12px 8px">
+        <div style="font-size:18px;font-weight:700">LanStartWrite</div>
+        <div style="padding-top:6px;color:#555">揽星书写</div>
+      </div>
     </div>
   </div>
 </div>

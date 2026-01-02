@@ -1,9 +1,11 @@
 // page.js — 分页管理与底部左侧翻页工具栏
 import { getSnapshot, loadSnapshot } from './renderer.js';
+import Message, { EVENTS } from './message.js';
 
 function initPageToolbar(){
   const pages = [];
   let current = 0;
+  let enabled = true;
 
   // 初始页面快照
   try { pages.push(getSnapshot()); } catch (e) { pages.push([]); }
@@ -45,6 +47,12 @@ function initPageToolbar(){
   toolbar.appendChild(newContainer);
   document.body.appendChild(toolbar);
 
+  function applyEnabled(nextEnabled){
+    enabled = !!nextEnabled;
+    try{ toolbar.style.display = enabled ? 'flex' : 'none'; }catch(e){}
+    try{ toolbar.setAttribute('aria-hidden', enabled ? 'false' : 'true'); }catch(e){}
+  }
+
   function updateUI(){
     label.textContent = `${current+1} / ${pages.length}`;
     prevBtn.disabled = current <= 0;
@@ -58,6 +66,7 @@ function initPageToolbar(){
   }
 
   prevBtn.addEventListener('click', ()=>{
+    if (!enabled) return;
     if (current <= 0) return;
     saveCurrent();
     current -= 1;
@@ -66,6 +75,7 @@ function initPageToolbar(){
   });
 
   nextBtn.addEventListener('click', ()=>{
+    if (!enabled) return;
     saveCurrent();
     if (current >= pages.length - 1) {
       // 在末页时，下一页操作等同于新建页面
@@ -80,6 +90,7 @@ function initPageToolbar(){
   });
 
   newBtn.addEventListener('click', ()=>{
+    if (!enabled) return;
     saveCurrent();
     pages.push([]);
     current = pages.length - 1;
@@ -88,6 +99,18 @@ function initPageToolbar(){
   });
 
   updateUI();
+
+  try{
+    const bootMode = document && document.body && document.body.dataset ? document.body.dataset.appMode : '';
+    applyEnabled(bootMode !== 'annotation');
+  }catch(e){}
+
+  try{
+    Message.on(EVENTS.APP_MODE_CHANGED, (st)=>{
+      const m = st && st.mode;
+      applyEnabled(m !== 'annotation');
+    });
+  }catch(e){}
 }
 
 // initialize immediately if DOM is ready, otherwise wait for DOMContentLoaded

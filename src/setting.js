@@ -7,6 +7,8 @@ const DEFAULTS = {
   theme: 'light', // 'light' | 'dark'
   showTooltips: true,
   multiTouchPen: false,
+  smartInkRecognition: false,
+  annotationPenColor: '#FF0000',
   visualStyle: 'blur', // 'solid' | 'blur' | 'transparent'
   canvasColor: 'white', // 'white' | 'black' | 'chalkboard'
   shortcuts: { undo: 'Ctrl+Z', redo: 'Ctrl+Y' }

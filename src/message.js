@@ -24,6 +24,7 @@ export const EVENTS = {
   REQUEST_FILE_WRITE: 'io:request-file-write',
   // settings changed
   SETTINGS_CHANGED: 'settings:changed',
+  APP_MODE_CHANGED: 'app:mode-changed',
   // history/undo state changed (renderer -> UI)
   HISTORY_CHANGED: 'history:changed',
   

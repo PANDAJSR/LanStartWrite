@@ -1,5 +1,6 @@
 import { setBrushSize, setBrushColor, setErasing, getToolState } from './renderer.js';
 import { cleanupMenuStyles } from './more_decide_windows.js';
+import { updateAppSettings } from './write_a_change.js';
 
 const penSizeInput = document.getElementById('size');
 const colorMenu = document.getElementById('colorMenu');
@@ -17,7 +18,13 @@ export function initPenUI(){
 
   colorButtons.forEach(btn => {
     btn.addEventListener('click', () => {
-      setBrushColor(btn.dataset.color || '#000');
+      const nextColor = (btn.dataset.color || '#000').toUpperCase();
+      setBrushColor(nextColor);
+      try{
+        if (document && document.body && document.body.dataset && document.body.dataset.appMode === 'annotation') {
+          updateAppSettings({ annotationPenColor: nextColor });
+        }
+      }catch(e){}
       setErasing(false);
       updatePenModeLabel();
       if (colorMenu) { cleanupMenuStyles(colorMenu); colorMenu.classList.remove('open'); colorMenu.setAttribute('aria-hidden','true'); }

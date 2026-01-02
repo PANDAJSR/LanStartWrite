@@ -49,7 +49,7 @@ function _ensureOverlayPoll() {
       if (allow) _applyIgnoreMouse(false, false);
       else _applyIgnoreMouse(true, true);
     } catch (e) {}
-  }, 30);
+  }, 10);
 }
 
 function _stopOverlayPoll() {
@@ -113,6 +113,11 @@ ipcMain.on('overlay:set-ignore-mouse', (event, payload) => {
     const forward = !!(payload && payload.forward);
     _overlayIgnoreConfig = { ignore, forward };
     _applyIgnoreMouse(ignore, forward);
+    if (ignore && forward) {
+      const allow = _shouldAllowOverlayInteraction();
+      if (allow) _applyIgnoreMouse(false, false);
+      else _applyIgnoreMouse(true, true);
+    }
     if (ignore && forward) _ensureOverlayPoll();
     else _stopOverlayPoll();
   }catch(err){
@@ -131,7 +136,12 @@ ipcMain.on('overlay:set-interactive-rects', (event, payload) => {
         height: Number(r && r.height) || 0
       }))
       .filter((r) => r.width > 0 && r.height > 0);
-    if (_overlayIgnoreConfig && _overlayIgnoreConfig.ignore && _overlayIgnoreConfig.forward) _ensureOverlayPoll();
+    if (_overlayIgnoreConfig && _overlayIgnoreConfig.ignore && _overlayIgnoreConfig.forward) {
+      const allow = _shouldAllowOverlayInteraction();
+      if (allow) _applyIgnoreMouse(false, false);
+      else _applyIgnoreMouse(true, true);
+      _ensureOverlayPoll();
+    }
   } catch (e) {}
 });
 

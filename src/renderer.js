@@ -94,6 +94,13 @@ let _inkUi = null;
 let _inkAutoConfirmId = 0;
 let _activePointerId = 0;
 let _inkLastScheduleAt = 0;
+let _inkRecognitionEnabled = false;
+
+export function setInkRecognitionEnabled(enabled){
+  _inkRecognitionEnabled = !!enabled;
+  _cancelInkTimers();
+  if (!_inkRecognitionEnabled) _dismissInkPreview(false);
+}
 
 function applyViewTransform(){
   canvas.style.transformOrigin = '0 0';
@@ -490,9 +497,17 @@ export function canRedo(){ return historyIndex < history.length - 1; }
 pushHistory();
 
 // Snapshot API for page handling
-export function getSnapshot(){ return JSON.parse(JSON.stringify(ops)); }
+function _isAnnotationAppMode(){
+  try{ return document && document.body && document.body.dataset && document.body.dataset.appMode === 'annotation'; }catch(e){ return false; }
+}
+
+export function getSnapshot(){
+  if (_isAnnotationAppMode()) return [];
+  return JSON.parse(JSON.stringify(ops));
+}
 
 export function loadSnapshot(snap){
+  if (_isAnnotationAppMode()) return;
   ops.length = 0;
   if (Array.isArray(snap) && snap.length) {
     Array.prototype.push.apply(ops, JSON.parse(JSON.stringify(snap)));
@@ -586,6 +601,7 @@ function _confirmInkPreview(){
 }
 
 function _enqueueInkRecognition(opRef){
+  if (!_inkRecognitionEnabled) return;
   if (!opRef || opRef.type !== 'stroke' || !Array.isArray(opRef.points) || opRef.points.length < 5) return;
   _inkPending.push({ opRef });
   const seqAtSchedule = _inkSeq;
@@ -600,6 +616,7 @@ function _enqueueInkRecognition(opRef){
 }
 
 function _runInkRecognition(){
+  if (!_inkRecognitionEnabled) return;
   if (!_inkPending || _inkPending.length === 0) return;
   const candidates = _inkPending.slice();
   _inkPending = [];
@@ -665,6 +682,7 @@ function _downsampleInternalPoints(pointsInternal, maxPoints){
 }
 
 function _scheduleInkHoldFromMove(opRef){
+  if (!_inkRecognitionEnabled) return;
   if (!opRef || opRef.type !== 'stroke' || !Array.isArray(opRef.points) || opRef.points.length < 5) return;
   const now = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
   if (now - _inkLastScheduleAt < 80) return;
@@ -683,6 +701,7 @@ function _scheduleInkHoldFromMove(opRef){
 }
 
 function _finalizeCurrentStrokeFromHold(){
+  if (!_inkRecognitionEnabled) return;
   if (!drawing) return;
   if (!currentOp || currentOp.type !== 'stroke') return;
   drawing = false;
