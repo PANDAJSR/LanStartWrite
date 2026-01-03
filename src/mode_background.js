@@ -22,18 +22,34 @@ export function applyModeCanvasBackground(mode, canvasColor, deps){
     const replaceStrokeColors = deps && deps.replaceStrokeColors;
     const setBrushColor = deps && deps.setBrushColor;
     const updatePenModeLabel = deps && deps.updatePenModeLabel;
+    const getPreferredPenColor = deps && deps.getPreferredPenColor;
 
     const newPen = cfg.pen;
+    const normalize = (c) => String(c || '').toLowerCase();
+    const isAutoPen = (c) => {
+      const n = normalize(c);
+      return n === '#000000' || n === '#ffffff';
+    };
+    const preferredPen = (typeof getPreferredPenColor === 'function') ? getPreferredPenColor(mode) : null;
+    const preferredNorm = normalize(preferredPen);
+    const defaultPreferred = (mode === 'annotation') ? '#ff0000' : '#000000';
+    const allowAutoSwitch = (mode !== 'annotation') && (preferredNorm === defaultPreferred);
 
     try{
-      if (typeof getToolState === 'function' && typeof replaceStrokeColors === 'function') {
+      if (allowAutoSwitch && typeof getToolState === 'function' && typeof replaceStrokeColors === 'function') {
         const toolState = getToolState();
         const oldPen = toolState && toolState.brushColor;
-        if (oldPen !== newPen && (oldPen === '#000000' || oldPen === '#ffffff')) replaceStrokeColors(oldPen, newPen);
+        if (isAutoPen(oldPen) && normalize(oldPen) !== normalize(newPen)) replaceStrokeColors(oldPen, newPen);
       }
     }catch(e){}
 
-    try{ if (typeof setBrushColor === 'function') setBrushColor(newPen); }catch(e){}
+    try{
+      if (allowAutoSwitch && typeof getToolState === 'function' && typeof setBrushColor === 'function') {
+        const toolState = getToolState();
+        const cur = toolState && toolState.brushColor;
+        if (isAutoPen(cur)) setBrushColor(newPen);
+      }
+    }catch(e){}
     try{ if (typeof updatePenModeLabel === 'function') updatePenModeLabel(); }catch(e){}
   }catch(e){}
 }

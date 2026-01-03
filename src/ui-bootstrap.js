@@ -75,6 +75,95 @@ async function runUnitTests(){
       eq(normalizeHexColor('A1B2C3', '#000000'), '#A1B2C3');
       eq(normalizeHexColor('bad', '#000000'), '#000000');
     }
+
+    {
+      document.body.dataset.appMode = 'annotation';
+      const toolBtn = document.createElement('button');
+      toolBtn.id = 'colorTool';
+      document.body.appendChild(toolBtn);
+
+      const menu = document.createElement('div');
+      menu.id = 'colorMenu';
+      menu.className = 'submenu colors open';
+      const size = document.createElement('input');
+      size.id = 'size';
+      size.type = 'range';
+      size.min = '1';
+      size.max = '50';
+      size.value = '4';
+      menu.appendChild(size);
+      const colors = ['#ffffff','#000000','#FF0000','#0000FF','#ff3b30','#ff9500','#ffcc00','#34c759','#007aff','#5856d6'];
+      const buttons = colors.map((c)=>{
+        const b = document.createElement('button');
+        b.className = 'color';
+        b.dataset.color = c;
+        menu.appendChild(b);
+        return b;
+      });
+      document.body.appendChild(menu);
+
+      const Renderer = await import('./renderer.js');
+      const Pen = await import('./pen.js');
+      Pen.initPenUI();
+
+      document.body.dataset.appMode = 'annotation';
+      for (const btn of buttons) {
+        const raw = String(btn.dataset.color || '');
+        btn.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+        const expected = normalizeHexColor(raw, '#FF0000');
+        eq(String(Renderer.getToolState().brushColor).toUpperCase(), expected, `annotation brushColor ${raw}`);
+        const s = Settings.loadSettings();
+        eq(getPenColorFromSettings(s, 'annotation'), expected, `annotation persisted ${raw}`);
+        assert(btn.classList.contains('selected'), `selected class ${raw}`);
+        eq(btn.getAttribute('aria-pressed'), 'true', `aria-pressed ${raw}`);
+      }
+
+      document.body.dataset.appMode = 'whiteboard';
+      for (const btn of buttons) {
+        const raw = String(btn.dataset.color || '');
+        btn.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerType: 'touch' }));
+        const expected = normalizeHexColor(raw, '#000000');
+        eq(String(Renderer.getToolState().brushColor).toUpperCase(), expected, `whiteboard brushColor ${raw}`);
+        const s = Settings.loadSettings();
+        eq(getPenColorFromSettings(s, 'whiteboard'), expected, `whiteboard persisted ${raw}`);
+        assert(btn.classList.contains('selected'), `selected class whiteboard ${raw}`);
+        eq(btn.getAttribute('aria-pressed'), 'true', `aria-pressed whiteboard ${raw}`);
+      }
+
+      document.body.dataset.appMode = 'annotation';
+      buttons[5].dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      document.body.dataset.appMode = 'whiteboard';
+      buttons[7].dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      const sFinal = Settings.loadSettings();
+      eq(getPenColorFromSettings(sFinal, 'annotation'), normalizeHexColor(colors[5], '#FF0000'), 'mode color isolated (annotation)');
+      eq(getPenColorFromSettings(sFinal, 'whiteboard'), normalizeHexColor(colors[7], '#000000'), 'mode color isolated (whiteboard)');
+
+      toolBtn.remove();
+      menu.remove();
+    }
+
+    {
+      Settings.resetSettings();
+      const SettingsNow = Settings.loadSettings();
+      const { applyModeCanvasBackground } = await import('./mode_background.js');
+      const Renderer = await import('./renderer.js');
+
+      Renderer.setBrushColor('#000000');
+      applyModeCanvasBackground('whiteboard', 'black', { getToolState: Renderer.getToolState, replaceStrokeColors: Renderer.replaceStrokeColors, setBrushColor: Renderer.setBrushColor, getPreferredPenColor: (mode)=>getPenColorFromSettings(SettingsNow, mode) });
+      eq(String(Renderer.getToolState().brushColor).toUpperCase(), '#FFFFFF', 'auto pen switches when preference default');
+
+      updateAppSettings({ whiteboardPenColor: '#34C759' });
+      Renderer.setBrushColor('#000000');
+      const s2 = Settings.loadSettings();
+      applyModeCanvasBackground('whiteboard', 'black', { getToolState: Renderer.getToolState, replaceStrokeColors: Renderer.replaceStrokeColors, setBrushColor: Renderer.setBrushColor, getPreferredPenColor: (mode)=>getPenColorFromSettings(s2, mode) });
+      eq(String(Renderer.getToolState().brushColor).toUpperCase(), '#000000', 'custom preference blocks auto switch');
+
+      updateAppSettings({ whiteboardPenColor: '#FFFFFF' });
+      Renderer.setBrushColor('#FFFFFF');
+      const s3 = Settings.loadSettings();
+      applyModeCanvasBackground('whiteboard', 'black', { getToolState: Renderer.getToolState, replaceStrokeColors: Renderer.replaceStrokeColors, setBrushColor: Renderer.setBrushColor, getPreferredPenColor: (mode)=>getPenColorFromSettings(s3, mode) });
+      eq(String(Renderer.getToolState().brushColor).toUpperCase(), '#FFFFFF', 'explicit white preserved');
+    }
   }finally{
     try{
       if (prior === null) localStorage.removeItem('appSettings');

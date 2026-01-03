@@ -267,7 +267,7 @@ function setAppMode(nextMode, opts){
   try{ document.body.dataset.appMode = _appMode; }catch(e){}
   try{
     const s = Settings.loadSettings();
-    applyModeCanvasBackground(_appMode, s && s.canvasColor, { getToolState, replaceStrokeColors, setBrushColor, updatePenModeLabel });
+    applyModeCanvasBackground(_appMode, s && s.canvasColor, { getToolState, replaceStrokeColors, setBrushColor, updatePenModeLabel, getPreferredPenColor: (mode)=>getPenColorFromSettings(s, mode) });
   }catch(e){}
   updateExitToolUI();
   applyWindowInteractivity();
@@ -971,7 +971,7 @@ if (saveSettings) saveSettings.addEventListener('click', ()=>{
     shortcuts: { undo: (keyUndo && keyUndo.value) || '', redo: (keyRedo && keyRedo.value) || '' }
   };
   // persist via cross-module helper which emits SETTINGS_CHANGED
-  updateAppSettings(newS);
+  const merged = updateAppSettings(newS);
   // apply immediate effects
   if (!newS.enableAutoResize) {
     try{ const p = document.querySelector('.floating-panel'); if (p) p.style.width = ''; }catch(e){}
@@ -980,7 +980,7 @@ if (saveSettings) saveSettings.addEventListener('click', ()=>{
   // apply theme and tooltips immediately
   applyTheme(newS.theme);
   try{ applyVisualStyle(newS.visualStyle); }catch(e){}
-  try{ applyModeCanvasBackground(_appMode, newS.canvasColor, { getToolState, replaceStrokeColors, setBrushColor, updatePenModeLabel }); }catch(e){}
+  try{ applyModeCanvasBackground(_appMode, newS.canvasColor, { getToolState, replaceStrokeColors, setBrushColor, updatePenModeLabel, getPreferredPenColor: (mode)=>getPenColorFromSettings(merged, mode) }); }catch(e){}
   applyTooltips(newS.showTooltips);
   try{ setMultiTouchPenEnabled(!!newS.multiTouchPen); }catch(e){}
   try{ setInkRecognitionEnabled(!!newS.smartInkRecognition); }catch(e){}
@@ -1035,7 +1035,7 @@ if (previewSettingsBtn) previewSettingsBtn.addEventListener('click', ()=>{
   // preview visual style
   try{ if (preview.visualStyle) applyVisualStyle(preview.visualStyle); }catch(e){}
   // preview canvas color
-  try{ if (preview.canvasColor) applyModeCanvasBackground(_appMode, preview.canvasColor, { getToolState, replaceStrokeColors, setBrushColor, updatePenModeLabel }); }catch(e){}
+  try{ if (preview.canvasColor) applyModeCanvasBackground(_appMode, preview.canvasColor, { getToolState, replaceStrokeColors, setBrushColor, updatePenModeLabel, getPreferredPenColor: (mode)=>getPenColorFromSettings(s, mode) }); }catch(e){}
 });
 
 if (revertPreviewBtn) revertPreviewBtn.addEventListener('click', ()=>{
@@ -1043,7 +1043,7 @@ if (revertPreviewBtn) revertPreviewBtn.addEventListener('click', ()=>{
     applyTheme(_previewBackup.theme);
     applyTooltips(_previewBackup.showTooltips);
     try{ applyVisualStyle(_previewBackup.visualStyle || 'blur'); }catch(e){}
-    try{ applyModeCanvasBackground(_appMode, _previewBackup.canvasColor || 'white', { getToolState, replaceStrokeColors, setBrushColor, updatePenModeLabel }); }catch(e){}
+    try{ applyModeCanvasBackground(_appMode, _previewBackup.canvasColor || 'white', { getToolState, replaceStrokeColors, setBrushColor, updatePenModeLabel, getPreferredPenColor: (mode)=>getPenColorFromSettings(_previewBackup, mode) }); }catch(e){}
     _previewBackup = null;
   }
 });
@@ -1156,7 +1156,7 @@ function bindShortcutsFromSettings(){
 // initial bind
 bindShortcutsFromSettings();
 // rebind on settings change and apply visual style
-Message.on(EVENTS.SETTINGS_CHANGED, (s)=>{ try{ bindShortcutsFromSettings(); if (s && s.visualStyle) applyVisualStyle(s.visualStyle); if (s && s.canvasColor) applyModeCanvasBackground(_appMode, s.canvasColor, { getToolState, replaceStrokeColors, setBrushColor, updatePenModeLabel }); if (s && typeof s.multiTouchPen !== 'undefined') setMultiTouchPenEnabled(!!s.multiTouchPen); if (s && typeof s.smartInkRecognition !== 'undefined') setInkRecognitionEnabled(!!s.smartInkRecognition); }catch(e){} });
+Message.on(EVENTS.SETTINGS_CHANGED, (s)=>{ try{ bindShortcutsFromSettings(); if (s && s.visualStyle) applyVisualStyle(s.visualStyle); if (s && s.canvasColor) applyModeCanvasBackground(_appMode, s.canvasColor, { getToolState, replaceStrokeColors, setBrushColor, updatePenModeLabel, getPreferredPenColor: (mode)=>getPenColorFromSettings(s, mode) }); if (s && typeof s.multiTouchPen !== 'undefined') setMultiTouchPenEnabled(!!s.multiTouchPen); if (s && typeof s.smartInkRecognition !== 'undefined') setInkRecognitionEnabled(!!s.smartInkRecognition); }catch(e){} });
 
 // initialize undo/redo button states now (renderer may have emitted before listener attached)
 try{ if (undoBtn) undoBtn.disabled = !canUndo(); if (redoBtn) redoBtn.disabled = !canRedo(); if (historyStateDisplay) historyStateDisplay.textContent = `撤销: ${canUndo()? '可' : '—'}  重做: ${canRedo()? '可' : '—'}`; }catch(e){}
@@ -1166,7 +1166,7 @@ try{
   if (settings) { if (settings.theme) applyTheme(settings.theme); if (typeof settings.showTooltips !== 'undefined') applyTooltips(!!settings.showTooltips); }
 }catch(e){}
 try{ if (settings) { if (settings.visualStyle) applyVisualStyle(settings.visualStyle); else applyVisualStyle('blur'); } }catch(e){}
-try{ if (settings) { applyModeCanvasBackground(_appMode, settings.canvasColor || 'white', { getToolState, replaceStrokeColors, setBrushColor, updatePenModeLabel }); } }catch(e){}
+try{ if (settings) { applyModeCanvasBackground(_appMode, settings.canvasColor || 'white', { getToolState, replaceStrokeColors, setBrushColor, updatePenModeLabel, getPreferredPenColor: (mode)=>getPenColorFromSettings(settings, mode) }); } }catch(e){}
 try{ if (settings && typeof settings.multiTouchPen !== 'undefined') setMultiTouchPenEnabled(!!settings.multiTouchPen); }catch(e){}
 try{ if (settings && typeof settings.smartInkRecognition !== 'undefined') setInkRecognitionEnabled(!!settings.smartInkRecognition); }catch(e){}
 

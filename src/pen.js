@@ -6,8 +6,8 @@ import { buildPenColorSettingsPatch, normalizeHexColor } from './setting.js';
 const penSizeInput = document.getElementById('size');
 const colorMenu = document.getElementById('colorMenu');
 const colorTool = document.getElementById('colorTool');
-const colorButtons = document.querySelectorAll('.color');
 const penModeLabel = document.getElementById('penModeLabel');
+let _bound = false;
 
 export function updatePenModeLabel(){
   const s = getToolState();
@@ -25,23 +25,36 @@ export function updatePenModeLabel(){
 }
 
 export function initPenUI(){
+  if (_bound) { updatePenModeLabel(); return; }
+  _bound = true;
   if (penSizeInput) penSizeInput.addEventListener('input', (e)=>{ setBrushSize(Number(e.target.value)); updatePenModeLabel(); try{ window.dispatchEvent(new Event('toolbar:sync')); }catch(err){} });
 
-  colorButtons.forEach(btn => {
-    btn.addEventListener('click', () => {
-      const appMode = (document && document.body && document.body.dataset && document.body.dataset.appMode === 'annotation') ? 'annotation' : 'whiteboard';
-      const nextColor = normalizeHexColor(btn.dataset.color, appMode === 'annotation' ? '#FF0000' : '#000000');
-      setBrushColor(nextColor);
-      try{
-        updateAppSettings(buildPenColorSettingsPatch(appMode, nextColor));
-      }catch(e){}
-      setErasing(false);
-      updatePenModeLabel();
-      if (colorMenu) { cleanupMenuStyles(colorMenu); colorMenu.classList.remove('open'); colorMenu.setAttribute('aria-hidden','true'); }
-      if (colorTool) colorTool.classList.remove('active');
-      try{ window.dispatchEvent(new Event('toolbar:sync')); }catch(err){}
+  const applyColorFromBtn = (btn)=>{
+    if (!btn) return;
+    const appMode = (document && document.body && document.body.dataset && document.body.dataset.appMode === 'annotation') ? 'annotation' : 'whiteboard';
+    const nextColor = normalizeHexColor(btn.dataset && btn.dataset.color, appMode === 'annotation' ? '#FF0000' : '#000000');
+    setBrushColor(nextColor);
+    try{ updateAppSettings(buildPenColorSettingsPatch(appMode, nextColor)); }catch(e){}
+    setErasing(false);
+    updatePenModeLabel();
+    if (colorMenu) { cleanupMenuStyles(colorMenu); colorMenu.classList.remove('open'); colorMenu.setAttribute('aria-hidden','true'); }
+    if (colorTool) colorTool.classList.remove('active');
+    try{ window.dispatchEvent(new Event('toolbar:sync')); }catch(err){}
+  };
+
+  if (colorMenu) {
+    colorMenu.addEventListener('click', (e)=>{
+      const btn = e && e.target && e.target.closest ? e.target.closest('.color') : null;
+      if (!btn) return;
+      applyColorFromBtn(btn);
     });
-  });
+    colorMenu.addEventListener('pointerup', (e)=>{
+      if (e && e.pointerType === 'mouse') return;
+      const btn = e && e.target && e.target.closest ? e.target.closest('.color') : null;
+      if (!btn) return;
+      applyColorFromBtn(btn);
+    });
+  }
 
   // initial label
   updatePenModeLabel();
