@@ -2,7 +2,7 @@
 <html>
   <head>
     <meta charset="utf-8" />
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline' data:;" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline' data:; script-src 'self' 'unsafe-inline' blob: data:; worker-src 'self' blob:;" />
     <title>Electron Starter</title>
   </head>
   <body>
@@ -22,15 +22,15 @@
       .floating-panel .panel-section{width:auto;display:flex;gap:8px;align-items:center;justify-content:flex-start;flex-wrap:nowrap}
       .floating-panel .tools{justify-content:flex-start}
       .tool{position:relative}
-      .tool-btn{width:44px;height:44px;border-radius:10px;border:1px solid #ccc;background:#fff;display:flex;align-items:center;justify-content:center;cursor:pointer}
+      .tool-btn{width:44px;height:44px;border-radius:10px;border:1px solid #ccc;background:#fff;display:flex;align-items:center;justify-content:center;cursor:pointer;touch-action:manipulation;-webkit-user-select:none;user-select:none}
       .tool-btn.active{box-shadow:inset 0 -2px 0 rgba(0,0,0,0.06);background:#f6f6f6}
       /* 子菜单为固定排版：固定宽度，自适应高度包含所有控件 */
       .submenu{position:absolute;right:0;top:48px;background:rgba(255,255,255,0.97);padding:0;border-radius:18px;box-shadow:0 8px 22px rgba(0,0,0,0.12);display:none;z-index:2500;width:min(240px,calc(100vw - 40px));max-width:calc(100vw - 40px);box-sizing:border-box;transition:top 0.3s cubic-bezier(0.25,0.46,0.45,0.94),opacity 0.3s ease;flex-direction:column;overflow:hidden}
       .submenu.open{display:flex}
       .submenu .submenu-body{padding:12px;display:flex;flex-direction:column;gap:8px}
-      .submenu .submenu-pin{border:1px solid #ccc;background:#fff;padding:6px 8px;border-radius:8px;cursor:pointer}
+      .submenu .submenu-pin{border:1px solid #ccc;background:#fff;padding:10px 12px;border-radius:10px;cursor:pointer;min-height:44px;touch-action:manipulation;-webkit-user-select:none;user-select:none}
       .submenu .submenu-footer{display:flex;justify-content:flex-end;gap:8px;padding:8px 12px;border-top:1px solid #e5e5e5;background:rgba(255,255,255,0.5)}
-      .submenu .submenu-drag-handle{border:1px solid #ccc;background:#fff;padding:6px 8px;border-radius:8px;cursor:grab}
+      .submenu .submenu-drag-handle{border:1px solid #ccc;background:#fff;padding:10px 12px;border-radius:10px;cursor:grab;min-height:44px;touch-action:none;-webkit-user-select:none;user-select:none}
       .submenu.colors{width:min(240px,calc(100vw - 40px));max-width:calc(100vw - 40px);box-sizing:border-box}
       /* 折叠支持：将带有 .foldable 的项在折叠时隐藏 */
       .floating-panel .foldable{display:flex;transition:opacity 180ms ease}
@@ -41,8 +41,8 @@
       .submenu.colors .color.selected{outline:2px solid rgba(43,124,255,0.75);outline-offset:1px}
       .submenu .sizeControl{width:100%;display:flex;align-items:center;justify-content:center;padding-top:8px}
       .submenu .sizeControl input{width:120px}
-      .submenu.actions button{padding:6px 10px;border-radius:8px;border:1px solid #ccc;background:#fff;cursor:pointer}
-      .mode-btn{padding:6px 8px;border-radius:6px;border:1px solid #ccc;background:#fff;cursor:pointer}
+      .submenu.actions button{padding:10px 12px;border-radius:10px;border:1px solid #ccc;background:#fff;cursor:pointer;min-height:44px;touch-action:manipulation;-webkit-user-select:none;user-select:none}
+      .mode-btn{padding:10px 12px;border-radius:10px;border:1px solid #ccc;background:#fff;cursor:pointer;min-height:44px;touch-action:manipulation;-webkit-user-select:none;user-select:none;text-align:left}
       .mode-btn.active{background:#e6f0ff;border-color:#6ca0ff}
       .erase-mode-btn{display:flex;align-items:center;gap:6px;padding:6px 10px;font-size:12px;white-space:nowrap}
       .erase-mode-btn svg{width:20px;height:20px;flex-shrink:0;vertical-align:middle}

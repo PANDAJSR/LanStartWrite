@@ -1,3 +1,14 @@
+/**
+ * erese.js
+ *
+ * 橡皮 UI 模块：
+ * - 负责橡皮大小、橡皮模式（像素/矩形/整笔）等 UI 交互
+ * - 将选择同步到绘图引擎（renderer.js）
+ *
+ * 注意：
+ * - 橡皮模式的具体擦除算法在 renderer.js 内实现
+ * - 本模块仅负责 UI 状态与引擎参数的同步
+ */
 import { setEraserSize, setEraserMode, setErasing, getToolState } from './renderer.js';
 import { cleanupMenuStyles } from './more_decide_windows.js';
 
@@ -14,9 +25,18 @@ export function updateEraserModeLabel(){
   if (eraserModeLabel) eraserModeLabel.textContent = `橡皮模式: ${s.eraserMode} / ${s.eraserSize}`;
 }
 
+/**
+ * 初始化橡皮 UI 事件。
+ * @returns {void}
+ */
 export function initEraserUI(){
   if (eraserSizeInput) eraserSizeInput.addEventListener('input', (e)=>{ setEraserSize(Number(e.target.value)); updateEraserModeLabel(); try{ window.dispatchEvent(new Event('toolbar:sync')); }catch(err){} });
 
+  /**
+   * 同步橡皮模式按钮的选中态与标签显示。
+   * @param {'pixel'|'rect'|'stroke'} mode - 橡皮模式
+   * @returns {void}
+   */
   function updateEraserModeUI(mode){
     if (erasePixelBtn) erasePixelBtn.classList.toggle('active', mode==='pixel');
     if (eraseRectBtn) eraseRectBtn.classList.toggle('active', mode==='rect');

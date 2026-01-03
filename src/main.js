@@ -6,6 +6,7 @@ const yauzl = require('yauzl');
 const semver = require('semver');
 
 const _RUN_TESTS = process.argv.includes('--run-tests');
+const _ALLOW_UNSIGNED_PLUGINS = true;
 
 let _testsTimeout = null;
 
@@ -17,6 +18,77 @@ let _overlayPollTimer = null;
 
 let _modWatcher = null;
 let _modRegistryWatcher = null;
+
+let _auditReady = false;
+let _auditLogPath = '';
+let _auditReportPath = '';
+let _auditLastEventAt = 0;
+let _auditLastReportAt = 0;
+let _auditReportTimer = null;
+let _auditStats = {
+  unsignedInstall: {},
+  unsignedLoad: {},
+  activity: {},
+  loadFailed: {}
+};
+
+function _incStat(bucket, key) {
+  if (!bucket) return;
+  const k = String(key || '');
+  if (!k) return;
+  bucket[k] = (Number(bucket[k] || 0) || 0) + 1;
+}
+
+async function _ensureAuditReady() {
+  if (_auditReady && _auditLogPath && _auditReportPath) return;
+  const p = await _ensureModDirs();
+  _auditLogPath = path.join(p.configDir, 'security_audit.jsonl');
+  _auditReportPath = path.join(p.configDir, 'security_audit_report.json');
+  _auditReady = true;
+}
+
+async function _auditLog(evt) {
+  try {
+    await _ensureAuditReady();
+    const entry = Object.assign({ ts: Date.now() }, (evt && typeof evt === 'object') ? evt : {});
+    _auditLastEventAt = Number(entry.ts || 0) || Date.now();
+    const pluginId = entry.pluginId ? String(entry.pluginId) : '';
+    const type = entry.type ? String(entry.type) : '';
+    if (pluginId) {
+      if (type === 'plugin:install:unsigned') _incStat(_auditStats.unsignedInstall, pluginId);
+      if (type === 'plugin:load:unsigned') _incStat(_auditStats.unsignedLoad, pluginId);
+      if (type === 'plugin:activity') _incStat(_auditStats.activity, pluginId);
+      if (type === 'plugin:load_failed') _incStat(_auditStats.loadFailed, pluginId);
+    }
+    await fs.promises.appendFile(_auditLogPath, `${JSON.stringify(entry)}\n`, 'utf8');
+  } catch (e) {}
+}
+
+function _auditSnapshot() {
+  return {
+    generatedAt: Date.now(),
+    lastEventAt: _auditLastEventAt,
+    lastReportAt: _auditLastReportAt,
+    stats: JSON.parse(JSON.stringify(_auditStats || {}))
+  };
+}
+
+async function _writeAuditReport() {
+  try {
+    await _ensureAuditReady();
+    const report = _auditSnapshot();
+    _auditLastReportAt = Number(report.generatedAt || 0) || Date.now();
+    await fs.promises.writeFile(_auditReportPath, JSON.stringify(report, null, 2), 'utf8');
+    return report;
+  } catch (e) {
+    return null;
+  }
+}
+
+function _ensureAuditReportTimer() {
+  if (_auditReportTimer) return;
+  _auditReportTimer = setInterval(() => { _writeAuditReport(); }, 30 * 60 * 1000);
+}
 
 function _applyIgnoreMouse(ignore, forward) {
   if (!mainWindow) return;
@@ -107,6 +179,7 @@ function _nowId() {
 }
 
 function _getModRoot() {
+  if (_RUN_TESTS) return path.join(app.getPath('userData'), 'mod-tests');
   const envRoot = process.env.LANSTART_MOD_ROOT;
   if (envRoot && typeof envRoot === 'string') return envRoot;
   try {
@@ -227,6 +300,120 @@ async function _extractZip(zipPath, destDir) {
   });
   try { zip.close(); } catch (e) {}
   return extracted;
+}
+
+let _crc32Table = null;
+function _crc32(buf) {
+  if (!_crc32Table) {
+    const table = new Uint32Array(256);
+    for (let i = 0; i < 256; i++) {
+      let c = i;
+      for (let k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+      table[i] = c >>> 0;
+    }
+    _crc32Table = table;
+  }
+  let crc = 0xFFFFFFFF;
+  const b = Buffer.isBuffer(buf) ? buf : Buffer.from(buf || '');
+  for (let i = 0; i < b.length; i++) crc = _crc32Table[(crc ^ b[i]) & 0xFF] ^ (crc >>> 8);
+  return (crc ^ 0xFFFFFFFF) >>> 0;
+}
+
+function _buildZipStore(entries) {
+  const parts = [];
+  const central = [];
+  let offset = 0;
+
+  for (const ent of entries) {
+    const name = String(ent && ent.name || '').replace(/\\/g, '/');
+    const nameBuf = Buffer.from(name, 'utf8');
+    const dataBuf = Buffer.isBuffer(ent && ent.data) ? ent.data : Buffer.from(String(ent && ent.data || ''), 'utf8');
+    const crc = _crc32(dataBuf);
+    const size = dataBuf.length >>> 0;
+
+    const local = Buffer.alloc(30);
+    local.writeUInt32LE(0x04034b50, 0);
+    local.writeUInt16LE(20, 4);
+    local.writeUInt16LE(0, 6);
+    local.writeUInt16LE(0, 8);
+    local.writeUInt16LE(0, 10);
+    local.writeUInt16LE(0, 12);
+    local.writeUInt32LE(crc, 14);
+    local.writeUInt32LE(size, 18);
+    local.writeUInt32LE(size, 22);
+    local.writeUInt16LE(nameBuf.length, 26);
+    local.writeUInt16LE(0, 28);
+
+    parts.push(local, nameBuf, dataBuf);
+
+    const cen = Buffer.alloc(46);
+    cen.writeUInt32LE(0x02014b50, 0);
+    cen.writeUInt16LE(20, 4);
+    cen.writeUInt16LE(20, 6);
+    cen.writeUInt16LE(0, 8);
+    cen.writeUInt16LE(0, 10);
+    cen.writeUInt16LE(0, 12);
+    cen.writeUInt16LE(0, 14);
+    cen.writeUInt32LE(crc, 16);
+    cen.writeUInt32LE(size, 20);
+    cen.writeUInt32LE(size, 24);
+    cen.writeUInt16LE(nameBuf.length, 28);
+    cen.writeUInt16LE(0, 30);
+    cen.writeUInt16LE(0, 32);
+    cen.writeUInt16LE(0, 34);
+    cen.writeUInt16LE(0, 36);
+    cen.writeUInt32LE(0, 38);
+    cen.writeUInt32LE(offset >>> 0, 42);
+
+    central.push(cen, nameBuf);
+
+    offset += local.length + nameBuf.length + dataBuf.length;
+  }
+
+  const centralOffset = offset >>> 0;
+  const centralSize = central.reduce((n, b) => n + b.length, 0) >>> 0;
+  const totalEntries = entries.length >>> 0;
+
+  const end = Buffer.alloc(22);
+  end.writeUInt32LE(0x06054b50, 0);
+  end.writeUInt16LE(0, 4);
+  end.writeUInt16LE(0, 6);
+  end.writeUInt16LE(totalEntries, 8);
+  end.writeUInt16LE(totalEntries, 10);
+  end.writeUInt32LE(centralSize, 12);
+  end.writeUInt32LE(centralOffset, 16);
+  end.writeUInt16LE(0, 20);
+
+  return Buffer.concat(parts.concat(central).concat([end]));
+}
+
+async function _createTestLanmodFile(opts) {
+  const p = await _ensureModDirs();
+  const id = String(opts && opts.id || `unsigned.test.${_nowId()}`).trim();
+  const version = String(opts && opts.version || '1.0.0').trim();
+  const name = String(opts && opts.name || id).trim();
+  const js = String(opts && opts.mainJs || '').trim() || `
+    Mod.on('init', ()=>{ Mod.registerTool({ id:'hello', title:'Unsigned' }); });
+  `;
+  const manifest = {
+    schemaVersion: 1,
+    id,
+    name,
+    version,
+    author: 'test',
+    type: 'feature',
+    permissions: Array.isArray(opts && opts.permissions) ? opts.permissions : ['ui:toolbar'],
+    dependencies: [],
+    resources: [],
+    entry: { kind: 'worker', path: 'main.js' }
+  };
+  const zipBuf = _buildZipStore([
+    { name: 'manifest.json', data: Buffer.from(JSON.stringify(manifest, null, 2), 'utf8') },
+    { name: 'main.js', data: Buffer.from(js, 'utf8') }
+  ]);
+  const outPath = path.join(p.tempDir, `unsigned-${id}-${_nowId()}.lanmod`.replace(/[^a-zA-Z0-9._-]/g, '_'));
+  await fs.promises.writeFile(outPath, zipBuf);
+  return { path: outPath, id, version };
 }
 
 function _validateManifest(manifest) {
@@ -378,34 +565,8 @@ async function _verifyLanmodSignature(workDir, manifestBuf, resources, allowUnsi
   const sigPath = path.join(workDir, 'signature.sig');
   let sigRaw = null;
   try { sigRaw = await fs.promises.readFile(sigPath, 'utf8'); } catch (e) {}
-  if (!sigRaw) {
-    if (allowUnsigned) return { verified: false, reason: 'unsigned' };
-    throw new Error('missing signature');
-  }
-  const sig = Buffer.from(String(sigRaw).trim(), 'base64');
-  if (!sig || sig.length < 32) throw new Error('invalid signature');
-  const manifestSha = crypto.createHash('sha256').update(manifestBuf).digest('hex');
-  const lines = [];
-  const list = Array.isArray(resources) ? resources.slice() : [];
-  list.sort((a, b) => String(a.path || '').localeCompare(String(b.path || '')));
-  for (const r of list) {
-    const rp = String(r && r.path || '');
-    const rh = String(r && r.sha256 || '');
-    const rs = Number(r && r.size || 0);
-    lines.push(`${rh} ${rs} ${rp}`);
-  }
-  const payload = `LanmodSigV1\n${manifestSha}\n${lines.join('\n')}\n`;
-  const keys = await _getTrustedKeys();
-  const algos = [null, 'RSA-SHA256', 'sha256'];
-  for (const pem of keys) {
-    for (const algo of algos) {
-      try {
-        const ok = crypto.verify(algo, Buffer.from(payload, 'utf8'), pem, sig);
-        if (ok) return { verified: true };
-      } catch (e) {}
-    }
-  }
-  throw new Error('signature verification failed');
+  if (!sigRaw) return { verified: false, reason: 'unsigned' };
+  return { verified: false, reason: 'signature_ignored' };
 }
 
 function _installProgress(requestId, stage, percent, data) {
@@ -422,7 +583,6 @@ async function _installLanmod(sourcePath, opts) {
   if (!sourcePath.toLowerCase().endsWith('.lanmod')) throw new Error('invalid extension');
   const workDir = path.join(p.tempDir, `install-${_nowId()}`);
   await fs.promises.mkdir(workDir, { recursive: true });
-  const allowUnsigned = process.env.LANSTART_ALLOW_UNSIGNED === '1';
   let extracted = [];
   const requestId = opts && opts.requestId ? String(opts.requestId) : '';
   try {
@@ -447,8 +607,17 @@ async function _installLanmod(sourcePath, opts) {
       if (!expected || expected !== h.toLowerCase()) throw new Error('resource hash mismatch');
     }
     _installProgress(requestId, 'resources', 45, { resources: resources.length });
-    const sigRes = await _verifyLanmodSignature(workDir, manifestBuf, resources, allowUnsigned);
+    const sigRes = await _verifyLanmodSignature(workDir, manifestBuf, resources, true);
     _installProgress(requestId, 'signature', 60, { verified: !!(sigRes && sigRes.verified), reason: (sigRes && sigRes.reason) ? String(sigRes.reason) : '' });
+    if (!_ALLOW_UNSIGNED_PLUGINS) {
+      if (!(sigRes && sigRes.verified)) throw new Error('signature required');
+    }
+    if (!(sigRes && sigRes.verified)) {
+      try {
+        console.warn('[mod]', 'unsigned plugin install', { id: parsed.id, version: parsed.version, reason: sigRes && sigRes.reason ? String(sigRes.reason) : '' });
+      } catch (e) {}
+      _auditLog({ type: 'plugin:install:unsigned', pluginId: parsed.id, version: parsed.version, reason: sigRes && sigRes.reason ? String(sigRes.reason) : '' });
+    }
 
     const reg = await _loadRegistry();
     const installed = await _listInstalled();
@@ -520,6 +689,9 @@ async function _installLanmod(sourcePath, opts) {
     return { success: true, id: parsed.id, version: parsed.version };
   } catch (e) {
     try { await fs.promises.rm(workDir, { recursive: true, force: true }); } catch (err) {}
+    try {
+      _auditLog({ type: 'plugin:install_failed', pluginId: '', error: String(e && e.message || e) });
+    } catch (err) {}
     _installProgress(requestId, 'error', 100, { success: false, error: String(e && e.message || e) });
     return { success: false, error: String(e && e.message || e) };
   }
@@ -623,17 +795,25 @@ function _startModWatchers() {
   } catch (e) {}
 }
 
-// 尝试优先使用 ANGLE (Direct3D) 来利用系统 GPU 驱动，可能改善绘制性能并降低 CPU/内存占用。
-// 在某些 Windows 机器上这有助于偏向核显/集成显卡的渲染路径。
-try {
-  app.commandLine.appendSwitch('use-angle', 'd3d11');
-} catch (e) {}
+if (_RUN_TESTS) {
+  try { app.disableHardwareAcceleration(); } catch (e) {}
+  try { app.commandLine.appendSwitch('disable-gpu'); } catch (e) {}
+  try { app.commandLine.appendSwitch('disable-gpu-compositing'); } catch (e) {}
+} else {
+  // 尝试优先使用 ANGLE (Direct3D) 来利用系统 GPU 驱动，可能改善绘制性能并降低 CPU/内存占用。
+  // 在某些 Windows 机器上这有助于偏向核显/集成显卡的渲染路径。
+  try {
+    app.commandLine.appendSwitch('use-angle', 'd3d11');
+  } catch (e) {}
 
-// 明确启用硬件加速（Electron 默认启用，但显式调用以表明意图）
-try { app.enableHardwareAcceleration(); } catch (e) {}
+  // 明确启用硬件加速（Electron 默认启用，但显式调用以表明意图）
+  try { app.enableHardwareAcceleration(); } catch (e) {}
+}
 
 app.whenReady().then(async () => {
   createWindow({ runTests: _RUN_TESTS });
+  try { await _ensureAuditReady(); } catch (e) {}
+  _ensureAuditReportTimer();
   if (_RUN_TESTS) {
     try{
       _testsTimeout = setTimeout(() => {
@@ -783,6 +963,27 @@ ipcMain.handle('message', async (event, channel, data) => {
     case 'mod:get-registry': {
       const reg = await _loadRegistry();
       return { success: true, registry: reg };
+    }
+    case 'audit:log': {
+      try {
+        const payload = (data && typeof data === 'object') ? data : {};
+        const type = payload.type ? String(payload.type) : '';
+        if (type) _auditLog(payload);
+      } catch (e) {}
+      return { success: true };
+    }
+    case 'audit:get-report': {
+      const report = await _writeAuditReport();
+      return { success: true, report, path: _auditReportPath || '' };
+    }
+    case 'tests:create-unsigned-lanmod': {
+      if (!_RUN_TESTS) return { success: false, error: 'not allowed' };
+      try {
+        const r = await _createTestLanmodFile(data && typeof data === 'object' ? data : {});
+        return { success: true, ...r };
+      } catch (e) {
+        return { success: false, error: String(e && e.message || e) };
+      }
     }
     case 'get-info':
       return {

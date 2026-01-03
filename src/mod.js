@@ -89,6 +89,12 @@ async function _invokeMain(channel, ...args) {
   return await window.electronAPI.invokeMain(channel, ...args);
 }
 
+function _audit(type, data) {
+  try {
+    _invokeMain('message', 'audit:log', Object.assign({ type: String(type || ''), ts: Date.now() }, (data && typeof data === 'object') ? data : {}));
+  } catch (e) {}
+}
+
 function _onMain(channel, cb) {
   if (!window || !window.electronAPI || typeof window.electronAPI.onReplyFromMain !== 'function') return;
   window.electronAPI.onReplyFromMain(channel, (...args) => cb(...args));
@@ -171,9 +177,11 @@ async function _readAssetText(pluginId, relPath) {
   return String(res.data || '');
 }
 
-async function _spawnWorker(pluginId, manifest, entryPath) {
+async function _spawnWorker(pluginId, manifest, entryPath, meta) {
   const pluginSrc = await _readAssetText(pluginId, entryPath);
-  const moduleBlob = new Blob([pluginSrc], { type: 'text/javascript' });
+  const hasModDecl = /(^|\n)\s*(?:const|let|var|function|class)\s+Mod\b/.test(pluginSrc);
+  const injected = hasModDecl ? pluginSrc : `const Mod = globalThis.Mod;\n${pluginSrc}`;
+  const moduleBlob = new Blob([injected], { type: 'text/javascript' });
   const moduleUrl = URL.createObjectURL(moduleBlob);
 
   const perms = Array.isArray(manifest && manifest.permissions) ? manifest.permissions.map(String) : [];
@@ -207,20 +215,49 @@ async function _spawnWorker(pluginId, manifest, entryPath) {
   `;
   const bootBlob = new Blob([boot], { type: 'text/javascript' });
   const bootUrl = URL.createObjectURL(bootBlob);
-  const worker = new Worker(bootUrl, { type: 'module' });
+  const sig = meta && typeof meta === 'object' ? (meta.signature && typeof meta.signature === 'object' ? meta.signature : null) : null;
+  const unsigned = !!(sig && !sig.verified);
+  const sigReason = sig && sig.reason ? String(sig.reason) : '';
 
-  const ctx = { id: pluginId, manifest, worker, moduleUrl, bootUrl, subs: new Set(), offFns: [], ready: false };
+  let worker = null;
+  const _pending = [];
+  try {
+    worker = new Worker(bootUrl);
+    worker.onmessage = (ev) => { _pending.push(ev); };
+  } catch (e) {
+    if (unsigned) _audit('plugin:load_failed', { pluginId, reason: sigReason, error: String(e && e.message || e) });
+    try { await _invokeMain('message', 'mod:enable', { id: pluginId, enabled: false }); } catch (err) {}
+    try { URL.revokeObjectURL(moduleUrl); } catch (err) {}
+    try { URL.revokeObjectURL(bootUrl); } catch (err) {}
+    throw e;
+  }
+
+  const ctx = { id: pluginId, manifest, meta: meta || null, worker, moduleUrl, bootUrl, subs: new Set(), offFns: [], ready: false };
   _plugins.set(pluginId, ctx);
+  if (unsigned) _audit('plugin:load:unsigned', { pluginId, reason: sigReason });
 
-  worker.onmessage = async (ev) => {
+  const _onWorkerMessage = async (ev) => {
     const msg = ev && ev.data;
     if (!msg || typeof msg !== 'object') return;
     if (msg.type === 'ready') {
       ctx.ready = true;
       _sendToPlugin(pluginId, { type: 'init', data: { apiVersion: 1, pluginId, manifest } });
+      if (unsigned) _audit('plugin:activity', { pluginId, action: 'ready' });
       return;
     }
-    if (msg.type === 'error') return;
+    if (msg.type === 'error') {
+      if (unsigned) _audit('plugin:load_failed', { pluginId, reason: sigReason, error: String(msg.error || '') });
+      try { await _invokeMain('message', 'mod:enable', { id: pluginId, enabled: false }); } catch (e) {}
+      try { worker.terminate(); } catch (e) {}
+      try { if (ctx.moduleUrl) URL.revokeObjectURL(ctx.moduleUrl); } catch (e) {}
+      try { if (ctx.bootUrl) URL.revokeObjectURL(ctx.bootUrl); } catch (e) {}
+      try {
+        const off = Array.isArray(ctx.offFns) ? ctx.offFns : [];
+        off.forEach((fn) => { try { fn(); } catch (e) {} });
+      } catch (e) {}
+      _plugins.delete(pluginId);
+      return;
+    }
     if (msg.type === 'bus-subscribe') {
       const topic = String(msg.topic || '').trim();
       if (!_canTopic(manifest, pluginId, topic)) return;
@@ -236,6 +273,7 @@ async function _spawnWorker(pluginId, manifest, entryPath) {
       const topic = String(msg.topic || '').trim();
       if (!_canTopic(manifest, pluginId, topic)) return;
       _hostBus.emit(topic, msg.payload);
+      if (unsigned) _audit('plugin:activity', { pluginId, action: 'bus-publish', topic });
       return;
     }
     if (msg.type === 'register-tool') {
@@ -249,6 +287,7 @@ async function _spawnWorker(pluginId, manifest, entryPath) {
       const rec = { pluginId, toolId, domId, title: String(def.title || def.name || fullId), iconSvg: String(def.iconSvg || ''), label: String(def.label || ''), def };
       _toolDefs.set(fullId, rec);
       _createToolButton(rec);
+      if (unsigned) _audit('plugin:activity', { pluginId, action: 'register-tool', toolId });
       return;
     }
     if (msg.type === 'register-mode') {
@@ -262,6 +301,7 @@ async function _spawnWorker(pluginId, manifest, entryPath) {
       const rec = { pluginId, modeId, domId, title: String(def.title || def.name || fullId), ui: def.ui || null };
       _modeDefs.set(fullId, rec);
       _createModeButton(rec);
+      if (unsigned) _audit('plugin:activity', { pluginId, action: 'register-mode', modeId });
       return;
     }
     if (msg.type === 'show-overlay') {
@@ -270,6 +310,7 @@ async function _spawnWorker(pluginId, manifest, entryPath) {
       const kind = String(def.kind || 'html');
       if (kind === 'html') {
         _openOverlay(String(def.html || ''));
+        if (unsigned) _audit('plugin:activity', { pluginId, action: 'show-overlay', kind: 'html' });
         return;
       }
       if (kind === 'asset') {
@@ -278,17 +319,27 @@ async function _spawnWorker(pluginId, manifest, entryPath) {
         try {
           const html = await _readAssetText(pluginId, rel);
           _openOverlay(html);
+          if (unsigned) _audit('plugin:activity', { pluginId, action: 'show-overlay', kind: 'asset', path: rel });
         } catch (e) {}
         return;
       }
     }
     if (msg.type === 'close-overlay') {
       _closeOverlay();
+      if (unsigned) _audit('plugin:activity', { pluginId, action: 'close-overlay' });
       return;
     }
   };
 
-  worker.onerror = () => {};
+  worker.onmessage = _onWorkerMessage;
+  for (const ev of _pending) {
+    try { await _onWorkerMessage(ev); } catch (e) {}
+  }
+
+  worker.onerror = async () => {
+    if (unsigned) _audit('plugin:load_failed', { pluginId, reason: sigReason, error: 'worker.onerror' });
+    try { await _invokeMain('message', 'mod:enable', { id: pluginId, enabled: false }); } catch (e) {}
+  };
   return ctx;
 }
 
@@ -313,7 +364,7 @@ async function _loadAll() {
     const kind = String(entry.kind || '');
     const entryPath = String(entry.path || '');
     if (kind !== 'worker' || !entryPath) continue;
-    try { await _spawnWorker(id, manifest, entryPath); } catch (e) {}
+    try { await _spawnWorker(id, manifest, entryPath, p.meta || null); } catch (e) {}
   }
   return { tookMs: Math.round(performance.now() - start), skipped };
 }

@@ -164,6 +164,218 @@ async function runUnitTests(){
       applyModeCanvasBackground('whiteboard', 'black', { getToolState: Renderer.getToolState, replaceStrokeColors: Renderer.replaceStrokeColors, setBrushColor: Renderer.setBrushColor, getPreferredPenColor: (mode)=>getPenColorFromSettings(s3, mode) });
       eq(String(Renderer.getToolState().brushColor).toUpperCase(), '#FFFFFF', 'explicit white preserved');
     }
+
+    {
+      document.body.innerHTML = '';
+      document.body.dataset.appMode = 'whiteboard';
+
+      const board = document.createElement('canvas');
+      board.id = 'board';
+      document.body.appendChild(board);
+
+      const panel = document.createElement('div');
+      panel.className = 'floating-panel';
+      document.body.appendChild(panel);
+
+      const dragHandle = document.createElement('div');
+      dragHandle.id = 'dragHandle';
+      panel.appendChild(dragHandle);
+
+      const toolSection = document.createElement('div');
+      toolSection.className = 'panel-section tools';
+      panel.appendChild(toolSection);
+
+      const addTool = (id)=>{
+        const wrap = document.createElement('div');
+        wrap.className = 'tool';
+        const btn = document.createElement('button');
+        btn.id = id;
+        btn.className = 'tool-btn';
+        wrap.appendChild(btn);
+        toolSection.appendChild(wrap);
+        return btn;
+      };
+
+      addTool('pointerTool');
+      addTool('colorTool');
+      addTool('eraserTool');
+      addTool('moreTool');
+      addTool('exitTool');
+      addTool('collapseTool');
+      addTool('undo');
+      addTool('redo');
+
+      const colorMenu = document.createElement('div');
+      colorMenu.id = 'colorMenu';
+      colorMenu.className = 'submenu colors';
+      colorMenu.dataset.pinned = 'false';
+      colorMenu.setAttribute('aria-hidden', 'true');
+      const size = document.createElement('input');
+      size.id = 'size';
+      size.type = 'range';
+      size.value = '4';
+      colorMenu.appendChild(size);
+      const penLabel = document.createElement('div');
+      penLabel.id = 'penModeLabel';
+      colorMenu.appendChild(penLabel);
+      panel.appendChild(colorMenu);
+
+      const eraserMenu = document.createElement('div');
+      eraserMenu.id = 'eraserMenu';
+      eraserMenu.className = 'submenu actions';
+      eraserMenu.dataset.pinned = 'false';
+      eraserMenu.setAttribute('aria-hidden', 'true');
+      const eraserSize = document.createElement('input');
+      eraserSize.id = 'eraserSize';
+      eraserSize.type = 'range';
+      eraserSize.value = '20';
+      eraserMenu.appendChild(eraserSize);
+      const eraserLabel = document.createElement('div');
+      eraserLabel.id = 'eraserModeLabel';
+      eraserMenu.appendChild(eraserLabel);
+      const clear = document.createElement('button');
+      clear.id = 'clear';
+      eraserMenu.appendChild(clear);
+      panel.appendChild(eraserMenu);
+
+      const moreMenu = document.createElement('div');
+      moreMenu.id = 'moreMenu';
+      moreMenu.className = 'submenu actions';
+      moreMenu.dataset.pinned = 'false';
+      moreMenu.setAttribute('aria-hidden', 'true');
+      const exportBtn = document.createElement('button');
+      exportBtn.id = 'exportBtn';
+      moreMenu.appendChild(exportBtn);
+      const settingsBtn = document.createElement('button');
+      settingsBtn.id = 'settingsBtn';
+      moreMenu.appendChild(settingsBtn);
+      const pluginManagerBtn = document.createElement('button');
+      pluginManagerBtn.id = 'pluginManagerBtn';
+      moreMenu.appendChild(pluginManagerBtn);
+      const aboutBtn = document.createElement('button');
+      aboutBtn.id = 'aboutBtn';
+      moreMenu.appendChild(aboutBtn);
+      const closeWhiteboardBtn = document.createElement('button');
+      closeWhiteboardBtn.id = 'closeWhiteboardBtn';
+      moreMenu.appendChild(closeWhiteboardBtn);
+      panel.appendChild(moreMenu);
+
+      const settingsModal = document.createElement('div');
+      settingsModal.id = 'settingsModal';
+      settingsModal.className = 'settings-modal';
+      const settingsBackdrop = document.createElement('div');
+      settingsBackdrop.className = 'settings-backdrop';
+      settingsModal.appendChild(settingsBackdrop);
+      const closeSettings = document.createElement('button');
+      closeSettings.id = 'closeSettings';
+      settingsModal.appendChild(closeSettings);
+      document.body.appendChild(settingsModal);
+
+      const aboutModal = document.createElement('div');
+      aboutModal.id = 'aboutModal';
+      aboutModal.className = 'settings-modal';
+      const aboutBackdrop = document.createElement('div');
+      aboutBackdrop.className = 'settings-backdrop';
+      aboutModal.appendChild(aboutBackdrop);
+      const closeAbout = document.createElement('button');
+      closeAbout.id = 'closeAbout';
+      aboutModal.appendChild(closeAbout);
+      document.body.appendChild(aboutModal);
+
+      await import('./ui-tools.js');
+
+      const moreTool = document.getElementById('moreTool');
+      assert(!!moreTool, 'moreTool exists');
+
+      for (let i = 0; i < 12; i++) {
+        moreTool.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+        const open = moreMenu.classList.contains('open');
+        eq(moreMenu.getAttribute('aria-hidden'), open ? 'false' : 'true', 'moreMenu aria-hidden tracks open');
+      }
+
+      for (let i = 0; i < 12; i++) {
+        moreTool.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+        assert(moreMenu.classList.contains('open'), 'moreMenu opened');
+        settingsBtn.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+        assert(settingsModal.classList.contains('open'), 'settingsModal opened');
+        closeSettings.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+        assert(!settingsModal.classList.contains('open'), 'settingsModal closed');
+
+        moreTool.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+        assert(moreMenu.classList.contains('open'), 'moreMenu opened again');
+        aboutBtn.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+        assert(aboutModal.classList.contains('open'), 'aboutModal opened');
+        closeAbout.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+        assert(!aboutModal.classList.contains('open'), 'aboutModal closed');
+      }
+
+      moreTool.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      assert(moreMenu.classList.contains('open'), 'moreMenu opened for outside-close');
+      board.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      assert(!moreMenu.classList.contains('open'), 'outside click closes moreMenu');
+    }
+
+    {
+      const invoke = async (ch, payload) => {
+        if (!window || !window.electronAPI || typeof window.electronAPI.invokeMain !== 'function') throw new Error('ipc unavailable');
+        return await window.electronAPI.invokeMain('message', String(ch || ''), payload);
+      };
+
+      const Mod = (await import('./mod.js')).default;
+
+      const mkDomId = (pluginId, toolId) => `mod-tool-${pluginId}-${toolId}`.replace(/[^a-zA-Z0-9_-]/g, '_');
+
+      const u = await invoke('tests:create-unsigned-lanmod', {
+        id: 'unsigned.test',
+        name: 'Unsigned Test',
+        version: '1.0.0',
+        permissions: ['ui:toolbar'],
+        mainJs: `Mod.on('init', ()=>{ Mod.registerTool({ id:'hello', title:'Unsigned' }); });`
+      });
+      assert(u && u.success && u.path, 'created unsigned lanmod');
+      const ins = await Mod.install(String(u.path));
+      assert(ins && ins.success, 'install unsigned lanmod');
+      await Mod.reload();
+
+      for (let i = 0; i < 40; i++) {
+        const btn = document.getElementById(mkDomId('unsigned.test', 'hello'));
+        if (btn) break;
+        await new Promise(r => setTimeout(r, 25));
+      }
+      assert(!!document.getElementById(mkDomId('unsigned.test', 'hello')), 'unsigned plugin tool button created');
+
+      const b = await invoke('tests:create-unsigned-lanmod', {
+        id: 'broken.test',
+        name: 'Broken Test',
+        version: '1.0.0',
+        permissions: ['ui:toolbar'],
+        mainJs: `export const x = ;`
+      });
+      assert(b && b.success && b.path, 'created broken lanmod');
+      const ins2 = await Mod.install(String(b.path));
+      assert(ins2 && ins2.success, 'install broken lanmod');
+      await Mod.reload();
+
+      for (let i = 0; i < 80; i++) {
+        const list = await Mod.list();
+        const installed = Array.isArray(list && list.installed) ? list.installed : [];
+        const rec = installed.find((x) => x && x.id === 'broken.test');
+        if (rec && rec.enabled === false) break;
+        await new Promise(r => setTimeout(r, 25));
+      }
+
+      const list2 = await Mod.list();
+      const installed2 = Array.isArray(list2 && list2.installed) ? list2.installed : [];
+      const broken = installed2.find((x) => x && x.id === 'broken.test');
+      assert(broken && broken.enabled === false, 'broken plugin auto-disabled');
+
+      const rep = await invoke('audit:get-report', {});
+      assert(rep && rep.success && rep.report && rep.report.stats, 'audit report available');
+      const stats = rep.report.stats;
+      assert(Number((stats.unsignedInstall && stats.unsignedInstall['unsigned.test']) || 0) >= 1, 'audit unsigned install recorded');
+      assert(Number((stats.unsignedLoad && stats.unsignedLoad['unsigned.test']) || 0) >= 1, 'audit unsigned load recorded');
+      assert(Number((stats.loadFailed && stats.loadFailed['broken.test']) || 0) >= 1, 'audit load failed recorded');
+    }
   }finally{
     try{
       if (prior === null) localStorage.removeItem('appSettings');

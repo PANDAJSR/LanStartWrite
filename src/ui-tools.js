@@ -1,4 +1,18 @@
-// ui-tools.js (ESM)
+/**
+ * ui-tools.js
+ *
+ * 工具栏与设置面板的 UI 编排层（渲染进程）。
+ *
+ * 职责边界：
+ * - UI 事件绑定：按钮点击/触控点击、菜单打开/关闭、快捷键
+ * - 与渲染内核交互：调用 renderer.js 的工具状态/绘制能力
+ * - 与主进程协作：批注模式下的“鼠标穿透”与“可交互区域”同步
+ * - 与插件系统协作：打开插件管理、触发安装、刷新列表（插件实现位于 mod.js/main.js）
+ *
+ * 关键链路（批注模式交互控制）：
+ * 1. UI 打开/关闭子菜单、弹窗 → 计算可交互矩形 → 发送给主进程
+ * 2. 主进程根据矩形决定窗口哪些区域接收鼠标，其他区域穿透到下层应用
+ */
 import { clearAll, undo, redo, setBrushColor, setErasing, canUndo, canRedo, replaceStrokeColors, getToolState, setInputEnabled, setMultiTouchPenEnabled, setInkRecognitionEnabled, setViewTransform, setCanvasMode } from './renderer.js';
 import Curous from './curous.js';
 import Settings, { getPenColorFromSettings } from './setting.js';
@@ -90,6 +104,10 @@ let applyCollapsed = ()=>{};
 let _lastIgnoreMouse = { ignore: false, forward: false, at: 0 };
 let _rectWatchdogTimer = 0;
 
+/**
+ * 读取持久化的应用模式（白板/批注）。
+ * @returns {'whiteboard'|'annotation'}
+ */
 function readPersistedAppMode(){
   try{
     const v = localStorage.getItem('appMode');
@@ -98,10 +116,33 @@ function readPersistedAppMode(){
   return APP_MODES.WHITEBOARD;
 }
 
+/**
+ * 持久化应用模式（白板/批注）。
+ * @param {'whiteboard'|'annotation'} mode - 目标模式
+ * @returns {void}
+ */
 function persistAppMode(mode){
   try{ localStorage.setItem('appMode', mode); }catch(e){}
 }
 
+/**
+ * 绑定“触控点击（tap）”的统一适配层。
+ * @param {HTMLElement} el - 目标元素
+ * @param {(ev:PointerEvent|MouseEvent)=>void} onTap - 点击回调
+ * @param {{delayMs?:number, moveThreshold?:number}} [opts] - 行为参数
+ * @returns {void}
+ *
+ * 设计目标：
+ * - 触控上避免 click 的 300ms 延迟与误触
+ * - 通过位移阈值区分“点击”和“拖动”
+ * - 在 pointerup 触发后，短时间内屏蔽由浏览器合成的 click 事件，避免重复触发
+ *
+ * 流程图（touch tap）：
+ * 1. pointerdown(touch)：记录起点与时间，capture 指针
+ * 2. pointermove：累计位移，超过阈值则标记 moved=true
+ * 3. pointerup：若 moved=false → 计算补齐 delayMs → setTimeout 执行 onTap
+ * 4. click 捕获阶段：若最近触发过 tap → 阻止默认与冒泡，避免二次触发
+ */
 function bindTouchTap(el, onTap, opts){
   if (!el || typeof onTap !== 'function') return;
   const delayMs = (opts && typeof opts.delayMs === 'number') ? Math.max(0, opts.delayMs) : 20;
@@ -156,6 +197,30 @@ function bindTouchTap(el, onTap, opts){
   }, true);
 }
 
+function _isTouchEnvironment(){
+  try{
+    const n = navigator;
+    if (n && typeof n.maxTouchPoints === 'number' && n.maxTouchPoints > 0) return true;
+  }catch(e){}
+  try{
+    if (typeof window !== 'undefined' && window.matchMedia && window.matchMedia('(pointer: coarse)').matches) return true;
+  }catch(e){}
+  return false;
+}
+
+function _menuDebug(){
+  try{
+    if (!localStorage || localStorage.getItem('debugMenus') !== '1') return;
+  }catch(e){ return; }
+  try{ console.debug('[menu]', ...arguments); }catch(e){}
+}
+
+/**
+ * 通知主进程切换批注窗口的“鼠标穿透/转发”策略。
+ * @param {boolean} ignore - 是否忽略鼠标（穿透到下层窗口）
+ * @param {boolean} forward - 是否转发（由主进程实现的转发策略）
+ * @returns {void}
+ */
 function sendIgnoreMouse(ignore, forward){
   try{
     if (!window.electronAPI || typeof window.electronAPI.sendToMain !== 'function') return;
@@ -164,6 +229,11 @@ function sendIgnoreMouse(ignore, forward){
   }catch(e){}
 }
 
+/**
+ * 向主进程同步“可交互区域矩形列表”，用于批注窗口的点击命中与穿透裁剪。
+ * @param {Array<{left:number,top:number,width:number,height:number}>} rects - 可交互矩形
+ * @returns {void}
+ */
 function sendInteractiveRects(rects){
   try{
     if (!window.electronAPI || typeof window.electronAPI.sendToMain !== 'function') return;
@@ -171,6 +241,19 @@ function sendInteractiveRects(rects){
   }catch(e){}
 }
 
+/**
+ * 收集当前界面中需要“接收鼠标事件”的元素矩形。
+ * @returns {Array<{left:number,top:number,width:number,height:number}>}
+ *
+ * 业务含义：
+ * - 批注模式下，画布区域默认允许穿透以便操作底层应用
+ * - 工具栏/子菜单/弹窗等 UI 区域应当接收鼠标，否则无法交互
+ *
+ * 流程图（收集交互矩形）：
+ * 1. pushEl：对单个元素做 getBoundingClientRect，并过滤 0 尺寸
+ * 2. 将浮动工具栏、已打开子菜单、识别 UI、设置弹窗、页工具栏加入列表
+ * 3. 返回矩形数组给主进程
+ */
 function collectInteractiveRects(){
   const rects = [];
   const pushEl = (el)=>{
@@ -190,6 +273,10 @@ function collectInteractiveRects(){
   return rects;
 }
 
+/**
+ * 在批注模式下，按帧合并一次“交互矩形同步”，避免频繁 reflow 与 IPC 泛洪。
+ * @returns {void}
+ */
 function scheduleInteractiveRectsUpdate(){
   if (_appMode !== APP_MODES.ANNOTATION) return;
   if (_interactiveRectsRaf) return;
@@ -236,25 +323,37 @@ function updateExitToolUI(){
 }
 
 function applyWindowInteractivity(){
-  const hasOpenModal = !!document.querySelector('.settings-modal.open, .recognition-ui.open');
-  if (hasOpenModal) {
+  const hasOpenUi = !!document.querySelector('.settings-modal.open, .recognition-ui.open, .submenu.open, .mod-overlay.open');
+  if (hasOpenUi) {
+    _menuDebug('interactivity', 'open-ui');
     sendIgnoreMouse(false, false);
     try{ sendInteractiveRects(collectInteractiveRects()); }catch(e){}
     _setRectWatchdog(false);
     return;
   }
   if (_appMode === APP_MODES.WHITEBOARD) {
+    _menuDebug('interactivity', 'whiteboard');
     sendIgnoreMouse(false, false);
     _setRectWatchdog(false);
     return;
   }
   const pointerActive = !!(pointerTool && pointerTool.classList.contains('active'));
   if (!pointerActive) {
+    _menuDebug('interactivity', 'no-pointer');
     sendIgnoreMouse(false, false);
     _setRectWatchdog(false);
     return;
   }
+  if (_isTouchEnvironment()){
+    _menuDebug('interactivity', 'touch-env-force-interactive');
+    sendIgnoreMouse(false, false);
+    try{ sendInteractiveRects(collectInteractiveRects()); }catch(e){}
+    _setRectWatchdog(false);
+    scheduleInteractiveRectsUpdate();
+    return;
+  }
   try{ sendInteractiveRects(collectInteractiveRects()); }catch(e){}
+  _menuDebug('interactivity', 'pointer-ignore');
   sendIgnoreMouse(true, true);
   _setRectWatchdog(true);
   scheduleInteractiveRectsUpdate();
@@ -393,16 +492,18 @@ if (colorTool) {
     const wantOpen = !wasOpen;
     if (wantOpen && !colorMenu.classList.contains('open')) {
       try{
-        const rects = collectInteractiveRects();
-        console.error('[pen-menu] open failed', {
-          appMode: _appMode,
-          pinned,
-          pointerWasActive,
-          ignoreMouse: _lastIgnoreMouse,
-          rectCount: Array.isArray(rects) ? rects.length : 0,
-          ariaHidden: colorMenu.getAttribute('aria-hidden'),
-          evType: ev && ev.type ? String(ev.type) : ''
-        });
+        if (localStorage && localStorage.getItem('debugMenus') === '1') {
+          const rects = collectInteractiveRects();
+          console.debug('[menu]', 'pen-menu-open-failed', {
+            appMode: _appMode,
+            pinned,
+            pointerWasActive,
+            ignoreMouse: _lastIgnoreMouse,
+            rectCount: Array.isArray(rects) ? rects.length : 0,
+            ariaHidden: colorMenu.getAttribute('aria-hidden'),
+            evType: ev && ev.type ? String(ev.type) : ''
+          });
+        }
       }catch(e){}
     }
     updatePenModeLabel();
@@ -493,11 +594,7 @@ if (moreTool) {
   const onSettings = ()=>{ closeAllSubmenus(); syncToolbarIcons(); applyWindowInteractivity(); scheduleInteractiveRectsUpdate(); Message.emit(EVENTS.OPEN_SETTINGS, {}); };
   const onPluginManager = ()=>{ closeAllSubmenus(); syncToolbarIcons(); applyWindowInteractivity(); scheduleInteractiveRectsUpdate(); try{ openPluginModal(); }catch(e){} };
   const onAbout = ()=>{ closeAllSubmenus(); syncToolbarIcons(); applyWindowInteractivity(); scheduleInteractiveRectsUpdate(); Message.emit(EVENTS.OPEN_ABOUT, {}); };
-  if (exportBtn) { exportBtn.addEventListener('click', onExport); bindTouchTap(exportBtn, onExport, { delayMs: 20 }); }
-  if (settingsBtn) { settingsBtn.addEventListener('click', onSettings); bindTouchTap(settingsBtn, onSettings, { delayMs: 20 }); }
-  if (pluginManagerBtn) { pluginManagerBtn.addEventListener('click', onPluginManager); bindTouchTap(pluginManagerBtn, onPluginManager, { delayMs: 20 }); }
-  if (aboutBtn) { aboutBtn.addEventListener('click', onAbout); bindTouchTap(aboutBtn, onAbout, { delayMs: 20 }); }
-  if (closeWhiteboardBtn) closeWhiteboardBtn.addEventListener('click', ()=>{
+  const onCloseWhiteboard = ()=>{
     closeAllSubmenus();
     syncToolbarIcons();
     applyWindowInteractivity();
@@ -509,7 +606,12 @@ if (moreTool) {
       }
     }catch(e){}
     try{ window.close(); }catch(e){}
-  });
+  };
+  if (exportBtn) { exportBtn.addEventListener('click', onExport); bindTouchTap(exportBtn, onExport, { delayMs: 20 }); }
+  if (settingsBtn) { settingsBtn.addEventListener('click', onSettings); bindTouchTap(settingsBtn, onSettings, { delayMs: 20 }); }
+  if (pluginManagerBtn) { pluginManagerBtn.addEventListener('click', onPluginManager); bindTouchTap(pluginManagerBtn, onPluginManager, { delayMs: 20 }); }
+  if (aboutBtn) { aboutBtn.addEventListener('click', onAbout); bindTouchTap(aboutBtn, onAbout, { delayMs: 20 }); }
+  if (closeWhiteboardBtn) { closeWhiteboardBtn.addEventListener('click', onCloseWhiteboard); bindTouchTap(closeWhiteboardBtn, onCloseWhiteboard, { delayMs: 20 }); }
 }
 
 if (exitTool) {
@@ -565,7 +667,9 @@ document.addEventListener('keydown', (e)=>{
   if ((e.ctrlKey || e.metaKey) && (e.key.toLowerCase()==='y' || (e.shiftKey && e.key.toLowerCase()==='z'))) { e.preventDefault(); redo(); }
 });
 
-// ensure labels reflect initial state
+/**
+ * 初始化阶段：同步一次图标与文案，确保 UI 与当前工具状态一致。
+ */
 updateEraserModeLabel();
 updatePenModeLabel();
 syncToolbarIcons();
@@ -577,7 +681,15 @@ try{
   enterWhiteboardMode({ persist: false });
 }
 
-// Collapse/expand behavior for horizontal fold
+/**
+ * 工具栏折叠/展开逻辑（用于横向收起）。
+ *
+ * 流程图（折叠状态应用）：
+ * 1. 切换 panel 的 collapsed class
+ * 2. 将状态写入 localStorage（与 Settings 的持久化并存，用于启动兜底）
+ * 3. 触发 resize 以驱动依赖尺寸的布局/观察者逻辑
+ * 4. 批注模式下同步交互矩形，避免折叠后命中区域不一致
+ */
 const settings = Settings.loadSettings();
 
 if (collapseTool && panel) {
@@ -654,20 +766,32 @@ function openSettings(){
   if (keyUndo) keyUndo.value = (s.shortcuts && s.shortcuts.undo) || '';
   if (keyRedo) keyRedo.value = (s.shortcuts && s.shortcuts.redo) || '';
   settingsModal.classList.add('open');
+  _menuDebug('modal', 'open', 'settings');
   applyWindowInteractivity();
   scheduleInteractiveRectsUpdate();
 }
 
-function closeSettingsModal(){ if (settingsModal) settingsModal.classList.remove('open'); applyWindowInteractivity(); scheduleInteractiveRectsUpdate(); }
+function closeSettingsModal(){
+  if (settingsModal) settingsModal.classList.remove('open');
+  _menuDebug('modal', 'close', 'settings');
+  applyWindowInteractivity();
+  scheduleInteractiveRectsUpdate();
+}
 
 function openAbout(){
   if (!aboutModal) return;
   aboutModal.classList.add('open');
+  _menuDebug('modal', 'open', 'about');
   applyWindowInteractivity();
   scheduleInteractiveRectsUpdate();
 }
 
-function closeAboutModal(){ if (aboutModal) aboutModal.classList.remove('open'); applyWindowInteractivity(); scheduleInteractiveRectsUpdate(); }
+function closeAboutModal(){
+  if (aboutModal) aboutModal.classList.remove('open');
+  _menuDebug('modal', 'close', 'about');
+  applyWindowInteractivity();
+  scheduleInteractiveRectsUpdate();
+}
 
 function _invokeMainMessage(channel, data){
   try{
@@ -693,6 +817,7 @@ function _sigBadge(meta){
   if (sig.verified) return { text: '签名: 已验证', cls: 'plugin-sig-ok', warn: '' };
   const reason = String(sig.reason || '');
   if (reason === 'unsigned') return { text: '签名: 未签名', cls: 'plugin-sig-warn', warn: '未签名插件存在更高安全风险，请谨慎启用。' };
+  if (reason === 'signature_ignored') return { text: '签名: 已忽略', cls: 'plugin-sig-warn', warn: '当前已禁用签名强制校验，插件签名将被忽略，请仅在受控环境中使用。' };
   return { text: '签名: 未通过', cls: 'plugin-sig-bad', warn: '签名验证失败，请勿启用来源不明的插件。' };
 }
 
