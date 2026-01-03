@@ -2,7 +2,7 @@
 
 新一代书写体验
 
-LanStartWrite 是一款基于 Electron 的现代化电子白板应用，提供流畅的书写体验、智能的墨迹识别和强大的插件扩展系统。无论是教学演示、创意设计还是日常记录，都能为您提供专业级的书写工具。
+LanStartWrite 基于 Electron 的书写应用 采用vibe coding
 
 ## ✨ 核心特性
 
