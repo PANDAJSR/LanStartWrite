@@ -1,0 +1,64 @@
+{
+  "id": "inkcanvas-enhanced",
+  "name": "InkCanvas Enhanced",
+  "version": "1.0.0",
+  "description": "Enhanced InkCanvas with dynamic brush effects and low-latency rendering optimization",
+  "type": "feature",
+  "author": "LanStartWrite",
+  "permissions": [
+    "ui:override",
+    "ui:menu"
+  ],
+  "overrides": {
+    "renderer": {
+      "path": "renderer-enhanced.js"
+    }
+  },
+  "config": {
+    "dynamicBrushEnabled": true,
+    "pressureSensitivity": 0.7,
+    "speedSensitivity": 0.8,
+    "minBrushRatio": 0.4,
+    "maxBrushRatio": 1.6,
+    "smoothingFactor": 0.3,
+    "adaptiveSmoothing": true,
+    "performanceMetrics": {
+      "enabled": true,
+      "sampleInterval": 1000
+    }
+  },
+  "events": {
+    "publish": [
+      "inkcanvas-enhanced/stroke-enhanced",
+      "inkcanvas-enhanced/stroke-updated",
+      "inkcanvas-enhanced/stroke-ended",
+      "inkcanvas-enhanced/performance-metrics",
+      "inkcanvas-enhanced/config-updated",
+      "inkcanvas-enhanced/config-response",
+      "inkcanvas-enhanced/performance-stats-response",
+      "inkcanvas-enhanced/performance-stats-reset",
+      "inkcanvas-enhanced/version-response",
+      "inkcanvas-enhanced/ready"
+    ],
+    "subscribe": [
+      "inkcanvas-enhanced/stroke-start",
+      "inkcanvas-enhanced/stroke-update",
+      "inkcanvas-enhanced/stroke-end",
+      "inkcanvas-enhanced/update-config",
+      "inkcanvas-enhanced/get-config",
+      "inkcanvas-enhanced/get-performance-stats",
+      "inkcanvas-enhanced/reset-performance-stats",
+      "inkcanvas-enhanced/get-version",
+      "menu-click"
+    ]
+  },
+  "menuButtons": [
+    {
+      "id": "inkcanvas-enhanced-toggle",
+      "title": "增强笔触",
+      "iconSvg": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"22\" height=\"22\" viewBox=\"0 0 24 24\"><path fill=\"currentColor\" d=\"M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z\"/></svg>",
+      "buttonId": "toggle-enhanced"
+    }
+  ],
+  "main": "main.js"
+}

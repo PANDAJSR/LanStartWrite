@@ -8,6 +8,12 @@
     },
     "inkcanvas-with-electron-for-write": {
       "enabled": false
+    },
+    "ink-enhancer": {
+      "enabled": false
+    },
+    "inkcanvas-comprehensive": {
+      "enabled": false
     }
   },
   "order": [

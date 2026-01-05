@@ -6,10 +6,14 @@ const _plugins = new Map();
 const _toolDefs = new Map();
 const _modeDefs = new Map();
 const _menuButtonDefs = new Map();
+const _injectDefs = new Map();
 let _activeModeId = null;
 let _overlayEl = null;
 let _overlayStyleEl = null;
 let _reloadTimer = 0;
+let _injectSeq = 0;
+let _injectObserver = null;
+const _injectContainers = new WeakMap();
 
 function _nowId() {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
@@ -209,6 +213,137 @@ function _sendToPlugin(pluginId, msg) {
   try { p.worker.postMessage(msg); } catch (e) {}
 }
 
+function _escapeAttrValue(v) {
+  return String(v || '').replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+}
+
+function _normalizeInjectDef(pluginId, raw) {
+  const def = raw && typeof raw === 'object' ? raw : {};
+  const selector = String(def.selector || '').trim();
+  if (!selector) return null;
+  const posRaw = String(def.position || def.pos || 'append').trim().toLowerCase();
+  const position = (posRaw === 'prepend' || posRaw === 'before' || posRaw === 'after' || posRaw === 'replace') ? posRaw : 'append';
+  const modeRaw = String(def.mode || 'async').trim().toLowerCase();
+  const mode = (modeRaw === 'sync' || modeRaw === 'async') ? modeRaw : 'async';
+  const priorityNum = Number(def.priority);
+  const priority = Number.isFinite(priorityNum) ? priorityNum : 0;
+  const repeat = !!def.repeat;
+  const key = String(def.key || def.id || '').trim();
+  const html = String(def.html || '');
+  const idPart = String(def.id || '').trim() || _nowId();
+  const id = `${pluginId}:${idPart}`;
+  const seq = ++_injectSeq;
+  const conflictRaw = String(def.conflict || 'replace').trim().toLowerCase();
+  const conflict = (conflictRaw === 'skip' || conflictRaw === 'replace' || conflictRaw === 'stack') ? conflictRaw : 'replace';
+  return { id, pluginId, selector, position, mode, priority, repeat, key, html, conflict, seq, appliedEls: new WeakSet(), pending: false };
+}
+
+function _getInjectContainer(targetEl, position) {
+  if (!(targetEl instanceof HTMLElement)) return null;
+  let perEl = _injectContainers.get(targetEl);
+  if (!perEl) {
+    perEl = new Map();
+    _injectContainers.set(targetEl, perEl);
+  }
+  const existing = perEl.get(position);
+  if (existing && existing.isConnected) return existing;
+  const container = document.createElement('div');
+  container.setAttribute('data-mod-inject-root', '1');
+  container.setAttribute('data-mod-inject-pos', position);
+  container.style.display = 'contents';
+  if (position === 'before') {
+    targetEl.insertAdjacentElement('beforebegin', container);
+  } else if (position === 'after') {
+    targetEl.insertAdjacentElement('afterend', container);
+  } else if (position === 'prepend') {
+    targetEl.insertAdjacentElement('afterbegin', container);
+  } else if (position === 'replace') {
+    targetEl.innerHTML = '';
+    targetEl.insertAdjacentElement('afterbegin', container);
+  } else {
+    targetEl.insertAdjacentElement('beforeend', container);
+  }
+  perEl.set(position, container);
+  return container;
+}
+
+function _reorderInjectContainer(container) {
+  if (!(container instanceof HTMLElement)) return;
+  const items = Array.from(container.children).filter((n) => n instanceof HTMLElement);
+  items.sort((a, b) => {
+    const ap = Number(a.getAttribute('data-mod-inject-priority') || '0');
+    const bp = Number(b.getAttribute('data-mod-inject-priority') || '0');
+    if (bp !== ap) return bp - ap;
+    const as = Number(a.getAttribute('data-mod-inject-seq') || '0');
+    const bs = Number(b.getAttribute('data-mod-inject-seq') || '0');
+    return as - bs;
+  });
+  for (const el of items) container.appendChild(el);
+}
+
+function _applyInjectToTarget(rec, targetEl) {
+  const container = _getInjectContainer(targetEl, rec.position);
+  if (!container) return false;
+  const key = rec.key ? `${rec.pluginId}:${rec.key}` : rec.id;
+  const selector = `[data-mod-inject-key="${_escapeAttrValue(key)}"]`;
+  const existing = container.querySelector(selector);
+  if (existing instanceof HTMLElement) {
+    if (rec.conflict === 'skip') return false;
+    if (rec.conflict === 'replace') {
+      existing.innerHTML = rec.html;
+      existing.setAttribute('data-mod-inject-priority', String(rec.priority));
+      existing.setAttribute('data-mod-inject-seq', String(rec.seq));
+      _reorderInjectContainer(container);
+      return true;
+    }
+  }
+  const host = document.createElement('div');
+  host.setAttribute('data-mod-inject-key', key);
+  host.setAttribute('data-mod-inject-plugin', rec.pluginId);
+  host.setAttribute('data-mod-inject-priority', String(rec.priority));
+  host.setAttribute('data-mod-inject-seq', String(rec.seq));
+  host.innerHTML = rec.html;
+  container.appendChild(host);
+  _reorderInjectContainer(container);
+  return true;
+}
+
+function _tryApplyInjection(rec) {
+  let matched = 0;
+  let applied = 0;
+  let els = [];
+  try { els = Array.from(document.querySelectorAll(rec.selector)); } catch (e) { els = []; }
+  for (const el of els) {
+    if (!(el instanceof HTMLElement)) continue;
+    matched += 1;
+    if (rec.appliedEls.has(el)) continue;
+    const did = _applyInjectToTarget(rec, el);
+    if (did) {
+      rec.appliedEls.add(el);
+      applied += 1;
+    }
+  }
+  if (!matched && rec.mode === 'async') rec.pending = true;
+  if (applied && !rec.repeat) rec.pending = false;
+  return { matched, applied };
+}
+
+function _ensureInjectObserver() {
+  if (_injectObserver) return;
+  _injectObserver = new MutationObserver(() => {
+    for (const rec of _injectDefs.values()) {
+      if (!rec || typeof rec !== 'object') continue;
+      if (rec.mode !== 'async') continue;
+      if (!rec.pending && !rec.repeat) continue;
+      const res = _tryApplyInjection(rec);
+      if (res.applied) {
+        _sendToPlugin(rec.pluginId, { type: 'ui-inject-applied', data: { id: rec.id, selector: rec.selector, position: rec.position, appliedCount: res.applied } });
+      }
+    }
+  });
+  try { _injectObserver.observe(document.documentElement, { childList: true, subtree: true }); } catch (e) {}
+}
+
 function _terminateAll() {
   for (const p of _plugins.values()) {
     try {
@@ -232,8 +367,12 @@ function _terminateAll() {
   _toolDefs.clear();
   _modeDefs.clear();
   _menuButtonDefs.clear();
+  _injectDefs.clear();
   _activeModeId = null;
   _closeOverlay();
+  try { if (_injectObserver) _injectObserver.disconnect(); } catch (e) {}
+  _injectObserver = null;
+  try { document.querySelectorAll('[data-mod-inject-root="1"]').forEach((el) => { try { el.remove(); } catch (e) {} }); } catch (e) {}
 }
 
 async function _readAssetText(pluginId, relPath) {
@@ -252,6 +391,8 @@ async function _spawnWorker(pluginId, manifest, entryPath, meta) {
   const perms = Array.isArray(manifest && manifest.permissions) ? manifest.permissions.map(String) : [];
   const boot = `
     const _evt = (()=>{ const m=new Map(); return { on:(k,f)=>{ if(!m.has(k)) m.set(k,[]); m.get(k).push(f); }, emit:(k,d)=>{ const a=m.get(k)||[]; for(const f of a){ try{ f(d); }catch(e){} } } }; })();
+    const _req = new Map();
+    const _rid = ()=> Math.random().toString(36).slice(2) + Date.now().toString(36);
     const __perms = new Set(${JSON.stringify(perms)});
     if (!__perms.has('net:fetch')) {
       try { self.fetch = undefined; } catch (e) {}
@@ -265,7 +406,8 @@ async function _spawnWorker(pluginId, manifest, entryPath, meta) {
       registerMode: (def)=>{ self.postMessage({ type:'register-mode', def }); },
       registerMenuButton: (def)=>{ self.postMessage({ type:'register-menu-button', def }); },
       showOverlay: (def)=>{ self.postMessage({ type:'show-overlay', def }); },
-      closeOverlay: ()=>{ self.postMessage({ type:'close-overlay' }); }
+      closeOverlay: ()=>{ self.postMessage({ type:'close-overlay' }); },
+      inject: (def)=> new Promise((resolve)=>{ const reqId=_rid(); _req.set(reqId, resolve); self.postMessage({ type:'ui-inject', reqId, def }); })
     };
     self.Mod = Mod;
     self.onmessage = (ev)=>{
@@ -277,6 +419,8 @@ async function _spawnWorker(pluginId, manifest, entryPath, meta) {
       if (m.type === 'menu-click') _evt.emit('menu', m.data || {});
       if (m.type === 'mode-activate') _evt.emit('mode', m.data || {});
       if (m.type === 'ui-action') _evt.emit('ui', m.data || {});
+      if (m.type === 'ui-inject-applied') _evt.emit('inject', m.data || {});
+      if (m.type === 'ui-inject-res') { const fn=_req.get(String(m.reqId||'')); if(fn){ _req.delete(String(m.reqId||'')); try{ fn(m.data||{}); }catch(e){} } }
     };
     (async()=>{ await import(${JSON.stringify(moduleUrl)}); self.postMessage({ type:'ready' }); })().catch((e)=>{ self.postMessage({ type:'error', error: String(e && e.message || e) }); });
   `;
@@ -428,6 +572,46 @@ async function _spawnWorker(pluginId, manifest, entryPath, meta) {
     if (msg.type === 'close-overlay') {
       _closeOverlay();
       if (unsigned) _audit('plugin:activity', { pluginId, action: 'close-overlay' });
+      return;
+    }
+    if (msg.type === 'ui-inject') {
+      const reqId = String(msg.reqId || '');
+      if (!_hasPerm(manifest, 'ui:inject')) {
+        if (reqId) _sendToPlugin(pluginId, { type: 'ui-inject-res', reqId, data: { success: false, error: 'permission denied' } });
+        return;
+      }
+      const rec = _normalizeInjectDef(pluginId, msg.def);
+      if (!rec) {
+        if (reqId) _sendToPlugin(pluginId, { type: 'ui-inject-res', reqId, data: { success: false, error: 'invalid def' } });
+        return;
+      }
+      const existing = _injectDefs.get(rec.id);
+      if (existing) {
+        existing.selector = rec.selector;
+        existing.position = rec.position;
+        existing.mode = rec.mode;
+        existing.priority = rec.priority;
+        existing.repeat = rec.repeat;
+        existing.key = rec.key;
+        existing.html = rec.html;
+        existing.conflict = rec.conflict;
+        existing.seq = rec.seq;
+        const res = _tryApplyInjection(existing);
+        if (existing.mode === 'async' && (existing.pending || existing.repeat)) _ensureInjectObserver();
+        if (reqId) _sendToPlugin(pluginId, { type: 'ui-inject-res', reqId, data: { success: true, id: existing.id, appliedCount: res.applied, pending: !!existing.pending } });
+        if (unsigned) _audit('plugin:activity', { pluginId, action: 'ui-inject', selector: existing.selector });
+        return;
+      }
+      _injectDefs.set(rec.id, rec);
+      const res = _tryApplyInjection(rec);
+      if (rec.mode === 'sync' && !res.matched) {
+        _injectDefs.delete(rec.id);
+        if (reqId) _sendToPlugin(pluginId, { type: 'ui-inject-res', reqId, data: { success: false, error: 'target not found' } });
+        return;
+      }
+      if (rec.mode === 'async' && (rec.pending || rec.repeat)) _ensureInjectObserver();
+      if (reqId) _sendToPlugin(pluginId, { type: 'ui-inject-res', reqId, data: { success: true, id: rec.id, appliedCount: res.applied, pending: !!rec.pending } });
+      if (unsigned) _audit('plugin:activity', { pluginId, action: 'ui-inject', selector: rec.selector });
       return;
     }
   };

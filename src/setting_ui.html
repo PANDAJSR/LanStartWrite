@@ -1,55 +1,140 @@
 <!-- setting_ui.html: settings modal fragment -->
 <div id="settingsModal" class="settings-modal" role="dialog" aria-hidden="true">
   <div class="settings-backdrop"></div>
-  <div class="settings-panel">
+  <div class="settings-panel settings-gnome" aria-modal="true" aria-label="设置">
     <div class="settings-header">
       <h3>设置</h3>
       <button id="closeSettings" class="tool-btn">✕</button>
     </div>
-    <div class="settings-body">
-        <label><input type="checkbox" id="optAutoResize"> 自动调整工具栏宽度</label>
-        <label><input type="checkbox" id="optCollapsed"> 启动时折叠工具栏</label>
-        <label>主题
-          <select id="optTheme">
-            <option value="light">浅色</option>
-            <option value="dark">深色</option>
-          </select>
-        </label>
-        <label>视觉效果
-          <select id="optVisualStyle">
-            <option value="solid">实心</option>
-            <option value="blur">模糊</option>
-            <option value="transparent">透明</option>
-          </select>
-        </label>
-        <label>画布颜色
-          <select id="optCanvasColor">
-            <option value="white">白色</option>
-            <option value="black">黑色</option>
-            <option value="chalkboard">黑板绿</option>
-          </select>
-        </label>
-        <label><input type="checkbox" id="optTooltips"> 显示工具提示</label>
-        <label><input type="checkbox" id="optMultiTouchPen"> 触摸多指书写</label>
-        <fieldset style="border:1px solid #eee;padding:8px;border-radius:8px">
-          <legend>批注</legend>
-          <label>默认笔颜色 <input type="color" id="optAnnotationPenColor" value="#FF0000"></label>
-        </fieldset>
-        <fieldset style="border:1px solid #eee;padding:8px;border-radius:8px">
-          <legend>智能功能</legend>
-          <label><input type="checkbox" id="optSmartInk"> 图形与直线智能识别</label>
-        </fieldset>
-        <fieldset style="border:1px solid #eee;padding:8px;border-radius:8px">
-          <legend>快捷键</legend>
-          <label>撤销: <input id="keyUndo" type="text" placeholder="Ctrl+Z" maxlength="20"></label>
-          <label>重做: <input id="keyRedo" type="text" placeholder="Ctrl+Y" maxlength="20"></label>
-        </fieldset>
-        <div style="padding-top:8px;display:flex;gap:8px;align-items:center">
-          <button id="previewSettings">预览设置</button>
-          <button id="revertPreview">撤销预览</button>
-          <div id="historyStateDisplay" style="margin-left:auto;font-size:13px;color:#444">撤销: — 重做: —</div>
+    <div class="settings-body settings-body-gnome">
+      <div class="settings-shell">
+        <div class="settings-sidebar" role="tablist" aria-label="设置分类">
+          <button class="settings-tab" type="button" role="tab" id="settingsTab-general" data-tab="general" aria-controls="settingsPanel-general" aria-selected="true" tabindex="0">
+            <svg class="md-icon" width="24" height="24" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M19.14,12.94c.04-.3.06-.61.06-.94s-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.11-.2-.35-.28-.56-.2l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.03-.22-.22-.38-.44-.38h-3.84c-.22,0-.41.16-.44.38l-.36,2.54c-.59.24-1.13.56-1.62.94l-2.39-.96c-.2-.08-.45,0-.56.2l-1.92,3.32c-.12.2-.07.47.12.61l2.03,1.58c-.05.3-.07.63-.07.94s.02.64.07.94l-2.03,1.58c-.18.14-.23.41-.12.61l1.92,3.32c.11.2.35.28.56.2l2.39-.96c.5.38,1.03.7,1.62.94l.36,2.54c.03.22.22.38.44.38h3.84c.22,0,.41-.16.44-.38l.36-2.54c.59-.24,1.13-.56,1.62-.94l2.39.96c.2.08.45,0,.56-.2l1.92-3.32c.11-.2.06-.47-.12-.61l-2.02-1.58ZM12,15.6c-1.99,0-3.6-1.61-3.6-3.6s1.61-3.6,3.6-3.6,3.6,1.61,3.6,3.6-1.61,3.6-3.6,3.6Z"/></svg>
+            <span class="settings-tab-text">常规</span>
+          </button>
+          <button class="settings-tab" type="button" role="tab" id="settingsTab-appearance" data-tab="appearance" aria-controls="settingsPanel-appearance" aria-selected="false" tabindex="-1">
+            <svg class="md-icon" width="24" height="24" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 22c4.42 0 8-3.58 8-8c0-1.1-.22-2.14-.62-3.1c-.37-.9-1.41-1.32-2.3-.95l-1.39.57c-.51.21-1.1-.03-1.31-.55l-.57-1.39c-.37-.9-1.41-1.32-2.3-.95l-1.39.57c-.51.21-1.1-.03-1.31-.55l-.57-1.39c-.37-.9-1.41-1.32-2.3-.95C3.24 4.8 2 7.28 2 10c0 6.63 3.37 12 10 12Zm6-8c0 3.31-2.69 6-6 6c-2.89 0-5.45-2.06-6.4-4.98c.35.13.73.2 1.12.2c.59 0 1.16-.11 1.69-.33l1.39-.57l.57 1.39c.37.9 1.41 1.32 2.3.95l1.39-.57l.57 1.39c.37.9 1.41 1.32 2.3.95l1.06-.44c.02.14.02.27.02.41Z"/></svg>
+            <span class="settings-tab-text">外观</span>
+          </button>
+          <button class="settings-tab" type="button" role="tab" id="settingsTab-input" data-tab="input" aria-controls="settingsPanel-input" aria-selected="false" tabindex="-1">
+            <svg class="md-icon" width="24" height="24" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M7 24c-1.1 0-2-.9-2-2V11c0-1.1.9-2 2-2s2 .9 2 2v11c0 1.1-.9 2-2 2Zm10-11c1.1 0 2-.9 2-2V2c0-1.1-.9-2-2-2s-2 .9-2 2v9c0 1.1.9 2 2 2Zm-5 7c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2s-2 .9-2 2v12c0 1.1.9 2 2 2Z"/></svg>
+            <span class="settings-tab-text">输入</span>
+          </button>
+          <button class="settings-tab" type="button" role="tab" id="settingsTab-shortcuts" data-tab="shortcuts" aria-controls="settingsPanel-shortcuts" aria-selected="false" tabindex="-1">
+            <svg class="md-icon" width="24" height="24" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M20 5H4c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2ZM7 17H5v-2h2v2Zm0-4H5v-2h2v2Zm0-4H5V7h2v2Zm4 8H9v-2h2v2Zm0-4H9v-2h2v2Zm0-4H9V7h2v2Zm4 8h-2v-2h2v2Zm0-4h-2v-2h2v2Zm0-4h-2V7h2v2Zm4 8h-2v-2h2v2Zm0-4h-2v-2h2v2Zm0-4h-2V7h2v2Z"/></svg>
+            <span class="settings-tab-text">快捷键</span>
+          </button>
+        </div>
+        <div class="settings-content" aria-live="polite" aria-busy="false">
+          <div class="settings-loading" hidden aria-hidden="true">
+            <div class="settings-spinner" aria-hidden="true"></div>
+            <div class="settings-loading-text">加载中…</div>
+          </div>
+          <div class="settings-content-inner">
+            <div class="settings-page active" id="settingsPanel-general" data-tab="general" role="tabpanel" aria-labelledby="settingsTab-general">
+              <div class="settings-cards">
+                <section class="settings-card" aria-label="工具栏">
+                  <div class="settings-card-title">工具栏</div>
+                  <div class="settings-card-body">
+                    <label class="settings-control"><input type="checkbox" id="optAutoResize"> <span>自动调整工具栏宽度</span></label>
+                    <label class="settings-control"><input type="checkbox" id="optCollapsed"> <span>启动时折叠工具栏</span></label>
+                    <label class="settings-control"><input type="checkbox" id="optTooltips"> <span>显示工具提示</span></label>
+                  </div>
+                </section>
+                <section class="settings-card" aria-label="设置预览">
+                  <div class="settings-card-title">预览</div>
+                  <div class="settings-card-body">
+                    <div class="settings-row">
+                      <button id="previewSettings" class="mode-btn" type="button">预览设置</button>
+                      <button id="revertPreview" class="mode-btn" type="button">撤销预览</button>
+                    </div>
+                    <div id="historyStateDisplay" class="settings-hint" aria-live="polite">撤销: — 重做: —</div>
+                  </div>
+                </section>
+              </div>
+            </div>
+            <div class="settings-page" id="settingsPanel-appearance" data-tab="appearance" role="tabpanel" aria-labelledby="settingsTab-appearance" hidden>
+              <div class="settings-cards">
+                <section class="settings-card" aria-label="主题与样式">
+                  <div class="settings-card-title">主题与样式</div>
+                  <div class="settings-card-body">
+                    <label class="settings-field">
+                      <span class="settings-field-label">主题</span>
+                      <select id="optTheme">
+                        <option value="light">浅色</option>
+                        <option value="dark">深色</option>
+                      </select>
+                    </label>
+                    <div class="settings-divider"></div>
+                    <label class="settings-field">
+                      <span class="settings-field-label">视觉效果</span>
+                      <select id="optVisualStyle">
+                        <option value="solid">实心</option>
+                        <option value="blur">模糊</option>
+                        <option value="transparent">透明</option>
+                      </select>
+                    </label>
+                  </div>
+                </section>
+                <section class="settings-card" aria-label="画布">
+                  <div class="settings-card-title">画布</div>
+                  <div class="settings-card-body">
+                    <label class="settings-field">
+                      <span class="settings-field-label">画布颜色</span>
+                      <select id="optCanvasColor">
+                        <option value="white">白色</option>
+                        <option value="black">黑色</option>
+                        <option value="chalkboard">黑板绿</option>
+                      </select>
+                    </label>
+                  </div>
+                </section>
+              </div>
+            </div>
+            <div class="settings-page" id="settingsPanel-input" data-tab="input" role="tabpanel" aria-labelledby="settingsTab-input" hidden>
+              <div class="settings-cards">
+                <section class="settings-card" aria-label="触控与书写">
+                  <div class="settings-card-title">触控与书写</div>
+                  <div class="settings-card-body">
+                    <label class="settings-control"><input type="checkbox" id="optMultiTouchPen"> <span>触摸多指书写</span></label>
+                    <div class="settings-divider"></div>
+                    <label class="settings-field">
+                      <span class="settings-field-label">批注默认笔颜色</span>
+                      <input type="color" id="optAnnotationPenColor" value="#FF0000" aria-label="批注默认笔颜色">
+                    </label>
+                  </div>
+                </section>
+                <section class="settings-card" aria-label="智能功能">
+                  <div class="settings-card-title">智能功能</div>
+                  <div class="settings-card-body">
+                    <label class="settings-control"><input type="checkbox" id="optSmartInk"> <span>图形与直线智能识别</span></label>
+                  </div>
+                </section>
+              </div>
+            </div>
+            <div class="settings-page" id="settingsPanel-shortcuts" data-tab="shortcuts" role="tabpanel" aria-labelledby="settingsTab-shortcuts" hidden>
+              <div class="settings-cards">
+                <section class="settings-card" aria-label="快捷键">
+                  <div class="settings-card-title">快捷键</div>
+                  <div class="settings-card-body">
+                    <label class="settings-field">
+                      <span class="settings-field-label">撤销</span>
+                      <input id="keyUndo" type="text" placeholder="Ctrl+Z" maxlength="20" inputmode="text" aria-label="撤销快捷键">
+                    </label>
+                    <div class="settings-divider"></div>
+                    <label class="settings-field">
+                      <span class="settings-field-label">重做</span>
+                      <input id="keyRedo" type="text" placeholder="Ctrl+Y" maxlength="20" inputmode="text" aria-label="重做快捷键">
+                    </label>
+                  </div>
+                </section>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
+    </div>
     <div class="settings-footer">
       <button id="resetSettings">重置为默认</button>
       <button id="saveSettings">保存</button>

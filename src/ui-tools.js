@@ -15,7 +15,7 @@
  */
 import { clearAll, undo, redo, setBrushColor, setErasing, canUndo, canRedo, replaceStrokeColors, getToolState, setInputEnabled, setMultiTouchPenEnabled, setInkRecognitionEnabled, setViewTransform, setCanvasMode, getCubenoteState, applyCubenoteState } from './renderer.js';
 import Curous from './curous.js';
-import Settings, { getPenColorFromSettings } from './setting.js';
+import Settings, { getPenColorFromSettings, normalizeHexColor } from './setting.js';
 import { showSubmenu, cleanupMenuStyles, initPinHandlers, closeAllSubmenus } from './more_decide_windows.js';
 import Message, { EVENTS } from './message.js';
 import { updateAppSettings } from './write_a_change.js';
@@ -215,6 +215,34 @@ function _menuDebug(){
     if (!localStorage || localStorage.getItem('debugMenus') !== '1') return;
   }catch(e){ return; }
   try{ console.debug('[menu]', ...arguments); }catch(e){}
+}
+
+let _IS_RUN_TESTS = false;
+try{
+  const p = new URLSearchParams(location.search || '');
+  _IS_RUN_TESTS = p.get('runTests') === '1';
+}catch(e){}
+
+function openSettingsWindow(){
+  if (_IS_RUN_TESTS) return false;
+  try{
+    if (window && window.electronAPI && typeof window.electronAPI.invokeMain === 'function') {
+      window.electronAPI.invokeMain('message', 'ui:open-settings-window', {});
+      return true;
+    }
+  }catch(e){}
+  return false;
+}
+
+function openAboutWindow(){
+  if (_IS_RUN_TESTS) return false;
+  try{
+    if (window && window.electronAPI && typeof window.electronAPI.invokeMain === 'function') {
+      window.electronAPI.invokeMain('message', 'ui:open-about-window', {});
+      return true;
+    }
+  }catch(e){}
+  return false;
 }
 
 /**
@@ -621,9 +649,9 @@ if (moreTool) {
     scheduleInteractiveRectsUpdate();
     try{ await startNoteImportFlow(); }catch(e){ try{ showToast('导入失败', 'error'); }catch(err){} }
   };
-  const onSettings = ()=>{ closeAllSubmenus(); syncToolbarIcons(); applyWindowInteractivity(); scheduleInteractiveRectsUpdate(); Message.emit(EVENTS.OPEN_SETTINGS, {}); };
+  const onSettings = ()=>{ closeAllSubmenus(); syncToolbarIcons(); applyWindowInteractivity(); scheduleInteractiveRectsUpdate(); if (!openSettingsWindow()) Message.emit(EVENTS.OPEN_SETTINGS, {}); };
   const onPluginManager = ()=>{ closeAllSubmenus(); syncToolbarIcons(); applyWindowInteractivity(); scheduleInteractiveRectsUpdate(); try{ openPluginModal(); }catch(e){} };
-  const onAbout = ()=>{ closeAllSubmenus(); syncToolbarIcons(); applyWindowInteractivity(); scheduleInteractiveRectsUpdate(); Message.emit(EVENTS.OPEN_ABOUT, {}); };
+  const onAbout = ()=>{ closeAllSubmenus(); syncToolbarIcons(); applyWindowInteractivity(); scheduleInteractiveRectsUpdate(); if (!openAboutWindow()) Message.emit(EVENTS.OPEN_ABOUT, {}); };
   const onCloseWhiteboard = ()=>{
     closeAllSubmenus();
     syncToolbarIcons();
@@ -765,6 +793,12 @@ const previewSettingsBtn = document.getElementById('previewSettings');
 const revertPreviewBtn = document.getElementById('revertPreview');
 const historyStateDisplay = document.getElementById('historyStateDisplay');
 
+const settingsContent = settingsModal ? settingsModal.querySelector('.settings-content') : null;
+const settingsLoading = settingsModal ? settingsModal.querySelector('.settings-loading') : null;
+const settingsSidebar = settingsModal ? settingsModal.querySelector('.settings-sidebar') : null;
+const settingsTabButtons = settingsModal ? Array.from(settingsModal.querySelectorAll('.settings-tab')) : [];
+const settingsPages = settingsModal ? Array.from(settingsModal.querySelectorAll('.settings-page')) : [];
+
 const aboutModal = document.getElementById('aboutModal');
 const closeAbout = document.getElementById('closeAbout');
 
@@ -777,33 +811,330 @@ const pluginInstallProgress = document.getElementById('pluginInstallProgress');
 const pluginDropZone = document.getElementById('pluginDropZone');
 const pluginList = document.getElementById('pluginList');
 
+function _createStore(reducer, initialState){
+  let state = initialState;
+  const listeners = new Set();
+  return {
+    getState(){ return state; },
+    dispatch(action){
+      state = reducer(state, action);
+      for (const l of listeners) { try{ l(); }catch(e){} }
+      return action;
+    },
+    subscribe(listener){
+      listeners.add(listener);
+      return ()=>{ listeners.delete(listener); };
+    }
+  };
+}
+
+const _SETTINGS_TAB_STORAGE_KEY = 'settingsSelectedTab';
+function _readPersistedSettingsTab(){
+  try{
+    const v = localStorage.getItem(_SETTINGS_TAB_STORAGE_KEY);
+    return v ? String(v) : '';
+  }catch(e){ return ''; }
+}
+
+function _writePersistedSettingsTab(tab){
+  try{ localStorage.setItem(_SETTINGS_TAB_STORAGE_KEY, String(tab || '')); }catch(e){}
+}
+
+function _makeSettingsDraftFromSettings(s){
+  const src = (s && typeof s === 'object') ? s : {};
+  const undoKey = src.shortcuts && src.shortcuts.undo ? String(src.shortcuts.undo) : '';
+  const redoKey = src.shortcuts && src.shortcuts.redo ? String(src.shortcuts.redo) : '';
+  return {
+    enableAutoResize: !!src.enableAutoResize,
+    toolbarCollapsed: !!src.toolbarCollapsed,
+    theme: String(src.theme || 'light'),
+    visualStyle: String(src.visualStyle || 'blur'),
+    canvasColor: String(src.canvasColor || 'white'),
+    showTooltips: !!src.showTooltips,
+    multiTouchPen: !!src.multiTouchPen,
+    annotationPenColor: normalizeHexColor(src.annotationPenColor, '#FF0000'),
+    smartInkRecognition: !!src.smartInkRecognition,
+    shortcuts: { undo: undoKey, redo: redoKey }
+  };
+}
+
+function _getFirstSettingsTab(){
+  const t = settingsTabButtons && settingsTabButtons[0] ? String(settingsTabButtons[0].dataset.tab || '') : '';
+  return t || 'general';
+}
+
+function _normalizeSettingsTab(tab){
+  const t = String(tab || '');
+  if (!t) return _getFirstSettingsTab();
+  if (!settingsTabButtons || !settingsTabButtons.length) return t;
+  const ok = settingsTabButtons.some(b => String(b.dataset.tab || '') === t);
+  return ok ? t : _getFirstSettingsTab();
+}
+
+const _settingsLoadedTabs = new Set();
+if (settingsPages && settingsPages.length) {
+  for (const p of settingsPages) {
+    const tab = String(p.dataset.tab || '');
+    if (!tab) continue;
+    if (!p.hidden) _settingsLoadedTabs.add(tab);
+  }
+}
+
+const _settingsPageHideTimers = new WeakMap();
+function _activateSettingsPage(page){
+  if (!page) return;
+  const t = _settingsPageHideTimers.get(page);
+  if (t) { clearTimeout(t); _settingsPageHideTimers.delete(page); }
+  try{ page.hidden = false; }catch(e){}
+  try{ page.setAttribute('aria-hidden', 'false'); }catch(e){}
+  requestAnimationFrame(()=>{ try{ page.classList.add('active'); }catch(e){} });
+}
+
+function _deactivateSettingsPage(page){
+  if (!page) return;
+  try{ page.classList.remove('active'); }catch(e){}
+  try{ page.setAttribute('aria-hidden', 'true'); }catch(e){}
+  const timer = setTimeout(()=>{ try{ page.hidden = true; }catch(e){} }, 320);
+  _settingsPageHideTimers.set(page, timer);
+}
+
+function _setSettingsLoading(loading){
+  const on = !!loading;
+  try{ if (settingsContent) settingsContent.setAttribute('aria-busy', on ? 'true' : 'false'); }catch(e){}
+  try{
+    if (settingsLoading) {
+      if (on) { settingsLoading.hidden = false; settingsLoading.setAttribute('aria-hidden', 'false'); }
+      else { settingsLoading.hidden = true; settingsLoading.setAttribute('aria-hidden', 'true'); }
+    }
+  }catch(e){}
+}
+
+function _loadSettingsTabAsync(tab){
+  const t = String(tab || '');
+  if (!t) return Promise.resolve();
+  if (_settingsLoadedTabs.has(t)) return Promise.resolve();
+  _setSettingsLoading(true);
+  return new Promise((resolve)=>{
+    setTimeout(()=>{
+      _settingsLoadedTabs.add(t);
+      _setSettingsLoading(false);
+      resolve();
+    }, 80);
+  });
+}
+
+function _validateSettingsDraft(d){
+  const draft = d && typeof d === 'object' ? d : {};
+  const theme = String(draft.theme || '');
+  const visualStyle = String(draft.visualStyle || '');
+  const canvasColor = String(draft.canvasColor || '');
+  const undoKey = draft.shortcuts && typeof draft.shortcuts.undo === 'string' ? draft.shortcuts.undo.trim() : '';
+  const redoKey = draft.shortcuts && typeof draft.shortcuts.redo === 'string' ? draft.shortcuts.redo.trim() : '';
+
+  if (theme !== 'light' && theme !== 'dark') return { ok: false, message: '主题值无效', focusId: 'optTheme' };
+  if (!['solid','blur','transparent'].includes(visualStyle)) return { ok: false, message: '视觉效果值无效', focusId: 'optVisualStyle' };
+  if (!['white','black','chalkboard'].includes(canvasColor)) return { ok: false, message: '画布颜色值无效', focusId: 'optCanvasColor' };
+
+  const pen = normalizeHexColor(draft.annotationPenColor, '#FF0000');
+  if (pen !== String(draft.annotationPenColor || '').toUpperCase()) return { ok: false, message: '批注默认笔颜色无效', focusId: 'optAnnotationPenColor' };
+
+  if (undoKey && undoKey.length > 20) return { ok: false, message: '撤销快捷键过长', focusId: 'keyUndo' };
+  if (redoKey && redoKey.length > 20) return { ok: false, message: '重做快捷键过长', focusId: 'keyRedo' };
+  if (undoKey && redoKey && undoKey.toLowerCase() === redoKey.toLowerCase()) return { ok: false, message: '撤销与重做快捷键不能相同', focusId: 'keyRedo' };
+
+  return { ok: true };
+}
+
+function _settingsUiReducer(state, action){
+  const s = state && typeof state === 'object' ? state : {};
+  const a = action && typeof action === 'object' ? action : {};
+  if (a.type === 'OPEN') {
+    const settings = a.settings || Settings.loadSettings();
+    const preferredTab = _normalizeSettingsTab(_readPersistedSettingsTab() || _getFirstSettingsTab());
+    return Object.assign({}, s, { isOpen: true, selectedTab: preferredTab, draft: _makeSettingsDraftFromSettings(settings) });
+  }
+  if (a.type === 'CLOSE') return Object.assign({}, s, { isOpen: false });
+  if (a.type === 'SET_TAB') {
+    const tab = _normalizeSettingsTab(a.tab);
+    _writePersistedSettingsTab(tab);
+    return Object.assign({}, s, { selectedTab: tab });
+  }
+  if (a.type === 'SET_DRAFT') {
+    return Object.assign({}, s, { draft: _makeSettingsDraftFromSettings(a.settings || Settings.loadSettings()) });
+  }
+  if (a.type === 'UPDATE_FIELD') {
+    const key = String(a.key || '');
+    const next = Object.assign({}, s.draft || {});
+    if (key === 'shortcuts.undo' || key === 'shortcuts.redo') {
+      const k = key.endsWith('undo') ? 'undo' : 'redo';
+      next.shortcuts = Object.assign({}, next.shortcuts || {}, { [k]: String(a.value || '') });
+    } else if (key) {
+      next[key] = a.value;
+    }
+    return Object.assign({}, s, { draft: next });
+  }
+  return s;
+}
+
+const _settingsUiStore = _createStore(_settingsUiReducer, {
+  isOpen: false,
+  selectedTab: _normalizeSettingsTab(_readPersistedSettingsTab() || _getFirstSettingsTab()),
+  draft: _makeSettingsDraftFromSettings(Settings.loadSettings())
+});
+
+let _settingsUiSyncing = false;
+function _renderSettingsUi(){
+  const st = _settingsUiStore.getState();
+  const sel = st && st.selectedTab ? String(st.selectedTab) : _getFirstSettingsTab();
+
+  if (settingsTabButtons && settingsTabButtons.length) {
+    for (const btn of settingsTabButtons) {
+      const t = String(btn.dataset.tab || '');
+      const active = t === sel;
+      try{ btn.setAttribute('aria-selected', active ? 'true' : 'false'); }catch(e){}
+      try{ btn.tabIndex = active ? 0 : -1; }catch(e){}
+    }
+  }
+
+  if (settingsPages && settingsPages.length) {
+    for (const p of settingsPages) {
+      const t = String(p.dataset.tab || '');
+      if (!t) continue;
+      if (t === sel) _activateSettingsPage(p);
+      else _deactivateSettingsPage(p);
+    }
+  }
+
+  const d = st && st.draft ? st.draft : {};
+  _settingsUiSyncing = true;
+  try{
+    if (optAutoResize) optAutoResize.checked = !!d.enableAutoResize;
+    if (optCollapsed) optCollapsed.checked = !!d.toolbarCollapsed;
+    if (optTheme) optTheme.value = d.theme || 'light';
+    if (optVisualStyle) optVisualStyle.value = d.visualStyle || 'blur';
+    if (optCanvasColor) optCanvasColor.value = d.canvasColor || 'white';
+    if (optTooltips) optTooltips.checked = !!d.showTooltips;
+    if (optMultiTouchPen) optMultiTouchPen.checked = !!d.multiTouchPen;
+    if (optAnnotationPenColor) optAnnotationPenColor.value = normalizeHexColor(d.annotationPenColor, '#FF0000');
+    if (optSmartInk) optSmartInk.checked = !!d.smartInkRecognition;
+    if (keyUndo) keyUndo.value = d.shortcuts && typeof d.shortcuts.undo === 'string' ? d.shortcuts.undo : '';
+    if (keyRedo) keyRedo.value = d.shortcuts && typeof d.shortcuts.redo === 'string' ? d.shortcuts.redo : '';
+  }catch(e){}
+  _settingsUiSyncing = false;
+}
+
+_settingsUiStore.subscribe(_renderSettingsUi);
+_renderSettingsUi();
+
+function _settingsUiSelectTab(tab, opts){
+  const t = _normalizeSettingsTab(tab);
+  _settingsUiStore.dispatch({ type: 'SET_TAB', tab: t });
+  _loadSettingsTabAsync(t).then(()=>{}).catch(()=>{});
+  try{ scheduleInteractiveRectsUpdate(); }catch(e){}
+  const o = opts && typeof opts === 'object' ? opts : {};
+  if (o.focus) {
+    try{
+      const btn = settingsModal ? settingsModal.querySelector(`.settings-tab[data-tab="${t}"]`) : null;
+      if (btn) btn.focus();
+    }catch(e){}
+  }
+}
+
+function _wireSettingsUi(){
+  if (settingsTabButtons && settingsTabButtons.length) {
+    for (const btn of settingsTabButtons) {
+      btn.addEventListener('click', ()=>{
+        const t = String(btn.dataset.tab || '');
+        if (!t) return;
+        _settingsUiSelectTab(t, { focus: false });
+      });
+      bindTouchTap(btn, ()=>{
+        const t = String(btn.dataset.tab || '');
+        if (!t) return;
+        _settingsUiSelectTab(t, { focus: true });
+      }, { delayMs: 20 });
+    }
+  }
+
+  if (settingsSidebar) {
+    settingsSidebar.addEventListener('keydown', (e)=>{
+      const key = e.key;
+      if (!['ArrowDown','ArrowUp','ArrowLeft','ArrowRight','Home','End'].includes(key)) return;
+      if (!settingsTabButtons || !settingsTabButtons.length) return;
+      e.preventDefault();
+      const active = _settingsUiStore.getState().selectedTab;
+      const idx = settingsTabButtons.findIndex(b => String(b.dataset.tab || '') === String(active || ''));
+      let nextIdx = idx < 0 ? 0 : idx;
+      if (key === 'Home') nextIdx = 0;
+      else if (key === 'End') nextIdx = settingsTabButtons.length - 1;
+      else if (key === 'ArrowDown' || key === 'ArrowRight') nextIdx = Math.min(settingsTabButtons.length - 1, nextIdx + 1);
+      else if (key === 'ArrowUp' || key === 'ArrowLeft') nextIdx = Math.max(0, nextIdx - 1);
+      const nextTab = String(settingsTabButtons[nextIdx].dataset.tab || '');
+      if (nextTab) _settingsUiSelectTab(nextTab, { focus: true });
+    });
+  }
+
+  if (settingsModal) {
+    settingsModal.addEventListener('keydown', (e)=>{
+      if (e.key !== 'Escape') return;
+      if (!settingsModal.classList.contains('open')) return;
+      e.preventDefault();
+      closeSettingsModal();
+    });
+  }
+
+  const bindField = (el, key, mode)=>{
+    if (!el) return;
+    const evt = mode === 'input' ? 'input' : 'change';
+    el.addEventListener(evt, ()=>{
+      if (_settingsUiSyncing) return;
+      const value = (el.type === 'checkbox') ? !!el.checked : String(el.value || '');
+      _settingsUiStore.dispatch({ type: 'UPDATE_FIELD', key, value });
+    });
+  };
+
+  bindField(optAutoResize, 'enableAutoResize');
+  bindField(optCollapsed, 'toolbarCollapsed');
+  bindField(optTheme, 'theme');
+  bindField(optVisualStyle, 'visualStyle');
+  bindField(optCanvasColor, 'canvasColor');
+  bindField(optTooltips, 'showTooltips');
+  bindField(optMultiTouchPen, 'multiTouchPen');
+  bindField(optAnnotationPenColor, 'annotationPenColor', 'input');
+  bindField(optSmartInk, 'smartInkRecognition');
+  bindField(keyUndo, 'shortcuts.undo', 'input');
+  bindField(keyRedo, 'shortcuts.redo', 'input');
+}
+
+_wireSettingsUi();
+
 let _previewBackup = null;
 let _pluginDragId = '';
 let _pluginInstallRequestId = '';
 
 function openSettings(){
   if (!settingsModal) return;
-  // populate from store
+  try{ _setSettingsLoading(false); }catch(e){}
   const s = Settings.loadSettings();
-  if (optAutoResize) optAutoResize.checked = !!s.enableAutoResize;
-  if (optCollapsed) optCollapsed.checked = !!s.toolbarCollapsed;
-  if (optTheme) optTheme.value = s.theme || 'light';
-  if (optVisualStyle) optVisualStyle.value = s.visualStyle || 'blur';
-  if (optCanvasColor) optCanvasColor.value = s.canvasColor || 'white';
-  if (optTooltips) optTooltips.checked = !!s.showTooltips;
-  if (optMultiTouchPen) optMultiTouchPen.checked = !!s.multiTouchPen;
-  if (optAnnotationPenColor) optAnnotationPenColor.value = String(s.annotationPenColor || '#FF0000');
-  if (optSmartInk) optSmartInk.checked = !!s.smartInkRecognition;
-  if (keyUndo) keyUndo.value = (s.shortcuts && s.shortcuts.undo) || '';
-  if (keyRedo) keyRedo.value = (s.shortcuts && s.shortcuts.redo) || '';
+  _settingsUiStore.dispatch({ type: 'OPEN', settings: s });
+  const tab = _settingsUiStore.getState().selectedTab || _getFirstSettingsTab();
+  _settingsUiSelectTab(tab, { focus: false });
   settingsModal.classList.add('open');
+  try{ settingsModal.setAttribute('aria-hidden', 'false'); }catch(e){}
   _menuDebug('modal', 'open', 'settings');
   applyWindowInteractivity();
   scheduleInteractiveRectsUpdate();
+  try{
+    const btn = settingsModal.querySelector(`.settings-tab[data-tab="${String(tab)}"]`);
+    if (btn) btn.focus();
+  }catch(e){}
 }
 
 function closeSettingsModal(){
   if (settingsModal) settingsModal.classList.remove('open');
+  try{ if (settingsModal) settingsModal.setAttribute('aria-hidden', 'true'); }catch(e){}
+  try{ _setSettingsLoading(false); }catch(e){}
+  _settingsUiStore.dispatch({ type: 'CLOSE' });
   _menuDebug('modal', 'close', 'settings');
   applyWindowInteractivity();
   scheduleInteractiveRectsUpdate();
@@ -1050,8 +1381,34 @@ function openPluginModal(){
 function closePluginModalFn(){ if (pluginModal) pluginModal.classList.remove('open'); applyWindowInteractivity(); scheduleInteractiveRectsUpdate(); }
 
 // open when message requested
-Message.on(EVENTS.OPEN_SETTINGS, ()=>{ openSettings(); });
-Message.on(EVENTS.OPEN_ABOUT, ()=>{ openAbout(); });
+Message.on(EVENTS.OPEN_SETTINGS, ()=>{ if (!openSettingsWindow()) openSettings(); });
+Message.on(EVENTS.OPEN_ABOUT, ()=>{ if (!openAboutWindow()) openAbout(); });
+
+try{
+  if (window && window.electronAPI && typeof window.electronAPI.onReplyFromMain === 'function') {
+    window.electronAPI.onReplyFromMain('app:settings-changed', (payload)=>{
+      try{
+        const s = payload && typeof payload === 'object' ? payload : {};
+        try{ _settingsUiStore.dispatch({ type: 'SET_DRAFT', settings: s }); }catch(e){}
+        try{
+          if (typeof s.enableAutoResize !== 'undefined') {
+            if (!s.enableAutoResize) {
+              try{ const p = document.querySelector('.floating-panel'); if (p) p.style.width = ''; }catch(e){}
+            } else { window.dispatchEvent(new Event('resize')); }
+          }
+        }catch(e){}
+        try{ if (typeof s.toolbarCollapsed !== 'undefined') applyCollapsed(!!s.toolbarCollapsed); }catch(e){}
+        try{ if (s.theme) applyTheme(s.theme); }catch(e){}
+        try{ if (typeof s.showTooltips !== 'undefined') applyTooltips(!!s.showTooltips); }catch(e){}
+        try{ if (s.visualStyle) applyVisualStyle(s.visualStyle); }catch(e){}
+        try{ if (s.canvasColor) applyModeCanvasBackground(_appMode, s.canvasColor, { getToolState, replaceStrokeColors, setBrushColor, updatePenModeLabel, getPreferredPenColor: (mode)=>getPenColorFromSettings(s, mode) }); }catch(e){}
+        try{ if (typeof s.multiTouchPen !== 'undefined') setMultiTouchPenEnabled(!!s.multiTouchPen); }catch(e){}
+        try{ if (typeof s.smartInkRecognition !== 'undefined') setInkRecognitionEnabled(!!s.smartInkRecognition); }catch(e){}
+        try{ if (_appMode === APP_MODES.ANNOTATION && s.annotationPenColor) { setBrushColor(normalizeHexColor(s.annotationPenColor, '#FF0000')); updatePenModeLabel(); syncToolbarIcons(); } }catch(e){}
+      }catch(e){}
+    });
+  }
+}catch(e){}
 
 if (closeSettings) closeSettings.addEventListener('click', closeSettingsModal);
 if (settingsModal) settingsModal.addEventListener('click', (e)=>{ if (e.target.classList && e.target.classList.contains('settings-backdrop')) closeSettingsModal(); });
@@ -1114,17 +1471,33 @@ try{
 _wirePluginDnD();
 
 if (saveSettings) saveSettings.addEventListener('click', ()=>{
+  const st = _settingsUiStore.getState();
+  const d = st && st.draft ? st.draft : _makeSettingsDraftFromSettings(Settings.loadSettings());
+  const v = _validateSettingsDraft(d);
+  if (!v.ok) {
+    try{ showToast(v.message || '设置无效', 'error', 3200); }catch(e){}
+    try{
+      if (v.focusId) {
+        const el = document.getElementById(String(v.focusId));
+        if (el) { el.focus(); if (typeof el.reportValidity === 'function') el.reportValidity(); }
+      }
+    }catch(e){}
+    return;
+  }
   const newS = {
-    enableAutoResize: !!(optAutoResize && optAutoResize.checked),
-    toolbarCollapsed: !!(optCollapsed && optCollapsed.checked),
-    theme: (optTheme && optTheme.value) || 'light',
-    visualStyle: (optVisualStyle && optVisualStyle.value) || 'blur',
-    canvasColor: (optCanvasColor && optCanvasColor.value) || 'white',
-    showTooltips: !!(optTooltips && optTooltips.checked),
-    multiTouchPen: !!(optMultiTouchPen && optMultiTouchPen.checked),
-    annotationPenColor: String((optAnnotationPenColor && optAnnotationPenColor.value) || '#FF0000').toUpperCase(),
-    smartInkRecognition: !!(optSmartInk && optSmartInk.checked),
-    shortcuts: { undo: (keyUndo && keyUndo.value) || '', redo: (keyRedo && keyRedo.value) || '' }
+    enableAutoResize: !!d.enableAutoResize,
+    toolbarCollapsed: !!d.toolbarCollapsed,
+    theme: String(d.theme || 'light'),
+    visualStyle: String(d.visualStyle || 'blur'),
+    canvasColor: String(d.canvasColor || 'white'),
+    showTooltips: !!d.showTooltips,
+    multiTouchPen: !!d.multiTouchPen,
+    annotationPenColor: normalizeHexColor(d.annotationPenColor, '#FF0000'),
+    smartInkRecognition: !!d.smartInkRecognition,
+    shortcuts: {
+      undo: d.shortcuts && typeof d.shortcuts.undo === 'string' ? d.shortcuts.undo.trim() : '',
+      redo: d.shortcuts && typeof d.shortcuts.redo === 'string' ? d.shortcuts.redo.trim() : ''
+    }
   };
   // persist via cross-module helper which emits SETTINGS_CHANGED
   const merged = updateAppSettings(newS);

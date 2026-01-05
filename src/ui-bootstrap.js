@@ -481,6 +481,187 @@ window.addEventListener('DOMContentLoaded', async ()=>{
       return;
     }
   }catch(e){}
+
+  try{
+    const p = new URLSearchParams(location.search || '');
+    const standalone = String(p.get('standalone') || '');
+    if (standalone === 'settings') {
+      try{ document.body.classList.add('standalone-window'); }catch(e){}
+      try{ document.title = '设置 - LanStartWrite'; }catch(e){}
+      const settingsNodes = await loadFragment('./setting_ui.html');
+      settingsNodes.forEach(n => document.body.appendChild(n));
+
+      try{
+        const about = document.getElementById('aboutModal');
+        if (about && about.parentElement) about.parentElement.removeChild(about);
+      }catch(e){}
+      try{
+        const plugin = document.getElementById('pluginModal');
+        if (plugin && plugin.parentElement) plugin.parentElement.removeChild(plugin);
+      }catch(e){}
+
+      const SettingsMod = await import('./setting.js');
+      const Settings = SettingsMod.default;
+      const { normalizeHexColor } = SettingsMod;
+
+      function applyTheme(name){
+        try{
+          document.body.dataset.theme = name;
+          if (name === 'dark') document.documentElement.classList.add('theme-dark');
+          else document.documentElement.classList.remove('theme-dark');
+        }catch(e){}
+      }
+
+      function applyTooltips(show){
+        try{
+          document.querySelectorAll('.tool-btn, .mode-btn, .submenu-drag-handle, .submenu-pin, button').forEach(el=>{
+            if (!el.dataset.origTitle) el.dataset.origTitle = el.getAttribute('title') || '';
+            if (show) el.setAttribute('title', el.dataset.origTitle || ''); else el.setAttribute('title','');
+          });
+        }catch(e){}
+      }
+
+      function applyVisualStyle(style){
+        try{
+          const root = document.documentElement;
+          ['visual-solid','visual-blur','visual-transparent'].forEach(c=>root.classList.remove(c));
+          if (!style || style === 'blur') root.classList.add('visual-blur');
+          else if (style === 'solid') root.classList.add('visual-solid');
+          else if (style === 'transparent') root.classList.add('visual-transparent');
+        }catch(e){}
+      }
+
+      function _broadcastSettings(merged){
+        try{
+          if (!window || !window.electronAPI || typeof window.electronAPI.invokeMain !== 'function') return;
+          window.electronAPI.invokeMain('message', 'ui:broadcast-settings', { settings: merged });
+        }catch(e){}
+      }
+
+      const settingsModal = document.getElementById('settingsModal');
+      const closeSettings = document.getElementById('closeSettings');
+      const saveSettings = document.getElementById('saveSettings');
+      const resetSettingsBtn = document.getElementById('resetSettings');
+      const optAutoResize = document.getElementById('optAutoResize');
+      const optCollapsed = document.getElementById('optCollapsed');
+      const optTheme = document.getElementById('optTheme');
+      const optTooltips = document.getElementById('optTooltips');
+      const optMultiTouchPen = document.getElementById('optMultiTouchPen');
+      const optAnnotationPenColor = document.getElementById('optAnnotationPenColor');
+      const optSmartInk = document.getElementById('optSmartInk');
+      const optVisualStyle = document.getElementById('optVisualStyle');
+      const optCanvasColor = document.getElementById('optCanvasColor');
+      const keyUndo = document.getElementById('keyUndo');
+      const keyRedo = document.getElementById('keyRedo');
+      const previewSettingsBtn = document.getElementById('previewSettings');
+      const revertPreviewBtn = document.getElementById('revertPreview');
+
+      let _previewBackup = null;
+
+      function _readForm(){
+        const patch = {};
+        if (optAutoResize) patch.enableAutoResize = !!optAutoResize.checked;
+        if (optCollapsed) patch.toolbarCollapsed = !!optCollapsed.checked;
+        if (optTheme) patch.theme = String(optTheme.value || 'light');
+        if (optVisualStyle) patch.visualStyle = String(optVisualStyle.value || 'blur');
+        if (optCanvasColor) patch.canvasColor = String(optCanvasColor.value || 'white');
+        if (optTooltips) patch.showTooltips = !!optTooltips.checked;
+        if (optMultiTouchPen) patch.multiTouchPen = !!optMultiTouchPen.checked;
+        if (optSmartInk) patch.smartInkRecognition = !!optSmartInk.checked;
+        if (optAnnotationPenColor) patch.annotationPenColor = normalizeHexColor(optAnnotationPenColor.value, '#FF0000');
+        patch.shortcuts = {
+          undo: keyUndo && typeof keyUndo.value === 'string' ? keyUndo.value.trim() : '',
+          redo: keyRedo && typeof keyRedo.value === 'string' ? keyRedo.value.trim() : ''
+        };
+        return patch;
+      }
+
+      function _applyToForm(settings){
+        const s = settings && typeof settings === 'object' ? settings : {};
+        try{
+          if (optAutoResize) optAutoResize.checked = !!s.enableAutoResize;
+          if (optCollapsed) optCollapsed.checked = !!s.toolbarCollapsed;
+          if (optTheme) optTheme.value = s.theme || 'light';
+          if (optVisualStyle) optVisualStyle.value = s.visualStyle || 'blur';
+          if (optCanvasColor) optCanvasColor.value = s.canvasColor || 'white';
+          if (optTooltips) optTooltips.checked = typeof s.showTooltips !== 'undefined' ? !!s.showTooltips : true;
+          if (optMultiTouchPen) optMultiTouchPen.checked = !!s.multiTouchPen;
+          if (optSmartInk) optSmartInk.checked = !!s.smartInkRecognition;
+          if (optAnnotationPenColor) optAnnotationPenColor.value = normalizeHexColor(s.annotationPenColor, '#FF0000');
+          if (keyUndo) keyUndo.value = s.shortcuts && typeof s.shortcuts.undo === 'string' ? s.shortcuts.undo : '';
+          if (keyRedo) keyRedo.value = s.shortcuts && typeof s.shortcuts.redo === 'string' ? s.shortcuts.redo : '';
+        }catch(e){}
+      }
+
+      function _saveAndBroadcast(patch){
+        const merged = Settings.saveSettings(patch);
+        try{
+          if (patch && typeof patch === 'object') {
+            if (typeof patch.theme !== 'undefined') applyTheme(String(merged.theme || 'light'));
+            if (typeof patch.showTooltips !== 'undefined') applyTooltips(!!merged.showTooltips);
+            if (typeof patch.visualStyle !== 'undefined') applyVisualStyle(String(merged.visualStyle || 'blur'));
+          }
+        }catch(e){}
+        _broadcastSettings(merged);
+        return merged;
+      }
+
+      function _wireRealtime(el){
+        if (!el) return;
+        const handler = ()=>{
+          const patch = _readForm();
+          _saveAndBroadcast(patch);
+        };
+        el.addEventListener('change', handler);
+        el.addEventListener('input', handler);
+      }
+
+      [optAutoResize,optCollapsed,optTheme,optVisualStyle,optCanvasColor,optTooltips,optMultiTouchPen,optSmartInk,optAnnotationPenColor,keyUndo,keyRedo].forEach(_wireRealtime);
+
+      if (saveSettings) saveSettings.addEventListener('click', ()=>{ _saveAndBroadcast(_readForm()); });
+      if (resetSettingsBtn) resetSettingsBtn.addEventListener('click', ()=>{
+        Settings.resetSettings();
+        const merged = Settings.loadSettings();
+        _applyToForm(merged);
+        applyTheme(merged.theme || 'light');
+        applyTooltips(typeof merged.showTooltips !== 'undefined' ? !!merged.showTooltips : true);
+        applyVisualStyle(merged.visualStyle || 'blur');
+        _broadcastSettings(merged);
+      });
+      if (closeSettings) closeSettings.addEventListener('click', ()=>{ try{ window.close(); }catch(e){} });
+
+      if (previewSettingsBtn) previewSettingsBtn.addEventListener('click', ()=>{
+        const s = Settings.loadSettings();
+        if (!_previewBackup) _previewBackup = Object.assign({}, s);
+        const preview = _readForm();
+        applyTheme(preview.theme || s.theme);
+        applyTooltips(typeof preview.showTooltips !== 'undefined' ? !!preview.showTooltips : !!s.showTooltips);
+        applyVisualStyle(preview.visualStyle || s.visualStyle);
+      });
+
+      if (revertPreviewBtn) revertPreviewBtn.addEventListener('click', ()=>{
+        if (_previewBackup) {
+          applyTheme(_previewBackup.theme || 'light');
+          applyTooltips(typeof _previewBackup.showTooltips !== 'undefined' ? !!_previewBackup.showTooltips : true);
+          applyVisualStyle(_previewBackup.visualStyle || 'blur');
+          _previewBackup = null;
+        }
+      });
+
+      const initial = Settings.loadSettings();
+      _applyToForm(initial);
+      applyTheme(initial.theme || 'light');
+      applyTooltips(typeof initial.showTooltips !== 'undefined' ? !!initial.showTooltips : true);
+      applyVisualStyle(initial.visualStyle || 'blur');
+      if (settingsModal) {
+        try{ settingsModal.classList.add('open'); }catch(e){}
+        try{ settingsModal.setAttribute('aria-hidden','false'); }catch(e){}
+      }
+      try{ _broadcastSettings(initial); }catch(e){}
+      return;
+    }
+  }catch(e){}
+
   // load tool UI first (so .floating-panel exists)
   const toolNodes = await loadFragment('./tool_ui.html');
   toolNodes.forEach(n => document.body.appendChild(n));

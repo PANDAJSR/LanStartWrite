@@ -21,6 +21,10 @@ let _overlayAllowDesired = null;
 let _overlayAllowDesiredAt = 0;
 let _overlayAllowLastSwitchAt = 0;
 
+function _appIconPath() {
+  try { return path.join(__dirname, '..', 'iconpack', '1000120004.png'); } catch (e) { return undefined; }
+}
+
 function _overlayDebug() {
   try {
     if (!process || !process.env || process.env.LANSTART_DEBUG_OVERLAY !== '1') return;
@@ -195,6 +199,7 @@ function createWindow(opts) {
     skipTaskbar: true,
     alwaysOnTop: true,
     show: !runTests,
+    icon: _appIconPath(),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -215,6 +220,57 @@ function _broadcast(channel, data) {
   try {
     if (mainWindow && mainWindow.webContents) mainWindow.webContents.send(channel, data);
   } catch (e) {}
+}
+
+function _broadcastAll(channel, data) {
+  try {
+    for (const w of BrowserWindow.getAllWindows()) {
+      try { w.webContents.send(channel, data); } catch (e) {}
+    }
+  } catch (e) {}
+}
+
+function _createSettingsWindow() {
+  const win = new BrowserWindow({
+    width: 980,
+    height: 720,
+    minWidth: 720,
+    minHeight: 520,
+    backgroundColor: '#ffffff',
+    frame: true,
+    show: true,
+    icon: _appIconPath(),
+    title: '设置 - LanStartWrite',
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false
+    }
+  });
+  win.loadFile(path.join(__dirname, 'index.html'), { query: { standalone: 'settings' } });
+  return win;
+}
+
+function _createAboutWindow() {
+  const win = new BrowserWindow({
+    width: 520,
+    height: 420,
+    resizable: false,
+    minimizable: true,
+    maximizable: false,
+    backgroundColor: '#ffffff',
+    frame: true,
+    show: true,
+    icon: _appIconPath(),
+    title: '关于 - LanStartWrite',
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false
+    }
+  });
+  win.loadFile(path.join(__dirname, 'about.html'));
+  return win;
 }
 
 function _nowId() {
@@ -1040,6 +1096,31 @@ ipcMain.handle('message', async (event, channel, data) => {
   
   // 根据不同的消息通道进行处理
   switch(channel) {
+    case 'ui:open-settings-window': {
+      try {
+        _createSettingsWindow();
+        return { success: true };
+      } catch (e) {
+        return { success: false, error: String(e && e.message || e) };
+      }
+    }
+    case 'ui:open-about-window': {
+      try {
+        _createAboutWindow();
+        return { success: true };
+      } catch (e) {
+        return { success: false, error: String(e && e.message || e) };
+      }
+    }
+    case 'ui:broadcast-settings': {
+      try {
+        const s = data && typeof data === 'object' && data.settings && typeof data.settings === 'object' ? data.settings : (data && typeof data === 'object' ? data : {});
+        _broadcastAll('app:settings-changed', s);
+        return { success: true };
+      } catch (e) {
+        return { success: false, error: String(e && e.message || e) };
+      }
+    }
     case 'mod:get-paths': {
       const p = await _ensureModDirs();
       return { success: true, paths: { root: p.root, pluginsDir: p.pluginsDir, tempDir: p.tempDir, configDir: p.configDir, registryPath: p.registryPath, trustPath: p.trustPath } };
