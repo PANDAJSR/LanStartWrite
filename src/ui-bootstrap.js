@@ -550,12 +550,48 @@ window.addEventListener('DOMContentLoaded', async ()=>{
       const SettingsMod = await import('./setting.js');
       const Settings = SettingsMod.default;
       const { normalizeHexColor } = SettingsMod;
+      const ColorsMod = await import('./colors_features.js');
+      const { applyThemeMode } = ColorsMod;
 
-      function applyTheme(name){
+      function applyDesignLanguage(name){
         try{
-          document.body.dataset.theme = name;
-          if (name === 'dark') document.documentElement.classList.add('theme-dark');
-          else document.documentElement.classList.remove('theme-dark');
+          const root = document.documentElement;
+          const v = (String(name || '') === 'material3') ? 'material3' : 'fluent';
+          const nextCls = v === 'material3' ? 'dl-md3' : 'dl-fluent';
+          const prev = root.classList.contains(nextCls);
+          root.classList.remove('dl-md3','dl-fluent');
+          root.classList.add(nextCls);
+          try{ root.dataset.designLanguage = v; }catch(e){}
+          return !prev;
+        }catch(e){}
+        return false;
+      }
+
+      function _ensureToast(){
+        let t = document.querySelector('.app-toast');
+        if (!t) {
+          t = document.createElement('div');
+          t.className = 'app-toast';
+          document.body.appendChild(t);
+        }
+        return t;
+      }
+
+      function showToast(msg, type='success', ms=1800){
+        const t = _ensureToast();
+        t.textContent = msg;
+        t.classList.remove('success','error');
+        t.classList.add(type);
+        void t.offsetWidth;
+        t.classList.add('show');
+        clearTimeout(t._hideT);
+        t._hideT = setTimeout(()=>{ t.classList.remove('show'); }, ms);
+      }
+
+      function applyTheme(name, settingsOverride){
+        try{
+          const s = (settingsOverride && typeof settingsOverride === 'object') ? settingsOverride : Settings.loadSettings();
+          applyThemeMode(String(name || (s && s.theme) || 'system'), s, document.documentElement);
         }catch(e){}
       }
 
@@ -652,6 +688,7 @@ window.addEventListener('DOMContentLoaded', async ()=>{
       const optAutoResize = document.getElementById('optAutoResize');
       const optCollapsed = document.getElementById('optCollapsed');
       const optTheme = document.getElementById('optTheme');
+      const optDesignLanguage = document.getElementById('optDesignLanguage');
       const optTooltips = document.getElementById('optTooltips');
       const optMultiTouchPen = document.getElementById('optMultiTouchPen');
       const optAnnotationPenColor = document.getElementById('optAnnotationPenColor');
@@ -781,6 +818,7 @@ window.addEventListener('DOMContentLoaded', async ()=>{
         if (optAutoResize) patch.enableAutoResize = !!optAutoResize.checked;
         if (optCollapsed) patch.toolbarCollapsed = !!optCollapsed.checked;
         if (optTheme) patch.theme = String(optTheme.value || 'light');
+        if (optDesignLanguage) patch.designLanguage = String(optDesignLanguage.value || 'fluent');
         if (optVisualStyle) patch.visualStyle = String(optVisualStyle.value || 'blur');
         if (optCanvasColor) patch.canvasColor = String(optCanvasColor.value || 'white');
         if (optTooltips) patch.showTooltips = !!optTooltips.checked;
@@ -800,6 +838,7 @@ window.addEventListener('DOMContentLoaded', async ()=>{
           if (optAutoResize) optAutoResize.checked = !!s.enableAutoResize;
           if (optCollapsed) optCollapsed.checked = !!s.toolbarCollapsed;
           if (optTheme) optTheme.value = s.theme || 'light';
+          if (optDesignLanguage) optDesignLanguage.value = s.designLanguage || 'fluent';
           if (optVisualStyle) optVisualStyle.value = s.visualStyle || 'blur';
           if (optCanvasColor) optCanvasColor.value = s.canvasColor || 'white';
           if (optTooltips) optTooltips.checked = typeof s.showTooltips !== 'undefined' ? !!s.showTooltips : true;
@@ -815,7 +854,11 @@ window.addEventListener('DOMContentLoaded', async ()=>{
         const merged = Settings.saveSettings(patch);
         try{
           if (patch && typeof patch === 'object') {
-            if (typeof patch.theme !== 'undefined') applyTheme(String(merged.theme || 'light'));
+            if (typeof patch.designLanguage !== 'undefined') {
+              const changed = applyDesignLanguage(String(merged.designLanguage || 'fluent'));
+              if (changed) showToast(`已切换：${String(merged.designLanguage || '') === 'material3' ? 'Material 3 Expressive' : 'Fluent'}`, 'success', 1600);
+            }
+            if (typeof patch.theme !== 'undefined') applyTheme(String(merged.theme || 'system'), merged);
             if (typeof patch.showTooltips !== 'undefined') applyTooltips(!!merged.showTooltips);
             if (typeof patch.visualStyle !== 'undefined') applyVisualStyle(String(merged.visualStyle || 'blur'));
           }
@@ -834,7 +877,7 @@ window.addEventListener('DOMContentLoaded', async ()=>{
         el.addEventListener('input', handler);
       }
 
-      [optAutoResize,optCollapsed,optTheme,optVisualStyle,optCanvasColor,optTooltips,optMultiTouchPen,optSmartInk,optAnnotationPenColor,keyUndo,keyRedo].forEach(_wireRealtime);
+      [optAutoResize,optCollapsed,optTheme,optDesignLanguage,optVisualStyle,optCanvasColor,optTooltips,optMultiTouchPen,optSmartInk,optAnnotationPenColor,keyUndo,keyRedo].forEach(_wireRealtime);
 
       if (settingsTabButtons && settingsTabButtons.length) {
         for (const btn of settingsTabButtons) {
@@ -856,7 +899,8 @@ window.addEventListener('DOMContentLoaded', async ()=>{
         Settings.resetSettings();
         const merged = Settings.loadSettings();
         _applyToForm(merged);
-        applyTheme(merged.theme || 'light');
+        applyDesignLanguage(merged.designLanguage || 'fluent');
+        applyTheme(merged.theme || 'system', merged);
         applyTooltips(typeof merged.showTooltips !== 'undefined' ? !!merged.showTooltips : true);
         applyVisualStyle(merged.visualStyle || 'blur');
         _broadcastSettings(merged);
@@ -867,14 +911,16 @@ window.addEventListener('DOMContentLoaded', async ()=>{
         const s = Settings.loadSettings();
         if (!_previewBackup) _previewBackup = Object.assign({}, s);
         const preview = _readForm();
-        applyTheme(preview.theme || s.theme);
+        applyDesignLanguage(preview.designLanguage || s.designLanguage);
+        applyTheme(preview.theme || s.theme, Object.assign({}, s, preview));
         applyTooltips(typeof preview.showTooltips !== 'undefined' ? !!preview.showTooltips : !!s.showTooltips);
         applyVisualStyle(preview.visualStyle || s.visualStyle);
       });
 
       if (revertPreviewBtn) revertPreviewBtn.addEventListener('click', ()=>{
         if (_previewBackup) {
-          applyTheme(_previewBackup.theme || 'light');
+          applyDesignLanguage(_previewBackup.designLanguage || 'fluent');
+          applyTheme(_previewBackup.theme || 'system', _previewBackup);
           applyTooltips(typeof _previewBackup.showTooltips !== 'undefined' ? !!_previewBackup.showTooltips : true);
           applyVisualStyle(_previewBackup.visualStyle || 'blur');
           _previewBackup = null;
@@ -884,7 +930,8 @@ window.addEventListener('DOMContentLoaded', async ()=>{
       const initial = Settings.loadSettings();
       _setSettingsLoading(false);
       _applyToForm(initial);
-      applyTheme(initial.theme || 'light');
+      applyDesignLanguage(initial.designLanguage || 'fluent');
+      applyTheme(initial.theme || 'system', initial);
       applyTooltips(typeof initial.showTooltips !== 'undefined' ? !!initial.showTooltips : true);
       applyVisualStyle(initial.visualStyle || 'blur');
       _selectSettingsTab(_readPersistedSettingsTab() || _getFirstSettingsTab(), { focus: false });

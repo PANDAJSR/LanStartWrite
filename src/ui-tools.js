@@ -23,6 +23,7 @@ import { initPenUI, updatePenModeLabel } from './pen.js';
 import { initEraserUI, updateEraserModeLabel } from './erese.js';
 import { applyModeCanvasBackground } from './mode_background.js';
 import { buildPenTailSegment, normalizePenTailSettings } from './pen_tail.js';
+import { applyThemeMode, initThemeAutoSync, buildContrastReport, measureApplyCost, serializeLanTheme, parseLanTheme } from './colors_features.js';
 
 const colorTool = document.getElementById('colorTool');
 const pointerTool = document.getElementById('pointerTool');
@@ -782,6 +783,7 @@ const resetSettingsBtn = document.getElementById('resetSettings');
 const optAutoResize = document.getElementById('optAutoResize');
 const optCollapsed = document.getElementById('optCollapsed');
 const optTheme = document.getElementById('optTheme');
+const optDesignLanguage = document.getElementById('optDesignLanguage');
 const optTooltips = document.getElementById('optTooltips');
 const optMultiTouchPen = document.getElementById('optMultiTouchPen');
 const optAnnotationPenColor = document.getElementById('optAnnotationPenColor');
@@ -799,6 +801,18 @@ const penTailPressureText = document.getElementById('penTailPressureText');
 const penTailPreview = document.getElementById('penTailPreview');
 const optSmartInk = document.getElementById('optSmartInk');
 const optVisualStyle = document.getElementById('optVisualStyle');
+const optMicaIntensity = document.getElementById('optMicaIntensity');
+const micaIntensityText = document.getElementById('micaIntensityText');
+const optThemePrimary = document.getElementById('optThemePrimary');
+const optThemeSecondary = document.getElementById('optThemeSecondary');
+const optThemeBackground = document.getElementById('optThemeBackground');
+const exportThemeBtn = document.getElementById('exportThemeBtn');
+const importThemeBtn = document.getElementById('importThemeBtn');
+const resetThemeBtn = document.getElementById('resetThemeBtn');
+const themeFileInput = document.getElementById('themeFileInput');
+const contrastReportBtn = document.getElementById('contrastReportBtn');
+const perfCheckBtn = document.getElementById('perfCheckBtn');
+const themeReportOut = document.getElementById('themeReportOut');
 const optCanvasColor = document.getElementById('optCanvasColor');
 const keyUndo = document.getElementById('keyUndo');
 const keyRedo = document.getElementById('keyRedo');
@@ -860,8 +874,11 @@ function _makeSettingsDraftFromSettings(s){
   return {
     enableAutoResize: !!src.enableAutoResize,
     toolbarCollapsed: !!src.toolbarCollapsed,
-    theme: String(src.theme || 'light'),
+    designLanguage: String(src.designLanguage || 'fluent'),
+    theme: String(src.theme || 'system'),
+    themeCustom: Object.assign({}, (src.themeCustom && typeof src.themeCustom === 'object') ? src.themeCustom : {}),
     visualStyle: String(src.visualStyle || 'blur'),
+    mica: Object.assign({}, (src.mica && typeof src.mica === 'object') ? src.mica : {}),
     canvasColor: String(src.canvasColor || 'white'),
     showTooltips: !!src.showTooltips,
     multiTouchPen: !!src.multiTouchPen,
@@ -940,14 +957,28 @@ function _loadSettingsTabAsync(tab){
 function _validateSettingsDraft(d){
   const draft = d && typeof d === 'object' ? d : {};
   const theme = String(draft.theme || '');
+  const designLanguage = String(draft.designLanguage || '');
   const visualStyle = String(draft.visualStyle || '');
   const canvasColor = String(draft.canvasColor || '');
   const undoKey = draft.shortcuts && typeof draft.shortcuts.undo === 'string' ? draft.shortcuts.undo.trim() : '';
   const redoKey = draft.shortcuts && typeof draft.shortcuts.redo === 'string' ? draft.shortcuts.redo.trim() : '';
 
-  if (theme !== 'light' && theme !== 'dark') return { ok: false, message: '主题值无效', focusId: 'optTheme' };
+  if (!['system','light','dark','high-contrast','custom'].includes(theme)) return { ok: false, message: '主题值无效', focusId: 'optTheme' };
+  if (!['fluent','material3'].includes(designLanguage)) return { ok: false, message: '界面风格值无效', focusId: 'optDesignLanguage' };
   if (!['solid','blur','transparent'].includes(visualStyle)) return { ok: false, message: '视觉效果值无效', focusId: 'optVisualStyle' };
   if (!['white','black','chalkboard'].includes(canvasColor)) return { ok: false, message: '画布颜色值无效', focusId: 'optCanvasColor' };
+
+  const mica = (draft.mica && typeof draft.mica === 'object') ? draft.mica : {};
+  const intensity = Number(mica.intensity);
+  if (Number.isFinite(intensity) && (intensity < 0 || intensity > 100)) return { ok: false, message: '云母强度无效', focusId: 'optMicaIntensity' };
+
+  const tc = (draft.themeCustom && typeof draft.themeCustom === 'object') ? draft.themeCustom : {};
+  const p1 = normalizeHexColor(tc.primary, '#2B7CFF');
+  if (tc.primary && p1 !== String(tc.primary || '').toUpperCase()) return { ok: false, message: 'Primary 颜色无效', focusId: 'optThemePrimary' };
+  const p2 = normalizeHexColor(tc.secondary, '#535F70');
+  if (tc.secondary && p2 !== String(tc.secondary || '').toUpperCase()) return { ok: false, message: 'Secondary 颜色无效', focusId: 'optThemeSecondary' };
+  const p3 = normalizeHexColor(tc.background, '#FFFFFF');
+  if (tc.background && p3 !== String(tc.background || '').toUpperCase()) return { ok: false, message: '背景颜色无效', focusId: 'optThemeBackground' };
 
   const pen = normalizeHexColor(draft.annotationPenColor, '#FF0000');
   if (pen !== String(draft.annotationPenColor || '').toUpperCase()) return { ok: false, message: '批注默认笔颜色无效', focusId: 'optAnnotationPenColor' };
@@ -1006,6 +1037,15 @@ function _settingsUiReducer(state, action){
         else if (sub === 'shape') patch.shape = String(a.value || '');
         next.penTail = normalizePenTailSettings(patch);
       }
+    } else if (key.startsWith('themeCustom.')) {
+      const sub = key.slice('themeCustom.'.length);
+      const cur = (next.themeCustom && typeof next.themeCustom === 'object') ? next.themeCustom : {};
+      next.themeCustom = Object.assign({}, cur, { [sub]: normalizeHexColor(a.value, cur[sub]) });
+    } else if (key.startsWith('mica.')) {
+      const sub = key.slice('mica.'.length);
+      const cur = (next.mica && typeof next.mica === 'object') ? next.mica : {};
+      if (sub === 'intensity') next.mica = Object.assign({}, cur, { intensity: Number(a.value) });
+      else next.mica = Object.assign({}, cur, { [sub]: a.value });
     } else if (key) {
       next[key] = a.value;
     }
@@ -1048,8 +1088,17 @@ function _renderSettingsUi(){
   try{
     if (optAutoResize) optAutoResize.checked = !!d.enableAutoResize;
     if (optCollapsed) optCollapsed.checked = !!d.toolbarCollapsed;
-    if (optTheme) optTheme.value = d.theme || 'light';
+    if (optTheme) optTheme.value = d.theme || 'system';
+    if (optDesignLanguage) optDesignLanguage.value = d.designLanguage || 'fluent';
     if (optVisualStyle) optVisualStyle.value = d.visualStyle || 'blur';
+    const mica = (d.mica && typeof d.mica === 'object') ? d.mica : {};
+    const intensity = Number.isFinite(Number(mica.intensity)) ? Math.max(0, Math.min(100, Number(mica.intensity))) : 60;
+    if (optMicaIntensity) optMicaIntensity.value = String(intensity);
+    try{ if (micaIntensityText) micaIntensityText.textContent = `${intensity}%`; }catch(e){}
+    const tc = (d.themeCustom && typeof d.themeCustom === 'object') ? d.themeCustom : {};
+    if (optThemePrimary) optThemePrimary.value = normalizeHexColor(tc.primary, '#2B7CFF');
+    if (optThemeSecondary) optThemeSecondary.value = normalizeHexColor(tc.secondary, '#535F70');
+    if (optThemeBackground) optThemeBackground.value = normalizeHexColor(tc.background, '#FFFFFF');
     if (optCanvasColor) optCanvasColor.value = d.canvasColor || 'white';
     if (optTooltips) optTooltips.checked = !!d.showTooltips;
     if (optMultiTouchPen) optMultiTouchPen.checked = !!d.multiTouchPen;
@@ -1201,7 +1250,12 @@ function _wireSettingsUi(){
   bindField(optAutoResize, 'enableAutoResize');
   bindField(optCollapsed, 'toolbarCollapsed');
   bindField(optTheme, 'theme');
+  bindField(optDesignLanguage, 'designLanguage');
   bindField(optVisualStyle, 'visualStyle');
+  bindField(optMicaIntensity, 'mica.intensity', 'input');
+  bindField(optThemePrimary, 'themeCustom.primary', 'input');
+  bindField(optThemeSecondary, 'themeCustom.secondary', 'input');
+  bindField(optThemeBackground, 'themeCustom.background', 'input');
   bindField(optCanvasColor, 'canvasColor');
   bindField(optTooltips, 'showTooltips');
   bindField(optMultiTouchPen, 'multiTouchPen');
@@ -1216,6 +1270,116 @@ function _wireSettingsUi(){
   bindField(optSmartInk, 'smartInkRecognition');
   bindField(keyUndo, 'shortcuts.undo', 'input');
   bindField(keyRedo, 'shortcuts.redo', 'input');
+
+  if (optDesignLanguage) optDesignLanguage.addEventListener('change', ()=>{
+    try{
+      if (_settingsUiSyncing) return;
+      const raw = String(optDesignLanguage.value || 'fluent');
+      if (applyDesignLanguage(raw)) showToast(`已切换：${raw === 'material3' ? 'Material 3 Expressive' : 'Fluent'}`, 'success', 1600);
+    }catch(e){}
+  });
+
+  const getDraftSettings = ()=>{
+    const st = _settingsUiStore.getState();
+    const d = (st && st.draft && typeof st.draft === 'object') ? st.draft : {};
+    const base = Settings.loadSettings();
+    const tc = (d.themeCustom && typeof d.themeCustom === 'object') ? d.themeCustom : {};
+    const mica = (d.mica && typeof d.mica === 'object') ? d.mica : {};
+    return Object.assign({}, base, d, {
+      themeCustom: Object.assign({}, (base.themeCustom && typeof base.themeCustom === 'object') ? base.themeCustom : {}, tc),
+      mica: Object.assign({}, (base.mica && typeof base.mica === 'object') ? base.mica : {}, mica)
+    });
+  };
+
+  if (exportThemeBtn) exportThemeBtn.addEventListener('click', ()=>{
+    try{
+      const s = getDraftSettings();
+      const txt = serializeLanTheme(s);
+      const blob = new Blob([txt], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'LanStartWrite.lantheme';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(()=>{ try{ URL.revokeObjectURL(url); }catch(e){} }, 0);
+      try{ showToast('已导出主题', 'success', 1800); }catch(e){}
+    }catch(e){
+      try{ showToast('导出失败', 'error', 2200); }catch(err){}
+    }
+  });
+
+  if (importThemeBtn) importThemeBtn.addEventListener('click', ()=>{
+    try{ if (themeFileInput) themeFileInput.click(); }catch(e){}
+  });
+
+  if (themeFileInput) themeFileInput.addEventListener('change', ()=>{
+    const f = themeFileInput.files && themeFileInput.files[0] ? themeFileInput.files[0] : null;
+    if (!f) return;
+    const reader = new FileReader();
+    reader.onload = ()=>{
+      try{
+        const parsed = parseLanTheme(String(reader.result || ''));
+        if (!parsed.ok) {
+          try{ showToast('主题文件无效', 'error', 2200); }catch(e){}
+          return;
+        }
+        _settingsUiStore.dispatch({ type: 'UPDATE_FIELD', key: 'theme', value: parsed.theme || 'system' });
+        _settingsUiStore.dispatch({ type: 'UPDATE_FIELD', key: 'visualStyle', value: parsed.visualStyle || 'blur' });
+        _settingsUiStore.dispatch({ type: 'UPDATE_FIELD', key: 'themeCustom', value: parsed.themeCustom || {} });
+        _settingsUiStore.dispatch({ type: 'UPDATE_FIELD', key: 'mica', value: parsed.mica || {} });
+        try{ showToast('已导入主题（未保存）', 'success', 2200); }catch(e){}
+      }catch(e){
+        try{ showToast('导入失败', 'error', 2200); }catch(err){}
+      }finally{
+        try{ themeFileInput.value = ''; }catch(e){}
+      }
+    };
+    reader.readAsText(f);
+  });
+
+  if (resetThemeBtn) resetThemeBtn.addEventListener('click', ()=>{
+    const defThemeCustom = {
+      primary: '#2B7CFF',
+      secondary: '#535F70',
+      error: '#E5484D',
+      warning: '#F59E0B',
+      success: '#22C55E',
+      info: '#38BDF8',
+      surface: '#FDFBFF',
+      background: '#FFFFFF',
+      outline: '#73777F'
+    };
+    const defMica = { intensity: 60, radius: 24, feather: 8, overlayOpacity: 0.30, saturation: 1.2 };
+    _settingsUiStore.dispatch({ type: 'UPDATE_FIELD', key: 'themeCustom', value: defThemeCustom });
+    _settingsUiStore.dispatch({ type: 'UPDATE_FIELD', key: 'mica', value: defMica });
+    try{ showToast('已重置主题（未保存）', 'success', 2000); }catch(e){}
+  });
+
+  if (contrastReportBtn) contrastReportBtn.addEventListener('click', ()=>{
+    try{
+      const rep = buildContrastReport();
+      const lines = rep.map(r=>{
+        const ok = r && r.okAA;
+        const ratio = (r && typeof r.ratio === 'number') ? String(r.ratio.toFixed(2)) : '—';
+        return `${ok ? 'OK' : 'FAIL'} ${String(r.name || '')}: ${ratio}`;
+      });
+      if (themeReportOut) themeReportOut.textContent = lines.join('\n');
+    }catch(e){
+      if (themeReportOut) themeReportOut.textContent = '对比度检查失败';
+    }
+  });
+
+  if (perfCheckBtn) perfCheckBtn.addEventListener('click', ()=>{
+    try{
+      const s = getDraftSettings();
+      const cost = measureApplyCost(()=>{ applyThemeMode(String(s.theme || 'system'), s, document.documentElement); });
+      if (themeReportOut) themeReportOut.textContent = `applyTheme: ${cost.toFixed(2)}ms`;
+    }catch(e){
+      if (themeReportOut) themeReportOut.textContent = '性能自检失败';
+    }
+  });
 }
 
 _wireSettingsUi();
@@ -1510,7 +1674,8 @@ try{
           }
         }catch(e){}
         try{ if (typeof s.toolbarCollapsed !== 'undefined') applyCollapsed(!!s.toolbarCollapsed); }catch(e){}
-        try{ if (s.theme) applyTheme(s.theme); }catch(e){}
+        try{ if (typeof s.designLanguage !== 'undefined') applyDesignLanguage(s.designLanguage); }catch(e){}
+        try{ if (s.theme) applyTheme(s.theme, s); }catch(e){}
         try{ if (typeof s.showTooltips !== 'undefined') applyTooltips(!!s.showTooltips); }catch(e){}
         try{ if (s.visualStyle) applyVisualStyle(s.visualStyle); }catch(e){}
         try{ if (s.canvasColor) applyModeCanvasBackground(_appMode, s.canvasColor, { getToolState, replaceStrokeColors, setBrushColor, updatePenModeLabel, getPreferredPenColor: (mode)=>getPenColorFromSettings(s, mode) }); }catch(e){}
@@ -1599,8 +1764,11 @@ if (saveSettings) saveSettings.addEventListener('click', ()=>{
   const newS = {
     enableAutoResize: !!d.enableAutoResize,
     toolbarCollapsed: !!d.toolbarCollapsed,
+    designLanguage: String(d.designLanguage || 'fluent'),
     theme: String(d.theme || 'light'),
+    themeCustom: Object.assign({}, (d.themeCustom && typeof d.themeCustom === 'object') ? d.themeCustom : {}),
     visualStyle: String(d.visualStyle || 'blur'),
+    mica: Object.assign({}, (d.mica && typeof d.mica === 'object') ? d.mica : {}),
     canvasColor: String(d.canvasColor || 'white'),
     showTooltips: !!d.showTooltips,
     multiTouchPen: !!d.multiTouchPen,
@@ -1619,8 +1787,8 @@ if (saveSettings) saveSettings.addEventListener('click', ()=>{
     try{ const p = document.querySelector('.floating-panel'); if (p) p.style.width = ''; }catch(e){}
   } else { window.dispatchEvent(new Event('resize')); }
   applyCollapsed(newS.toolbarCollapsed);
-  // apply theme and tooltips immediately
-  applyTheme(newS.theme);
+  applyDesignLanguage(newS.designLanguage);
+  applyTheme(newS.theme, newS);
   try{ applyVisualStyle(newS.visualStyle); }catch(e){}
   try{ applyModeCanvasBackground(_appMode, newS.canvasColor, { getToolState, replaceStrokeColors, setBrushColor, updatePenModeLabel, getPreferredPenColor: (mode)=>getPenColorFromSettings(merged, mode) }); }catch(e){}
   applyTooltips(newS.showTooltips);
@@ -1636,10 +1804,28 @@ if (saveSettings) saveSettings.addEventListener('click', ()=>{
   closeSettingsModal();
 });
 
-if (resetSettingsBtn) resetSettingsBtn.addEventListener('click', ()=>{ Settings.resetSettings(); const s = Settings.loadSettings(); if (optAutoResize) optAutoResize.checked = !!s.enableAutoResize; if (optCollapsed) optCollapsed.checked = !!s.toolbarCollapsed; if (optTheme) optTheme.value = s.theme || 'light'; if (optVisualStyle) optVisualStyle.value = s.visualStyle || 'blur'; if (optCanvasColor) optCanvasColor.value = s.canvasColor || 'white'; if (optTooltips) optTooltips.checked = !!s.showTooltips; if (optMultiTouchPen) optMultiTouchPen.checked = !!s.multiTouchPen; if (optAnnotationPenColor) optAnnotationPenColor.value = String(s.annotationPenColor || '#FF0000'); if (optSmartInk) optSmartInk.checked = !!s.smartInkRecognition; if (keyUndo) keyUndo.value = (s.shortcuts && s.shortcuts.undo) || ''; if (keyRedo) keyRedo.value = (s.shortcuts && s.shortcuts.redo) || ''; try{ setMultiTouchPenEnabled(!!s.multiTouchPen); }catch(e){} try{ setInkRecognitionEnabled(!!s.smartInkRecognition); }catch(e){} try{ if (_appMode === APP_MODES.ANNOTATION) { setBrushColor(String(s.annotationPenColor || '#FF0000').toUpperCase()); updatePenModeLabel(); syncToolbarIcons(); } }catch(e){} });
+if (resetSettingsBtn) resetSettingsBtn.addEventListener('click', ()=>{ Settings.resetSettings(); const s = Settings.loadSettings(); if (optAutoResize) optAutoResize.checked = !!s.enableAutoResize; if (optCollapsed) optCollapsed.checked = !!s.toolbarCollapsed; if (optTheme) optTheme.value = s.theme || 'light'; if (optDesignLanguage) optDesignLanguage.value = s.designLanguage || 'fluent'; if (optVisualStyle) optVisualStyle.value = s.visualStyle || 'blur'; if (optCanvasColor) optCanvasColor.value = s.canvasColor || 'white'; if (optTooltips) optTooltips.checked = !!s.showTooltips; if (optMultiTouchPen) optMultiTouchPen.checked = !!s.multiTouchPen; if (optAnnotationPenColor) optAnnotationPenColor.value = String(s.annotationPenColor || '#FF0000'); if (optSmartInk) optSmartInk.checked = !!s.smartInkRecognition; if (keyUndo) keyUndo.value = (s.shortcuts && s.shortcuts.undo) || ''; if (keyRedo) keyRedo.value = (s.shortcuts && s.shortcuts.redo) || ''; try{ applyDesignLanguage(s.designLanguage); }catch(e){} try{ applyTheme(s.theme, s); }catch(e){} try{ setMultiTouchPenEnabled(!!s.multiTouchPen); }catch(e){} try{ setInkRecognitionEnabled(!!s.smartInkRecognition); }catch(e){} try{ if (_appMode === APP_MODES.ANNOTATION) { setBrushColor(String(s.annotationPenColor || '#FF0000').toUpperCase()); updatePenModeLabel(); syncToolbarIcons(); } }catch(e){} });
 
-// apply theme to document body
-function applyTheme(name){ try{ document.body.dataset.theme = name; if (name==='dark') document.documentElement.classList.add('theme-dark'); else document.documentElement.classList.remove('theme-dark'); }catch(e){} }
+function applyDesignLanguage(name){
+  try{
+    const root = document.documentElement;
+    const v = (String(name || '') === 'material3') ? 'material3' : 'fluent';
+    const nextCls = v === 'material3' ? 'dl-md3' : 'dl-fluent';
+    const prev = root.classList.contains(nextCls);
+    root.classList.remove('dl-md3','dl-fluent');
+    root.classList.add(nextCls);
+    try{ root.dataset.designLanguage = v; }catch(e){}
+    return !prev;
+  }catch(e){}
+  return false;
+}
+
+function applyTheme(name, settingsOverride){
+  try{
+    const s = (settingsOverride && typeof settingsOverride === 'object') ? settingsOverride : Settings.loadSettings();
+    applyThemeMode(String(name || (s && s.theme) || 'system'), s, document.documentElement);
+  }catch(e){}
+}
 
 // apply tooltips: preserve original title in data-orig-title
 function applyTooltips(show){ try{
@@ -1667,12 +1853,14 @@ if (previewSettingsBtn) previewSettingsBtn.addEventListener('click', ()=>{
   // backup only once
   if (!_previewBackup) _previewBackup = Object.assign({}, s);
   const preview = {
+    designLanguage: (optDesignLanguage && optDesignLanguage.value) || s.designLanguage,
     theme: (optTheme && optTheme.value) || s.theme,
     showTooltips: !!(optTooltips && optTooltips.checked),
     visualStyle: (optVisualStyle && optVisualStyle.value) || s.visualStyle,
     canvasColor: (optCanvasColor && optCanvasColor.value) || s.canvasColor
   };
-  applyTheme(preview.theme);
+  applyDesignLanguage(preview.designLanguage);
+  applyTheme(preview.theme, Object.assign({}, s, preview));
   applyTooltips(preview.showTooltips);
   // preview visual style
   try{ if (preview.visualStyle) applyVisualStyle(preview.visualStyle); }catch(e){}
@@ -1682,7 +1870,8 @@ if (previewSettingsBtn) previewSettingsBtn.addEventListener('click', ()=>{
 
 if (revertPreviewBtn) revertPreviewBtn.addEventListener('click', ()=>{
   if (_previewBackup) {
-    applyTheme(_previewBackup.theme);
+    applyDesignLanguage(_previewBackup.designLanguage);
+    applyTheme(_previewBackup.theme, _previewBackup);
     applyTooltips(_previewBackup.showTooltips);
     try{ applyVisualStyle(_previewBackup.visualStyle || 'blur'); }catch(e){}
     try{ applyModeCanvasBackground(_appMode, _previewBackup.canvasColor || 'white', { getToolState, replaceStrokeColors, setBrushColor, updatePenModeLabel, getPreferredPenColor: (mode)=>getPenColorFromSettings(_previewBackup, mode) }); }catch(e){}
@@ -2031,19 +2220,20 @@ function bindShortcutsFromSettings(){
 // initial bind
 bindShortcutsFromSettings();
 // rebind on settings change and apply visual style
-Message.on(EVENTS.SETTINGS_CHANGED, (s)=>{ try{ bindShortcutsFromSettings(); if (s && s.visualStyle) applyVisualStyle(s.visualStyle); if (s && s.canvasColor) applyModeCanvasBackground(_appMode, s.canvasColor, { getToolState, replaceStrokeColors, setBrushColor, updatePenModeLabel, getPreferredPenColor: (mode)=>getPenColorFromSettings(s, mode) }); if (s && typeof s.multiTouchPen !== 'undefined') setMultiTouchPenEnabled(!!s.multiTouchPen); if (s && typeof s.smartInkRecognition !== 'undefined') setInkRecognitionEnabled(!!s.smartInkRecognition); }catch(e){} });
+Message.on(EVENTS.SETTINGS_CHANGED, (s)=>{ try{ bindShortcutsFromSettings(); if (s && typeof s.designLanguage !== 'undefined') applyDesignLanguage(s.designLanguage); if (s && s.theme) applyTheme(s.theme, s); if (s && s.visualStyle) applyVisualStyle(s.visualStyle); if (s && s.canvasColor) applyModeCanvasBackground(_appMode, s.canvasColor, { getToolState, replaceStrokeColors, setBrushColor, updatePenModeLabel, getPreferredPenColor: (mode)=>getPenColorFromSettings(s, mode) }); if (s && typeof s.multiTouchPen !== 'undefined') setMultiTouchPenEnabled(!!s.multiTouchPen); if (s && typeof s.smartInkRecognition !== 'undefined') setInkRecognitionEnabled(!!s.smartInkRecognition); }catch(e){} });
 
 // initialize undo/redo button states now (renderer may have emitted before listener attached)
 try{ if (undoBtn) undoBtn.disabled = !canUndo(); if (redoBtn) redoBtn.disabled = !canRedo(); if (historyStateDisplay) historyStateDisplay.textContent = `撤销: ${canUndo()? '可' : '—'}  重做: ${canRedo()? '可' : '—'}`; }catch(e){}
 
 // apply persisted theme/tooltips on startup
 try{
-  if (settings) { if (settings.theme) applyTheme(settings.theme); if (typeof settings.showTooltips !== 'undefined') applyTooltips(!!settings.showTooltips); }
+  if (settings) { if (typeof settings.designLanguage !== 'undefined') applyDesignLanguage(settings.designLanguage); if (settings.theme) applyTheme(settings.theme, settings); if (typeof settings.showTooltips !== 'undefined') applyTooltips(!!settings.showTooltips); }
 }catch(e){}
 try{ if (settings) { if (settings.visualStyle) applyVisualStyle(settings.visualStyle); else applyVisualStyle('blur'); } }catch(e){}
 try{ if (settings) { applyModeCanvasBackground(_appMode, settings.canvasColor || 'white', { getToolState, replaceStrokeColors, setBrushColor, updatePenModeLabel, getPreferredPenColor: (mode)=>getPenColorFromSettings(settings, mode) }); } }catch(e){}
 try{ if (settings && typeof settings.multiTouchPen !== 'undefined') setMultiTouchPenEnabled(!!settings.multiTouchPen); }catch(e){}
 try{ if (settings && typeof settings.smartInkRecognition !== 'undefined') setInkRecognitionEnabled(!!settings.smartInkRecognition); }catch(e){}
+try{ initThemeAutoSync(()=>Settings.loadSettings()); }catch(e){}
 
 // Auto-adjust floating panel width based on tools content
 (() => {

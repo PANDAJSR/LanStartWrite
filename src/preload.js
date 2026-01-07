@@ -4,7 +4,7 @@ const { contextBridge, ipcRenderer } = require('electron');
  * 向主进程发送消息的 API
  * @param {string} channel - 通道名称
  * @param {*} data - 要发送的数据
- */
+ */ 
 const sendToMain = (channel, ...args) => ipcRenderer.send(channel, ...args);
 
 /**

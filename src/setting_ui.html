@@ -62,8 +62,19 @@
                     <label class="settings-field">
                       <span class="settings-field-label">主题</span>
                       <select id="optTheme">
-                        <option value="light">浅色</option>
-                        <option value="dark">深色</option>
+                        <option value="system">跟随系统</option>
+                        <option value="light">日间</option>
+                        <option value="dark">夜间</option>
+                        <option value="high-contrast">高对比度</option>
+                        <option value="custom">自定义</option>
+                      </select>
+                    </label>
+                    <div class="settings-divider"></div>
+                    <label class="settings-field">
+                      <span class="settings-field-label">界面风格</span>
+                      <select id="optDesignLanguage">
+                        <option value="fluent">Fluent设计风格</option>
+                        <option value="material3">Material 3 Expressive设计风格</option>
                       </select>
                     </label>
                     <div class="settings-divider"></div>
@@ -75,6 +86,52 @@
                         <option value="transparent">透明</option>
                       </select>
                     </label>
+                    <div class="settings-divider"></div>
+                    <label class="settings-field">
+                      <span class="settings-field-label">云母强度 <span id="micaIntensityText">60%</span></span>
+                      <input id="optMicaIntensity" type="range" min="0" max="100" step="5" value="60" />
+                    </label>
+                  </div>
+                </section>
+                <section class="settings-card" aria-label="自定义主题">
+                  <div class="settings-card-title">自定义主题</div>
+                  <div class="settings-card-body">
+                    <label class="settings-field">
+                      <span class="settings-field-label">Primary</span>
+                      <input type="color" id="optThemePrimary" value="#2B7CFF" aria-label="Primary 颜色">
+                    </label>
+                    <label class="settings-field">
+                      <span class="settings-field-label">Secondary</span>
+                      <input type="color" id="optThemeSecondary" value="#535F70" aria-label="Secondary 颜色">
+                    </label>
+                    <label class="settings-field">
+                      <span class="settings-field-label">背景</span>
+                      <input type="color" id="optThemeBackground" value="#FFFFFF" aria-label="背景颜色">
+                    </label>
+                    <div class="settings-divider"></div>
+                    <div class="settings-row">
+                      <button id="exportThemeBtn" class="mode-btn" type="button">导出 .lantheme</button>
+                      <button id="importThemeBtn" class="mode-btn" type="button">导入 .lantheme</button>
+                      <button id="resetThemeBtn" class="mode-btn" type="button">重置主题</button>
+                      <input id="themeFileInput" type="file" accept=".lantheme,application/json" style="display:none" />
+                    </div>
+                    <div class="settings-divider"></div>
+                    <div class="settings-hint">实时预览</div>
+                    <div id="themePreview" class="theme-preview" aria-label="主题预览">
+                      <div class="theme-preview-card">
+                        <div class="theme-preview-title">示例卡片</div>
+                        <div class="theme-preview-body">正文示例文本 16px / 行高 1.5</div>
+                        <div class="theme-preview-actions">
+                          <button class="mode-btn" type="button">次按钮</button>
+                          <button class="md3-button filled" type="button">主按钮</button>
+                        </div>
+                      </div>
+                    </div>
+                    <div class="settings-row" style="padding-top:6px">
+                      <button id="contrastReportBtn" class="mode-btn" type="button">对比度检查</button>
+                      <button id="perfCheckBtn" class="mode-btn" type="button">性能自检</button>
+                    </div>
+                    <pre id="themeReportOut" class="theme-report" aria-live="polite"></pre>
                   </div>
                 </section>
                 <section class="settings-card" aria-label="画布">

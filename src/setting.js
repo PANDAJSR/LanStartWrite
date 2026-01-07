@@ -16,7 +16,19 @@ const DEFAULTS = {
   enableAutoResize: true,
   toolbarPosition: { right: 20, top: 80 },
   // new settings
-  theme: 'light', // 'light' | 'dark'
+  designLanguage: 'fluent',
+  theme: 'system',
+  themeCustom: {
+    primary: '#2B7CFF',
+    secondary: '#535F70',
+    error: '#E5484D',
+    warning: '#F59E0B',
+    success: '#22C55E',
+    info: '#38BDF8',
+    surface: '#FDFBFF',
+    background: '#FFFFFF',
+    outline: '#73777F'
+  },
   showTooltips: true,
   multiTouchPen: false,
   smartInkRecognition: false,
@@ -32,6 +44,13 @@ const DEFAULTS = {
   annotationPenColor: '#FF0000',
   whiteboardPenColor: '#000000',
   visualStyle: 'blur', // 'solid' | 'blur' | 'transparent'
+  mica: {
+    intensity: 60,
+    radius: 24,
+    feather: 8,
+    overlayOpacity: 0.30,
+    saturation: 1.2
+  },
   canvasColor: 'white', // 'white' | 'black' | 'chalkboard'
   shortcuts: { undo: 'Ctrl+Z', redo: 'Ctrl+Y' }
 };
@@ -107,7 +126,28 @@ export function getPenColorFromSettings(settings, appMode){
  */
 export function loadSettings(){
   const s = _safeGet('appSettings') || {};
-  return Object.assign({}, DEFAULTS, s);
+  const merged = Object.assign({}, DEFAULTS, s);
+  if (merged && typeof merged === 'object') {
+    const dl = String(merged.designLanguage || '');
+    if (dl === 'fluent' || dl === 'material3') merged.designLanguage = dl;
+    else merged.designLanguage = 'fluent';
+
+    const t = String(merged.theme || '');
+    if (t === 'light' || t === 'dark') {
+      merged.theme = t;
+    } else if (t === 'system' || t === 'high-contrast' || t === 'custom') {
+      merged.theme = t;
+    } else {
+      merged.theme = 'system';
+    }
+    if (!merged.themeCustom || typeof merged.themeCustom !== 'object') merged.themeCustom = Object.assign({}, DEFAULTS.themeCustom);
+    if (merged.mica && typeof merged.mica === 'object') {
+      merged.mica = Object.assign({}, DEFAULTS.mica, merged.mica);
+    } else {
+      merged.mica = Object.assign({}, DEFAULTS.mica);
+    }
+  }
+  return merged;
 }
 
 /**
@@ -117,7 +157,14 @@ export function loadSettings(){
  */
 export function saveSettings(settings){
   const base = loadSettings();
-  const merged = Object.assign({}, base, settings);
+  const patch = (settings && typeof settings === 'object') ? settings : {};
+  const merged = Object.assign({}, base, patch);
+  if (patch.themeCustom && typeof patch.themeCustom === 'object') {
+    merged.themeCustom = Object.assign({}, (base.themeCustom && typeof base.themeCustom === 'object') ? base.themeCustom : {}, patch.themeCustom);
+  }
+  if (patch.mica && typeof patch.mica === 'object') {
+    merged.mica = Object.assign({}, (base.mica && typeof base.mica === 'object') ? base.mica : {}, patch.mica);
+  }
   _safeSet('appSettings', merged);
   return merged;
 }
