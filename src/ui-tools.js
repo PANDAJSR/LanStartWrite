@@ -159,40 +159,55 @@ function bindTouchTap(el, onTap, opts){
     moved = false;
   }
 
-  el.addEventListener('pointerdown', (e)=>{
-    if (!e || e.pointerType !== 'touch') return;
+  const getTouchPoint = (e)=>{
+    const list = (e && e.changedTouches) ? e.changedTouches : null;
+    if (!list || typeof list.length !== 'number') return null;
+    for (let i = 0; i < list.length; i++) {
+      const t = list[i];
+      if (!t) continue;
+      if (!down || t.identifier === down.id) return t;
+    }
+    return null;
+  };
+
+  el.addEventListener('touchstart', (e)=>{
+    const t = (e && e.changedTouches && e.changedTouches[0]) ? e.changedTouches[0] : null;
+    if (!t) return;
     _lastTouchActionAt = Date.now();
-    down = { id: e.pointerId, x: e.clientX, y: e.clientY, t: (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now() };
+    down = { id: t.identifier, x: t.clientX, y: t.clientY, t: (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now() };
     moved = false;
-    try{ if (el.setPointerCapture) el.setPointerCapture(e.pointerId); }catch(err){}
   }, { passive: true });
 
-  el.addEventListener('pointermove', (e)=>{
-    if (!down || !e || e.pointerId !== down.id) return;
-    const dx = (e.clientX - down.x);
-    const dy = (e.clientY - down.y);
+  el.addEventListener('touchmove', (e)=>{
+    if (!down) return;
+    const t = getTouchPoint(e);
+    if (!t) return;
+    const dx = (t.clientX - down.x);
+    const dy = (t.clientY - down.y);
     if ((dx*dx + dy*dy) > (moveThreshold*moveThreshold)) moved = true;
   }, { passive: true });
 
-  el.addEventListener('pointerup', (e)=>{
-    if (!down || !e || e.pointerId !== down.id) return;
+  el.addEventListener('touchend', (e)=>{
+    if (!down) return;
+    const t = getTouchPoint(e);
+    if (!t) return;
     const tUp = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
     const elapsed = tUp - down.t;
     const shouldFire = !moved;
     const delay = Math.max(0, delayMs - elapsed);
     const ev = e;
     clear();
-    try{ if (el.releasePointerCapture) el.releasePointerCapture(ev.pointerId); }catch(err){}
     if (!shouldFire) return;
     _lastTouchActionAt = Date.now();
     try{ ev.preventDefault(); ev.stopImmediatePropagation(); ev.stopPropagation(); }catch(err){}
     setTimeout(()=>{ try{ onTap(ev); }catch(err){} }, delay);
-  });
+  }, { passive: false });
 
-  el.addEventListener('pointercancel', (e)=>{
-    if (!down || !e || e.pointerId !== down.id) return;
+  el.addEventListener('touchcancel', (e)=>{
+    if (!down) return;
+    const t = getTouchPoint(e);
+    if (!t) return;
     clear();
-    try{ if (el.releasePointerCapture) el.releasePointerCapture(e.pointerId); }catch(err){}
   });
 
   el.addEventListener('click', (e)=>{
@@ -201,6 +216,88 @@ function bindTouchTap(el, onTap, opts){
     }
   }, true);
 }
+
+let _activeInputType = 'mouse';
+let _touchShield = null;
+let _touchBlockIds = new Set();
+let _touchBlockActive = false;
+let _touchBlockRestoreT = 0;
+
+function _ensureTouchShield(){
+  if (_touchShield) return _touchShield;
+  const el = document.createElement('div');
+  el.id = 'touchShield';
+  el.style.position = 'fixed';
+  el.style.left = '0';
+  el.style.top = '0';
+  el.style.right = '0';
+  el.style.bottom = '0';
+  el.style.zIndex = '2000';
+  el.style.background = 'transparent';
+  el.style.display = 'none';
+  el.style.touchAction = 'none';
+  try{ document.body.appendChild(el); }catch(e){}
+  _touchShield = el;
+  return el;
+}
+
+function _setTouchShieldActive(on){
+  const el = _ensureTouchShield();
+  if (!el) return;
+  el.style.display = on ? 'block' : 'none';
+}
+
+function _touchIdsFromEvent(e){
+  const ids = [];
+  const list = (e && e.changedTouches) ? e.changedTouches : null;
+  if (!list || typeof list.length !== 'number') return ids;
+  for (let i = 0; i < list.length; i++) {
+    const t = list[i];
+    if (!t) continue;
+    ids.push(t.identifier);
+  }
+  return ids;
+}
+
+function _beginTouchUiBlock(e){
+  _activeInputType = 'touch';
+  _lastTouchActionAt = Date.now();
+  const ids = _touchIdsFromEvent(e);
+  for (const id of ids) _touchBlockIds.add(id);
+  if (_touchBlockRestoreT) { try{ clearTimeout(_touchBlockRestoreT); }catch(err){} _touchBlockRestoreT = 0; }
+  if (_touchBlockActive) return;
+  _touchBlockActive = true;
+  try{ sendIgnoreMouse(false, false); }catch(err){}
+  _setTouchShieldActive(true);
+  try{ scheduleInteractiveRectsUpdate(); }catch(err){}
+}
+
+function _endTouchUiBlock(e){
+  const ids = _touchIdsFromEvent(e);
+  for (const id of ids) _touchBlockIds.delete(id);
+  if (_touchBlockIds.size > 0) return;
+  if (!_touchBlockActive) return;
+  _touchBlockActive = false;
+  _touchBlockRestoreT = setTimeout(()=>{
+    _touchBlockRestoreT = 0;
+    _setTouchShieldActive(false);
+    try{ applyWindowInteractivity(); }catch(err){}
+    try{ scheduleInteractiveRectsUpdate(); }catch(err){}
+  }, 120);
+}
+
+try{
+  document.addEventListener('touchstart', (e)=>{
+    try{
+      const t = e && e.target && e.target.closest ? e.target.closest('.floating-panel, .submenu.open') : null;
+      if (!t) return;
+      _beginTouchUiBlock(e);
+    }catch(err){}
+  }, { capture: true, passive: true });
+  document.addEventListener('touchend', (e)=>{ try{ _endTouchUiBlock(e); }catch(err){} }, { capture: true });
+  document.addEventListener('touchcancel', (e)=>{ try{ _endTouchUiBlock(e); }catch(err){} }, { capture: true });
+  document.addEventListener('mousedown', ()=>{ _activeInputType = 'mouse'; }, { capture: true });
+}catch(e){}
 
 function _isTouchEnvironment(){
   try{
@@ -559,12 +656,7 @@ if (colorTool) {
     scheduleInteractiveRectsUpdate();
   };
   colorTool.addEventListener('click', openPen);
-  colorTool.addEventListener('pointerdown', (e)=>{
-    try{
-      if (!e || e.pointerType === 'touch') return;
-      openPen(e);
-    }catch(err){}
-  });
+  colorTool.addEventListener('mousedown', (e)=>{ try{ openPen(e); }catch(err){} });
   bindTouchTap(colorTool, openPen, { delayMs: 20 });
 }
 
@@ -668,12 +760,12 @@ if (moreTool) {
     }catch(e){}
     try{ window.close(); }catch(e){}
   };
-  if (noteExportBtn) { noteExportBtn.addEventListener('click', onNoteExport); bindTouchTap(noteExportBtn, onNoteExport, { delayMs: 20 }); }
-  if (noteImportBtn) { noteImportBtn.addEventListener('click', onNoteImport); bindTouchTap(noteImportBtn, onNoteImport, { delayMs: 20 }); }
-  if (settingsBtn) { settingsBtn.addEventListener('click', onSettings); bindTouchTap(settingsBtn, onSettings, { delayMs: 20 }); }
-  if (pluginManagerBtn) { pluginManagerBtn.addEventListener('click', onPluginManager); bindTouchTap(pluginManagerBtn, onPluginManager, { delayMs: 20 }); }
-  if (aboutBtn) { aboutBtn.addEventListener('click', onAbout); bindTouchTap(aboutBtn, onAbout, { delayMs: 20 }); }
-  if (closeWhiteboardBtn) { closeWhiteboardBtn.addEventListener('click', onCloseWhiteboard); bindTouchTap(closeWhiteboardBtn, onCloseWhiteboard, { delayMs: 20 }); }
+  if (noteExportBtn) { noteExportBtn.addEventListener('click', onNoteExport); bindTouchTap(noteExportBtn, onNoteExport, { delayMs: 50 }); }
+  if (noteImportBtn) { noteImportBtn.addEventListener('click', onNoteImport); bindTouchTap(noteImportBtn, onNoteImport, { delayMs: 50 }); }
+  if (settingsBtn) { settingsBtn.addEventListener('click', onSettings); bindTouchTap(settingsBtn, onSettings, { delayMs: 50 }); }
+  if (pluginManagerBtn) { pluginManagerBtn.addEventListener('click', onPluginManager); bindTouchTap(pluginManagerBtn, onPluginManager, { delayMs: 50 }); }
+  if (aboutBtn) { aboutBtn.addEventListener('click', onAbout); bindTouchTap(aboutBtn, onAbout, { delayMs: 50 }); }
+  if (closeWhiteboardBtn) { closeWhiteboardBtn.addEventListener('click', onCloseWhiteboard); bindTouchTap(closeWhiteboardBtn, onCloseWhiteboard, { delayMs: 50 }); }
 }
 
 try{ initAppCase(); }catch(e){}
@@ -708,6 +800,7 @@ if (dragHandle && panel) {
   dragHandle.style.touchAction = 'none';
   const detachPanelDrag = attachDragHelper(dragHandle, panel, {
     threshold: 2,
+    touchThreshold: 5,
     clampRect: ()=>({ left: 0, top: 0, right: window.innerWidth, bottom: window.innerHeight }),
     onMove: ({ left, top }) => { try{ Message.emit(EVENTS.TOOLBAR_MOVE, { left, top }); }catch(e){} scheduleInteractiveRectsUpdate(); },
     onEnd: (ev, rect) => { try{ Message.emit(EVENTS.TOOLBAR_MOVE, { left: rect.left, top: rect.top }); }catch(e){} scheduleInteractiveRectsUpdate(); }
@@ -1813,18 +1906,51 @@ if (saveSettings) saveSettings.addEventListener('click', ()=>{
 
 if (resetSettingsBtn) resetSettingsBtn.addEventListener('click', ()=>{ Settings.resetSettings(); const s = Settings.loadSettings(); if (optAutoResize) optAutoResize.checked = !!s.enableAutoResize; if (optCollapsed) optCollapsed.checked = !!s.toolbarCollapsed; if (optTheme) optTheme.value = s.theme || 'light'; if (optDesignLanguage) optDesignLanguage.value = s.designLanguage || 'fluent'; if (optVisualStyle) optVisualStyle.value = s.visualStyle || 'blur'; if (optCanvasColor) optCanvasColor.value = s.canvasColor || 'white'; if (optTooltips) optTooltips.checked = !!s.showTooltips; if (optMultiTouchPen) optMultiTouchPen.checked = !!s.multiTouchPen; if (optAnnotationPenColor) optAnnotationPenColor.value = String(s.annotationPenColor || '#FF0000'); if (optSmartInk) optSmartInk.checked = !!s.smartInkRecognition; if (keyUndo) keyUndo.value = (s.shortcuts && s.shortcuts.undo) || ''; if (keyRedo) keyRedo.value = (s.shortcuts && s.shortcuts.redo) || ''; try{ applyDesignLanguage(s.designLanguage); }catch(e){} try{ applyTheme(s.theme, s); }catch(e){} try{ setMultiTouchPenEnabled(!!s.multiTouchPen); }catch(e){} try{ setInkRecognitionEnabled(!!s.smartInkRecognition); }catch(e){} try{ if (_appMode === APP_MODES.ANNOTATION) { setBrushColor(String(s.annotationPenColor || '#FF0000').toUpperCase()); updatePenModeLabel(); syncToolbarIcons(); } }catch(e){} });
 
+class DesignStyleController {
+  constructor(root){
+    this._root = root || document.documentElement;
+    this._last = '';
+    this._clearT = 0;
+  }
+
+  get(){
+    try{
+      const r = this._root;
+      if (r.classList.contains('dl-md3')) return 'material3';
+      return 'fluent';
+    }catch(e){}
+    return 'fluent';
+  }
+
+  set(name){
+    try{
+      const r = this._root;
+      const v = (String(name || '') === 'material3') ? 'material3' : 'fluent';
+      const nextCls = v === 'material3' ? 'dl-md3' : 'dl-fluent';
+      const prev = r.classList.contains(nextCls);
+      if (!prev) {
+        r.classList.add('dl-switching');
+        r.classList.remove('dl-md3','dl-fluent');
+        r.classList.add(nextCls);
+        this._last = v;
+        try{ r.dataset.designLanguage = v; }catch(e){}
+        if (this._clearT) clearTimeout(this._clearT);
+        this._clearT = setTimeout(()=>{ try{ r.classList.remove('dl-switching'); }catch(e){} }, 50);
+      }
+      return !prev;
+    }catch(e){}
+    return false;
+  }
+}
+
+const _designStyleController = new DesignStyleController(document.documentElement);
+
+export function setDesignLanguage(name){
+  return _designStyleController.set(name);
+}
+
 function applyDesignLanguage(name){
-  try{
-    const root = document.documentElement;
-    const v = (String(name || '') === 'material3') ? 'material3' : 'fluent';
-    const nextCls = v === 'material3' ? 'dl-md3' : 'dl-fluent';
-    const prev = root.classList.contains(nextCls);
-    root.classList.remove('dl-md3','dl-fluent');
-    root.classList.add(nextCls);
-    try{ root.dataset.designLanguage = v; }catch(e){}
-    return !prev;
-  }catch(e){}
-  return false;
+  return setDesignLanguage(name);
 }
 
 function applyTheme(name, settingsOverride){

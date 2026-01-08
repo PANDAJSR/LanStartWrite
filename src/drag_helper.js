@@ -3,74 +3,134 @@
 // options: { clampRect: ()=>{left,top,right,bottom} , onMove, onEnd, threshold }
 export function attachDragHelper(handle, target, options = {}){
   if (!handle || !target) return null;
-  const threshold = options.threshold || 2;
-  let isPointerDown = false;
+  const mouseThreshold = (typeof options.threshold === 'number') ? options.threshold : 2;
+  const touchThreshold = (typeof options.touchThreshold === 'number') ? options.touchThreshold : 5;
+  let mouseDown = false;
+  let touchDown = false;
   let dragging = false;
   let startX = 0, startY = 0;
   let startLeft = 0, startTop = 0;
-  let activePointerType = null;
+  let touchId = null;
 
   function getRect(){
     if (options.clampRect && typeof options.clampRect === 'function') return options.clampRect();
     return { left: 0, top: 0, right: window.innerWidth, bottom: window.innerHeight };
   }
 
-  function onPointerDown(ev){
-    isPointerDown = true;
-    activePointerType = ev.pointerType || 'mouse';
+  function _applyDelta(dx, dy, ev){
+    let left = startLeft + dx;
+    let top = startTop + dy;
+    try{
+      const c = getRect();
+      const w = target.offsetWidth; const h = target.offsetHeight;
+      if (typeof c.left === 'number' && typeof c.right === 'number'){
+        left = Math.max(c.left, Math.min(c.right - w, left));
+      }
+      if (typeof c.top === 'number' && typeof c.bottom === 'number'){
+        top = Math.max(c.top, Math.min(c.bottom - h, top));
+      }
+    }catch(e){}
+    target.style.left = left + 'px';
+    target.style.top = top + 'px';
+    if (options.onMove) options.onMove({ left, top, ev });
+  }
+
+  function onMouseDown(ev){
+    if (!ev || ev.button !== 0) return;
+    mouseDown = true;
+    touchDown = false;
+    touchId = null;
     startX = ev.clientX; startY = ev.clientY;
     const r = target.getBoundingClientRect();
     startLeft = r.left; startTop = r.top;
-    dragging = (activePointerType === 'touch' || activePointerType === 'pen');
-    try { if (ev.pointerId && handle.setPointerCapture) handle.setPointerCapture(ev.pointerId); } catch(e){}
+    dragging = false;
     if (handle && handle.style) handle.style.cursor = 'grabbing';
     if (options.onStart) options.onStart(ev);
-    ev.preventDefault();
+    try{ ev.preventDefault(); }catch(e){}
   }
 
-  function onPointerMove(ev){
-    if (!isPointerDown) return;
+  function onMouseMove(ev){
+    if (!mouseDown) return;
     const dx = ev.clientX - startX;
     const dy = ev.clientY - startY;
-    const moved = Math.hypot(dx, dy) >= threshold;
-    if (!dragging && activePointerType === 'mouse' && moved) dragging = true;
-    if (dragging){
-      ev.preventDefault();
-      let left = startLeft + dx;
-      let top = startTop + dy;
-      // clamp
-      try{
-        const c = getRect();
-        const w = target.offsetWidth; const h = target.offsetHeight;
-        if (typeof c.left === 'number' && typeof c.right === 'number'){
-          left = Math.max(c.left, Math.min(c.right - w, left));
-        }
-        if (typeof c.top === 'number' && typeof c.bottom === 'number'){
-          top = Math.max(c.top, Math.min(c.bottom - h, top));
-        }
-      }catch(e){}
-      // apply
-      target.style.left = left + 'px';
-      target.style.top = top + 'px';
-      if (options.onMove) options.onMove({ left, top, ev });
-    }
+    if (!dragging && Math.hypot(dx, dy) >= mouseThreshold) dragging = true;
+    if (!dragging) return;
+    try{ ev.preventDefault(); }catch(e){}
+    _applyDelta(dx, dy, ev);
   }
 
-  function onPointerUp(ev){
-    if (!isPointerDown) return;
-    isPointerDown = false; dragging = false; activePointerType = null;
-    try { if (ev.pointerId && handle.releasePointerCapture) handle.releasePointerCapture(ev.pointerId); } catch(e){}
+  function onMouseUp(ev){
+    if (!mouseDown) return;
+    mouseDown = false;
+    dragging = false;
     if (handle && handle.style) handle.style.cursor = '';
     if (options.onEnd) options.onEnd(ev, target.getBoundingClientRect());
   }
 
-  handle.addEventListener('pointerdown', onPointerDown);
-  window.addEventListener('pointermove', onPointerMove, { passive: false });
-  window.addEventListener('pointerup', onPointerUp);
+  function _getTouchPoint(ev){
+    const list = (ev && ev.changedTouches) ? ev.changedTouches : null;
+    if (!list || typeof list.length !== 'number') return null;
+    for (let i = 0; i < list.length; i++) {
+      const t = list[i];
+      if (!t) continue;
+      if (touchId === null || t.identifier === touchId) return t;
+    }
+    return null;
+  }
+
+  function onTouchStart(ev){
+    if (!ev) return;
+    if (!ev.changedTouches || !ev.changedTouches.length) return;
+    const t = ev.changedTouches[0];
+    if (!t) return;
+    touchDown = true;
+    mouseDown = false;
+    touchId = t.identifier;
+    startX = t.clientX; startY = t.clientY;
+    const r = target.getBoundingClientRect();
+    startLeft = r.left; startTop = r.top;
+    dragging = false;
+    if (options.onStart) options.onStart(ev);
+    try{ ev.preventDefault(); }catch(e){}
+  }
+
+  function onTouchMove(ev){
+    if (!touchDown) return;
+    const t = _getTouchPoint(ev);
+    if (!t) return;
+    const dx = t.clientX - startX;
+    const dy = t.clientY - startY;
+    if (!dragging && Math.hypot(dx, dy) >= touchThreshold) dragging = true;
+    if (!dragging) return;
+    try{ ev.preventDefault(); }catch(e){}
+    _applyDelta(dx, dy, ev);
+  }
+
+  function onTouchEnd(ev){
+    if (!touchDown) return;
+    const t = _getTouchPoint(ev);
+    if (!t) return;
+    touchDown = false;
+    dragging = false;
+    touchId = null;
+    if (options.onEnd) options.onEnd(ev, target.getBoundingClientRect());
+  }
+
+  handle.addEventListener('mousedown', onMouseDown);
+  window.addEventListener('mousemove', onMouseMove, { passive: false });
+  window.addEventListener('mouseup', onMouseUp);
+  handle.addEventListener('touchstart', onTouchStart, { passive: false });
+  window.addEventListener('touchmove', onTouchMove, { passive: false });
+  window.addEventListener('touchend', onTouchEnd);
+  window.addEventListener('touchcancel', onTouchEnd);
 
   return function detach(){
-    try{ handle.removeEventListener('pointerdown', onPointerDown); }catch(e){}
-    try{ window.removeEventListener('pointermove', onPointerMove); }catch(e){}
-    try{ window.removeEventListener('pointerup', onPointerUp); }catch(e){}
+    try{ handle.removeEventListener('mousedown', onMouseDown); }catch(e){}
+    try{ window.removeEventListener('mousemove', onMouseMove); }catch(e){}
+    try{ window.removeEventListener('mouseup', onMouseUp); }catch(e){}
+    try{ handle.removeEventListener('touchstart', onTouchStart); }catch(e){}
+    try{ window.removeEventListener('touchmove', onTouchMove); }catch(e){}
+    try{ window.removeEventListener('touchend', onTouchEnd); }catch(e){}
+    try{ window.removeEventListener('touchcancel', onTouchEnd); }catch(e){}
   };
 }

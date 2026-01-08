@@ -2,6 +2,66 @@ import Settings from './setting.js';
 import { updateAppSettings } from './write_a_change.js';
 import Message, { EVENTS } from './message.js';
 
+/**
+ * 功能库统一功能管理模块（Feature Hub）
+ *
+ * 目标：
+ * - 统一功能注册/注销/查询/调用
+ * - 标准化调用签名：invoke(featureId, params, callback)
+ * - 支持“手动排序 / 智能排序（权重 + 最近使用频率）”并持久化
+ * - 提供类型定义（JSDoc）与可观测的性能指标（排序耗时）
+ *
+ * 功能 ID 命名规则：
+ * - 形如：namespace:name
+ * - namespace/name：小写字母开头，可含 a-z0-9-._
+ * - 例：core:theme-toggle、mod.ink:smart-erase、plugin.demo:hello
+ *
+ * 版本规则：
+ * - 可选 semver 字符串：x.y.z（不参与路由，仅用于对外暴露与调试）
+ */
+
+/**
+ * @typedef {'manual'|'smart'} SortMode
+ */
+
+/**
+ * @typedef {{ base:number, freq:number, recency:number }} SortWeights
+ */
+
+/**
+ * @typedef {{
+ *   mode: SortMode,
+ *   weights: SortWeights,
+ *   halfLifeMs: number
+ * }} SortConfig
+ */
+
+/**
+ * @typedef {{
+ *   count: number,
+ *   lastUsedAt: number
+ * }} FeatureUsage
+ */
+
+/**
+ * @typedef {{
+ *   featureId: string,
+ *   title?: string,
+ *   version?: string,
+ *   weight?: number,
+ *   domButton?: HTMLElement,
+ *   invoke?: (params?: any)=>any|Promise<any>
+ * }} FeatureDefinition
+ */
+
+/**
+ * @typedef {{
+ *   lastSortMs: number,
+ *   lastSortAt: number,
+ *   lastSortN: number
+ * }} SortPerf
+ */
+
 const IDS = {
   grid: 'moreMenuQuickGrid',
   resourceModal: 'resourceModal',
@@ -18,8 +78,50 @@ const DB = {
   name: 'lanstartwrite',
   version: 1,
   store: 'kv',
-  keyOrder: 'app_case.moreMenuOrder.v1'
+  keyOrder: 'app_case.moreMenuOrder.v1',
+  keySortConfig: 'app_case.sortConfig.v1',
+  keyUsage: 'app_case.featureUsage.v1'
 };
+
+const _FEATURE_ID_RE = /^[a-z][a-z0-9._-]*:[a-z][a-z0-9._-]*$/;
+const _SEMVER_RE = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
+
+/** @type {SortConfig} */
+const DEFAULT_SORT_CONFIG = {
+  mode: 'smart',
+  weights: { base: 1, freq: 0.6, recency: 0.8 },
+  halfLifeMs: 3 * 24 * 60 * 60 * 1000
+};
+
+class FeatureError extends Error {
+  constructor(code, message, meta){
+    super(message);
+    this.name = 'FeatureError';
+    this.code = String(code || 'feature_error');
+    this.meta = meta || null;
+  }
+}
+
+class FeatureNotFoundError extends FeatureError {
+  constructor(featureId){
+    super('feature_not_found', `Feature not found: ${String(featureId || '')}`, { featureId: String(featureId || '') });
+    this.name = 'FeatureNotFoundError';
+  }
+}
+
+class FeatureValidationError extends FeatureError {
+  constructor(message, meta){
+    super('feature_validation', String(message || 'Invalid feature input'), meta || null);
+    this.name = 'FeatureValidationError';
+  }
+}
+
+class FeatureInvokeError extends FeatureError {
+  constructor(featureId, original){
+    super('feature_invoke_failed', `Feature invoke failed: ${String(featureId || '')}`, { featureId: String(featureId || ''), original: String(original && original.message || original || '') });
+    this.name = 'FeatureInvokeError';
+  }
+}
 
 function _resolveRequestedThemeToMode(requested){
   const v = String(requested || 'system');
@@ -97,6 +199,255 @@ function _grid(){
   return menu.querySelector('.submenu-quick-grid');
 }
 
+function _now(){
+  return Date.now();
+}
+
+function _isPlainObject(v){
+  if (!v || typeof v !== 'object') return false;
+  const proto = Object.getPrototypeOf(v);
+  return proto === Object.prototype || proto === null;
+}
+
+function _normalizeSortConfig(raw){
+  const def = DEFAULT_SORT_CONFIG;
+  const obj = (raw && typeof raw === 'object') ? raw : {};
+  const mode = (obj.mode === 'manual' || obj.mode === 'smart') ? obj.mode : def.mode;
+  const w = (obj.weights && typeof obj.weights === 'object') ? obj.weights : {};
+  const weights = {
+    base: Number.isFinite(Number(w.base)) ? Number(w.base) : def.weights.base,
+    freq: Number.isFinite(Number(w.freq)) ? Number(w.freq) : def.weights.freq,
+    recency: Number.isFinite(Number(w.recency)) ? Number(w.recency) : def.weights.recency
+  };
+  const halfLifeMs = Number.isFinite(Number(obj.halfLifeMs)) && Number(obj.halfLifeMs) > 10 ? Number(obj.halfLifeMs) : def.halfLifeMs;
+  return { mode, weights, halfLifeMs };
+}
+
+function _featureIdFromDomButton(btn){
+  if (!btn || !(btn instanceof HTMLElement)) return '';
+  const explicit = String(btn.dataset && btn.dataset.featureId || '').trim();
+  if (explicit) return explicit;
+  const a11y = String(btn.getAttribute('aria-label') || '').trim();
+  if (_FEATURE_ID_RE.test(a11y)) return a11y;
+  const title = String(btn.getAttribute('title') || '').trim();
+  if (_FEATURE_ID_RE.test(title)) return title;
+  const id = String(btn.id || '').trim();
+  if (id) return `dom:${id}`;
+  return '';
+}
+
+function _ensureFeatureIdOnDom(btn, featureId){
+  if (!btn || !(btn instanceof HTMLElement)) return;
+  if (btn.dataset.featureId) return;
+  if (featureId && _FEATURE_ID_RE.test(featureId)) btn.dataset.featureId = featureId;
+}
+
+class FeatureHub {
+  constructor(){
+    /** @type {Map<string, FeatureDefinition & { weight:number, domButton?:HTMLElement }>} */
+    this._features = new Map();
+    /** @type {Record<string, FeatureUsage>} */
+    this._usage = {};
+    /** @type {SortConfig} */
+    this._sortConfig = DEFAULT_SORT_CONFIG;
+    /** @type {SortPerf} */
+    this._perf = { lastSortMs: 0, lastSortAt: 0, lastSortN: 0 };
+    this._usageFlushTimer = 0;
+    this._wiredDomButtons = new WeakSet();
+  }
+
+  /**
+   * 获取当前排序性能指标。
+   * @returns {SortPerf}
+   */
+  getSortPerf(){
+    return { ...this._perf };
+  }
+
+  /**
+   * 获取排序配置（已归一化）。
+   * @returns {SortConfig}
+   */
+  getSortConfig(){
+    return { ...this._sortConfig, weights: { ...this._sortConfig.weights } };
+  }
+
+  /**
+   * 设置排序配置（并持久化）。
+   * @param {Partial<SortConfig>} next
+   * @returns {Promise<SortConfig>}
+   */
+  async setSortConfig(next){
+    const merged = _normalizeSortConfig({ ...this._sortConfig, ...(next || {}), weights: { ...(this._sortConfig.weights || {}), ...((next && next.weights) || {}) } });
+    this._sortConfig = merged;
+    try{ await _kvSet(DB.keySortConfig, merged); }catch(e){}
+    return this.getSortConfig();
+  }
+
+  /**
+   * 注册功能。
+   * @param {FeatureDefinition} def
+   * @returns {string} featureId
+   */
+  register(def){
+    const d = def && typeof def === 'object' ? def : {};
+    const featureId = String(d.featureId || '').trim();
+    if (!featureId) throw new FeatureValidationError('featureId required');
+    if (!_FEATURE_ID_RE.test(featureId) && !String(featureId).startsWith('dom:')) {
+      throw new FeatureValidationError('featureId format invalid', { featureId });
+    }
+    const version = String(d.version || '').trim();
+    if (version && !_SEMVER_RE.test(version)) throw new FeatureValidationError('version must be semver', { featureId, version });
+    const weight = Number.isFinite(Number(d.weight)) ? Number(d.weight) : 0;
+    const rec = {
+      featureId,
+      title: String(d.title || ''),
+      version: version || undefined,
+      weight,
+      domButton: (d.domButton instanceof HTMLElement) ? d.domButton : undefined,
+      invoke: (typeof d.invoke === 'function') ? d.invoke : undefined
+    };
+    this._features.set(featureId, rec);
+    if (rec.domButton) {
+      _ensureFeatureIdOnDom(rec.domButton, featureId);
+      this._wireDomUsage(rec.domButton, featureId);
+    }
+    return featureId;
+  }
+
+  /**
+   * 注销功能。
+   * @param {string} featureId
+   * @returns {boolean}
+   */
+  unregister(featureId){
+    return this._features.delete(String(featureId || '').trim());
+  }
+
+  /**
+   * 列出所有已注册功能。
+   * @returns {FeatureDefinition[]}
+   */
+  list(){
+    return Array.from(this._features.values()).map((v)=>({ ...v }));
+  }
+
+  /**
+   * 统一调用入口：
+   * - callback 方式：invoke(id, params, cb)
+   * - Promise 方式：await invoke(id, params)
+   * @param {string} featureId
+   * @param {any} [params]
+   * @param {(err:Error|null, result?:any)=>void} [callback]
+   * @returns {Promise<any>}
+   */
+  invoke(featureId, params, callback){
+    const id = String(featureId || '').trim();
+    const cb = (typeof callback === 'function') ? callback : null;
+    const p = this._invokeInternal(id, params);
+    if (cb) {
+      p.then((r)=>cb(null, r)).catch((e)=>cb(e));
+    }
+    return p;
+  }
+
+  async _invokeInternal(featureId, params){
+    const rec = this._features.get(featureId);
+    if (!rec) throw new FeatureNotFoundError(featureId);
+    if (params !== undefined && params !== null && !_isPlainObject(params) && typeof params !== 'string' && typeof params !== 'number' && typeof params !== 'boolean') {
+      throw new FeatureValidationError('params must be object/string/number/boolean/null', { featureId });
+    }
+    try{
+      this._markUsed(featureId);
+      if (typeof rec.invoke === 'function') return await rec.invoke(params);
+      if (rec.domButton && typeof rec.domButton.click === 'function') {
+        rec.domButton.click();
+        return true;
+      }
+      return true;
+    }catch(e){
+      throw new FeatureInvokeError(featureId, e);
+    }
+  }
+
+  _wireDomUsage(btn, featureId){
+    if (!btn || !(btn instanceof HTMLElement)) return;
+    if (this._wiredDomButtons.has(btn)) return;
+    this._wiredDomButtons.add(btn);
+    btn.addEventListener('click', ()=>{ this._markUsed(featureId); }, { passive: true });
+  }
+
+  _markUsed(featureId){
+    const id = String(featureId || '').trim();
+    if (!id) return;
+    const u = this._usage[id] || { count: 0, lastUsedAt: 0 };
+    u.count = Math.max(0, Number(u.count || 0)) + 1;
+    u.lastUsedAt = _now();
+    this._usage[id] = u;
+    this._scheduleUsageFlush();
+    try{ Message.emit(EVENTS.SETTINGS_CHANGED, { kind: 'feature_usage', featureId: id }); }catch(e){}
+  }
+
+  _scheduleUsageFlush(){
+    if (this._usageFlushTimer) return;
+    this._usageFlushTimer = window.setTimeout(async ()=>{
+      this._usageFlushTimer = 0;
+      try{ await _kvSet(DB.keyUsage, this._usage); }catch(e){}
+    }, 240);
+  }
+
+  async loadPersisted(){
+    const cfg = await _kvGet(DB.keySortConfig).catch(()=>null);
+    this._sortConfig = _normalizeSortConfig(cfg);
+    const usage = await _kvGet(DB.keyUsage).catch(()=>null);
+    if (usage && typeof usage === 'object') this._usage = usage;
+  }
+
+  /**
+   * 智能排序（O(n log n)）：score = weight*base + log(1+count)*freq + recencyBoost*recency
+   * @param {Array<{ featureId:string, weight:number }>} items
+   * @returns {string[]} featureId order
+   */
+  sortFeatureIds(items){
+    const start = (performance && typeof performance.now === 'function') ? performance.now() : 0;
+    const now = _now();
+    const cfg = this._sortConfig || DEFAULT_SORT_CONFIG;
+    const halfLife = Math.max(10, Number(cfg.halfLifeMs || DEFAULT_SORT_CONFIG.halfLifeMs));
+    const ln2 = Math.log(2);
+    const decay = (dt)=>Math.exp(-ln2 * (dt / halfLife));
+    const w = cfg.weights || DEFAULT_SORT_CONFIG.weights;
+    const scored = items.map((it)=>{
+      const id = String(it.featureId || '');
+      const usage = this._usage[id] || { count: 0, lastUsedAt: 0 };
+      const count = Math.max(0, Number(usage.count || 0));
+      const last = Math.max(0, Number(usage.lastUsedAt || 0));
+      const recency = last ? decay(Math.max(0, now - last)) : 0;
+      const baseWeight = Number.isFinite(Number(it.weight)) ? Number(it.weight) : 0;
+      const score = baseWeight * Number(w.base || 0) + Math.log1p(count) * Number(w.freq || 0) + recency * Number(w.recency || 0);
+      return { id, score };
+    });
+    scored.sort((a, b)=>b.score - a.score);
+    const end = (performance && typeof performance.now === 'function') ? performance.now() : 0;
+    if (start && end) {
+      this._perf = { lastSortMs: Math.max(0, end - start), lastSortAt: _now(), lastSortN: scored.length };
+    }
+    return scored.map((x)=>x.id);
+  }
+}
+
+export const featureHub = new FeatureHub();
+
+/**
+ * 标准化功能调用接口：function invoke(featureId, params, callback)
+ * @param {string} featureId
+ * @param {any} [params]
+ * @param {(err:Error|null, result?:any)=>void} [callback]
+ * @returns {Promise<any>}
+ */
+export function invoke(featureId, params, callback){
+  return featureHub.invoke(featureId, params, callback);
+}
+
 function _ensureSeq(btn){
   if (!btn || !(btn instanceof HTMLElement)) return;
   if (btn.dataset.appCaseSeq) return;
@@ -165,6 +516,7 @@ function _ensureAppButtons(){
   if (!resourceBtn) {
     resourceBtn = _buildToolBtn(IDS.btnResource, '编辑资源库', ICONS.library);
     resourceBtn.dataset.appCaseSeq = '0';
+    resourceBtn.dataset.featureId = 'core:resource-library';
     g.insertBefore(resourceBtn, g.firstChild);
   }
 
@@ -172,6 +524,7 @@ function _ensureAppButtons(){
   if (!themeBtn) {
     themeBtn = _buildToolBtn(IDS.btnTheme, '日夜模式', ICONS.moon);
     themeBtn.dataset.appCaseSeq = '1';
+    themeBtn.dataset.featureId = 'core:theme-toggle';
     g.insertBefore(themeBtn, resourceBtn.nextSibling);
   }
 
@@ -207,6 +560,21 @@ function _getGridButtonsForEdit(){
   const g = _grid();
   if (!g) return [];
   return Array.from(g.querySelectorAll('button.tool-btn')).filter((b)=>b instanceof HTMLElement);
+}
+
+function _syncFeatureRegistryFromGrid(){
+  const btns = _getGridButtonsForEdit();
+  for (const b of btns) {
+    const rawId = _featureIdFromDomButton(b);
+    const featureId = (_FEATURE_ID_RE.test(rawId) || String(rawId || '').startsWith('dom:')) ? rawId : `dom:${String(b.id || '')}`;
+    const title = String(b.getAttribute('aria-label') || b.getAttribute('title') || featureId);
+    const weight = Number.isFinite(Number(b.dataset.featureWeight))
+      ? Number(b.dataset.featureWeight)
+      : (featureId === 'core:resource-library' ? 1000 : (featureId === 'core:theme-toggle' ? 900 : 0));
+    try{
+      featureHub.register({ featureId, title, weight, domButton: b });
+    }catch(e){}
+  }
 }
 
 function _clonePreviewButton(src){
@@ -440,8 +808,29 @@ function _syncThemeBtnUI(){
 
 async function _loadAndApplySavedOrder(){
   try{
-    const order = await _kvGet(DB.keyOrder);
-    if (Array.isArray(order)) _applyOrderToGrid(order);
+    await featureHub.loadPersisted();
+    const cfg = featureHub.getSortConfig();
+    const manual = await _kvGet(DB.keyOrder).catch(()=>null);
+    if (cfg.mode === 'manual' && Array.isArray(manual) && manual.length) {
+      _applyOrderToGrid(manual);
+      return;
+    }
+    const btns = _getGridButtonsForEdit();
+    btns.forEach(_ensureSeq);
+    const items = btns
+      .map((b)=>{
+        const fid = _featureIdFromDomButton(b);
+        const seq = Number(b.dataset.appCaseSeq || 0);
+        const weight = Number.isFinite(Number(b.dataset.featureWeight)) ? Number(b.dataset.featureWeight) : (seq ? 0 : 10);
+        const featureId = (fid && _FEATURE_ID_RE.test(fid)) ? fid : (String(fid || '').startsWith('dom:') ? fid : `dom:${String(b.id || '')}`);
+        _ensureFeatureIdOnDom(b, featureId);
+        return { featureId, weight, btn: b };
+      })
+      .filter((x)=>!!x.featureId);
+    const nextOrderFeatureIds = featureHub.sortFeatureIds(items.map((x)=>({ featureId: x.featureId, weight: x.weight })));
+    const byFeatureId = new Map(items.map((x)=>[x.featureId, x.btn]));
+    const orderDomIds = nextOrderFeatureIds.map((fid)=>{ const b = byFeatureId.get(fid); return b ? String(b.id || '') : ''; }).filter(Boolean);
+    if (orderDomIds.length) _applyOrderToGrid(orderDomIds);
     else _applyOrderToGrid(null);
   }catch(e){
     _applyOrderToGrid(null);
@@ -463,6 +852,12 @@ function _wireAppCase(){
     themeBtn.dataset.wired = '1';
     themeBtn.addEventListener('click', _toggleTheme);
   }
+
+  try{
+    featureHub.register({ featureId: 'core:resource-library', title: '编辑资源库', version: '1.0.0', weight: 1000, domButton: resourceBtn, invoke: ()=>_openResourceEditor() });
+    featureHub.register({ featureId: 'core:theme-toggle', title: '日夜模式', version: '1.0.0', weight: 900, domButton: themeBtn, invoke: ()=>_toggleTheme() });
+  }catch(e){}
+  _syncFeatureRegistryFromGrid();
 
   const els = _modalEls();
   if (els.close && !els.close.dataset.wired) {
@@ -488,6 +883,7 @@ function _wireAppCase(){
     els.reset.dataset.wired = '1';
     els.reset.addEventListener('click', async ()=>{
       try{ await _kvDel(DB.keyOrder); }catch(e){}
+      try{ await featureHub.setSortConfig({ mode: 'smart' }); }catch(e){}
       const def = _defaultOrderFromSeq();
       _reorderListDom(def);
       _renderPreviewFromOrder(def);
@@ -500,6 +896,7 @@ function _wireAppCase(){
       const order = _listOrderFromDom();
       if (!order.length) return;
       try{ await _kvSet(DB.keyOrder, order); }catch(e){}
+      try{ await featureHub.setSortConfig({ mode: 'manual' }); }catch(e){}
       _applyOrderToGrid(order);
       _closeResourceEditor();
     });
@@ -520,8 +917,10 @@ export async function initAppCase(){
     _obs = new MutationObserver(async ()=>{
       const btns = _getGridButtonsForEdit();
       btns.forEach(_ensureSeq);
+      const cfg = featureHub.getSortConfig();
       const saved = await _kvGet(DB.keyOrder).catch(()=>null);
-      if (Array.isArray(saved)) _applyOrderToGrid(saved);
+      if (cfg.mode === 'manual' && Array.isArray(saved)) _applyOrderToGrid(saved);
+      if (cfg.mode === 'smart') await _loadAndApplySavedOrder();
       _wireAppCase();
     });
     try{ _obs.observe(g, { childList: true }); }catch(e){}

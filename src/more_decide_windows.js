@@ -253,9 +253,9 @@ export function showSubmenu(menu, openerEl){
  *    - wasPinned=true ：切到 absolute（相对父容器）→ 解绑拖拽 → 重新走 positionMenu → 广播 SUBMENU_PIN(pinned=false)
  */
 export function initPinHandlers(){
+  let _lastTouchTapAt = 0;
   document.querySelectorAll('.submenu-pin').forEach(btn => {
-    btn.addEventListener('click', (e)=>{
-      e.stopPropagation();
+    const doToggle = ()=>{
       const menu = btn.closest('.submenu');
       if (!menu) return;
       const wasPinned = menu.dataset.pinned === 'true';
@@ -282,6 +282,64 @@ export function initPinHandlers(){
           try{ Message.emit(EVENTS.SUBMENU_PIN, { id: menu.id, pinned: false }); }catch(e){}
         }
       }
+    };
+
+    btn.addEventListener('click', (e)=>{
+      if (Date.now() - _lastTouchTapAt < 400) return;
+      e.stopPropagation();
+      doToggle();
+    });
+
+    let down = null;
+    let moved = false;
+    const moveThreshold = 8;
+    const delayMs = 50;
+    const getTouchPoint = (e)=>{
+      const list = (e && e.changedTouches) ? e.changedTouches : null;
+      if (!list || typeof list.length !== 'number') return null;
+      for (let i = 0; i < list.length; i++) {
+        const t = list[i];
+        if (!t) continue;
+        if (!down || t.identifier === down.id) return t;
+      }
+      return null;
+    };
+
+    btn.addEventListener('touchstart', (e)=>{
+      const t = (e && e.changedTouches && e.changedTouches[0]) ? e.changedTouches[0] : null;
+      if (!t) return;
+      down = { id: t.identifier, x: t.clientX, y: t.clientY, t: (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now() };
+      moved = false;
+    }, { passive: true });
+
+    btn.addEventListener('touchmove', (e)=>{
+      if (!down) return;
+      const t = getTouchPoint(e);
+      if (!t) return;
+      const dx = (t.clientX - down.x);
+      const dy = (t.clientY - down.y);
+      if ((dx*dx + dy*dy) > (moveThreshold*moveThreshold)) moved = true;
+    }, { passive: true });
+
+    btn.addEventListener('touchend', (e)=>{
+      if (!down) return;
+      const t = getTouchPoint(e);
+      if (!t) return;
+      const tUp = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+      const elapsed = tUp - down.t;
+      const shouldFire = !moved;
+      const delay = Math.max(0, delayMs - elapsed);
+      down = null;
+      moved = false;
+      if (!shouldFire) return;
+      _lastTouchTapAt = Date.now();
+      try{ e.preventDefault(); e.stopImmediatePropagation(); e.stopPropagation(); }catch(err){}
+      setTimeout(()=>{ try{ doToggle(); }catch(err){} }, delay);
+    }, { passive: false });
+
+    btn.addEventListener('touchcancel', ()=>{
+      down = null;
+      moved = false;
     });
   });
 }
@@ -307,6 +365,7 @@ function attachDragToPinned(menu){
     try{
       const detach = mod.attachDragHelper(handle, menu, {
         threshold: 2,
+        touchThreshold: 5,
         clampRect: ()=>{
           const r = getCanvasRect();
           return { left: r.left, top: r.top, right: r.right, bottom: r.bottom };

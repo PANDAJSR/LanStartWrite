@@ -477,7 +477,7 @@ async function runUnitTests(){
       const settingsNodes = await loadFragment('./setting_ui.html');
       settingsNodes.forEach(n => document.body.appendChild(n));
 
-      await import(`./ui-tools.js?tabsTest=${Date.now()}`);
+      const Ui = await import(`./ui-tools.js?tabsTest=${Date.now()}`);
 
       const tab = document.querySelector('.settings-tab[data-tab="appearance"]') || document.querySelector('.settings-tab[data-tab="input"]');
       assert(!!tab, 'settings tab exists');
@@ -502,6 +502,50 @@ async function runUnitTests(){
       assert(!!loading, 'settings-loading exists');
       const disp = String(getComputedStyle(loading).display || '');
       assert(disp === 'none', `settings-loading hidden after load (got ${disp})`);
+
+      const root = document.documentElement;
+      const anyToolBtn = document.querySelector('.tool-btn');
+      assert(!!anyToolBtn, 'tool-btn exists for style regression');
+
+      try{ if (Ui && typeof Ui.setDesignLanguage === 'function') Ui.setDesignLanguage('material3'); }catch(e){}
+      await waitRaf();
+      await waitRaf();
+      const md3ToolStyle = getComputedStyle(anyToolBtn);
+      assert(String(md3ToolStyle.borderTopWidth || '') === '0px', `md3 tool-btn border removed (got ${md3ToolStyle.borderTopWidth})`);
+      assert(Number(md3ToolStyle.opacity || 0) <= 0.65 && Number(md3ToolStyle.opacity || 0) >= 0.5, `md3 tool-btn opacity ok (got ${md3ToolStyle.opacity})`);
+      const md3FilledBtn = document.querySelector('.md3-button.filled');
+      assert(!!md3FilledBtn, 'md3 filled button exists');
+      const md3FilledStyle = getComputedStyle(md3FilledBtn);
+      eq(String(md3FilledStyle.backgroundColor || ''), 'rgb(0, 90, 193)', `md3 filled button bg primary (got ${md3FilledStyle.backgroundColor})`);
+
+      try{ if (Ui && typeof Ui.setDesignLanguage === 'function') Ui.setDesignLanguage('fluent'); }catch(e){}
+      await waitRaf();
+      await waitRaf();
+      const fluentToolStyle = getComputedStyle(anyToolBtn);
+      assert(String(fluentToolStyle.borderTopWidth || '') === '1px', `fluent tool-btn border restored (got ${fluentToolStyle.borderTopWidth})`);
+      assert(String(fluentToolStyle.backgroundColor || '').includes('0.86') || String(fluentToolStyle.backgroundColor || '').includes('rgba(255, 255, 255'), `fluent tool-btn background restored (got ${fluentToolStyle.backgroundColor})`);
+      const fluentFilledStyle = getComputedStyle(md3FilledBtn);
+      assert(String(fluentFilledStyle.backgroundColor || '') !== 'rgb(0, 90, 193)', `fluent md3 filled not styled as md3 (got ${fluentFilledStyle.backgroundColor})`);
+
+      try{ root.classList.add('theme-dark'); }catch(e){}
+      await waitRaf();
+
+      const submenuModeBtn = document.getElementById('settingsBtn');
+      assert(!!submenuModeBtn, 'submenu mode button exists');
+      const st0 = getComputedStyle(submenuModeBtn);
+      eq(String(st0.backgroundColor || ''), 'rgb(18, 18, 18)', `dark submenu bg is #121212 (got ${st0.backgroundColor})`);
+      eq(String(st0.color || ''), 'rgb(255, 255, 255)', `dark submenu fg is #FFFFFF (got ${st0.color})`);
+
+      submenuModeBtn.setAttribute('data-force-hover', 'true');
+      await waitRaf();
+      const stHover = getComputedStyle(submenuModeBtn);
+      assert(String(stHover.boxShadow || '').includes('0.1') || String(stHover.boxShadow || '').includes('0.10'), `dark submenu hover overlay 10% (got ${stHover.boxShadow})`);
+      submenuModeBtn.removeAttribute('data-force-hover');
+      submenuModeBtn.setAttribute('data-force-active', 'true');
+      await waitRaf();
+      const stActive = getComputedStyle(submenuModeBtn);
+      assert(String(stActive.boxShadow || '').includes('0.14'), `dark submenu active overlay (got ${stActive.boxShadow})`);
+      submenuModeBtn.removeAttribute('data-force-active');
     }
   }finally{
     try{
