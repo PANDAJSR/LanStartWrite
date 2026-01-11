@@ -96,6 +96,7 @@ export default class VideoBoothUI {
    */
   bindEvents(titleBar, controlBar) {
     const closeBtn = titleBar.querySelector('.close-btn');
+    const minimizeBtn = titleBar.querySelector('.minimize-btn');
     const playPauseBtn = controlBar.querySelector('.play-pause-btn');
     const playIcon = playPauseBtn.querySelector('.play-icon');
     const pauseIcon = playPauseBtn.querySelector('.pause-icon');
@@ -103,7 +104,15 @@ export default class VideoBoothUI {
     const screenshotBtn = controlBar.querySelector('.screenshot-btn');
     const fullscreenBtn = controlBar.querySelector('.fullscreen-btn');
 
-    closeBtn.onclick = () => this.hide();
+    closeBtn.onclick = (e) => {
+      e.stopPropagation();
+      this.hide();
+    };
+
+    minimizeBtn.onclick = (e) => {
+      e.stopPropagation();
+      this.toggleMinimize();
+    };
 
     playPauseBtn.onclick = () => {
       if (this.video.paused) {
@@ -181,6 +190,15 @@ export default class VideoBoothUI {
       this.container.style.display = 'none';
       this.core.stopStream();
       this._isVisible = false;
+    }
+  }
+
+  /**
+   * 切换最小化
+   */
+  toggleMinimize() {
+    if (this.container) {
+      this.container.classList.toggle('minimized');
     }
   }
 

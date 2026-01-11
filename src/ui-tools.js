@@ -180,6 +180,7 @@ function setPdfMode(on){
     if (_pdfMode) b.dataset.pdfMode = '1';
     else if (b.dataset) delete b.dataset.pdfMode;
   }catch(e){}
+  updateExitToolUI();
 }
 
 /**
@@ -419,6 +420,7 @@ function openAboutWindow(){
   return false;
 }
 
+let _lastSentIgnore = null;
 /**
  * 通知主进程切换批注窗口的“鼠标穿透/转发”策略。
  * @param {boolean} ignore - 是否忽略鼠标（穿透到下层窗口）
@@ -428,6 +430,10 @@ function openAboutWindow(){
 function sendIgnoreMouse(ignore, forward){
   try{
     if (!window.electronAPI || typeof window.electronAPI.sendToMain !== 'function') return;
+    const key = `${ignore ? 1 : 0}:${forward ? 1 : 0}`;
+    if (_lastSentIgnore === key) return;
+    _lastSentIgnore = key;
+
     _lastIgnoreMouse = { ignore: !!ignore, forward: !!forward, at: Date.now() };
     _menuDebug('overlay', 'ignore-mouse', { ignore: !!ignore, forward: !!forward, mode: _appMode });
     window.electronAPI.sendToMain('overlay:set-ignore-mouse', { ignore: !!ignore, forward: !!forward });
@@ -439,28 +445,30 @@ function sendIgnoreMouse(ignore, forward){
  * @param {Array<{left:number,top:number,width:number,height:number}>} rects - 可交互矩形
  * @returns {void}
  */
+let _lastSentRectsJson = '';
 function sendInteractiveRects(rects){
   try{
     if (!window.electronAPI || typeof window.electronAPI.sendToMain !== 'function') return;
+    const json = JSON.stringify(rects);
+    if (json === _lastSentRectsJson) return; // Skip if no change
+    _lastSentRectsJson = json;
+    
     _menuDebug('overlay', 'interactive-rects', { count: Array.isArray(rects) ? rects.length : 0 });
     window.electronAPI.sendToMain('overlay:set-interactive-rects', { rects: Array.isArray(rects) ? rects : [] });
   }catch(e){}
 }
 
+let _cachedRects = null;
+let _cachedRectsAt = 0;
+
 /**
  * 收集当前界面中需要“接收鼠标事件”的元素矩形。
  * @returns {Array<{left:number,top:number,width:number,height:number}>}
- *
- * 业务含义：
- * - 批注模式下，画布区域默认允许穿透以便操作底层应用
- * - 工具栏/子菜单/弹窗等 UI 区域应当接收鼠标，否则无法交互
- *
- * 流程图（收集交互矩形）：
- * 1. pushEl：对单个元素做 getBoundingClientRect，并过滤 0 尺寸
- * 2. 将浮动工具栏、已打开子菜单、识别 UI、设置弹窗、页工具栏加入列表
- * 3. 返回矩形数组给主进程
  */
-function collectInteractiveRects(){
+function collectInteractiveRects(force = false){
+  const now = Date.now();
+  if (!force && _cachedRects && (now - _cachedRectsAt < 100)) return _cachedRects;
+
   const rects = [];
   const pushEl = (el)=>{
     if (!el || !el.getBoundingClientRect) return;
@@ -476,6 +484,9 @@ function collectInteractiveRects(){
   document.querySelectorAll('.recognition-ui.open').forEach(pushEl);
   document.querySelectorAll('.settings-modal.open').forEach(pushEl);
   pushEl(document.getElementById('pageToolbar'));
+  
+  _cachedRects = rects;
+  _cachedRectsAt = now;
   return rects;
 }
 
@@ -528,7 +539,16 @@ function updateExitToolUI(){
   }
 }
 
+let _interactivityTimer = 0;
 function applyWindowInteractivity(){
+  if (_interactivityTimer) return;
+  _interactivityTimer = setTimeout(() => {
+    _interactivityTimer = 0;
+    _applyWindowInteractivityNow();
+  }, 16);
+}
+
+function _applyWindowInteractivityNow(){
   const hasOpenUi = !!document.querySelector('.settings-modal.open, .recognition-ui.open, .submenu.open, .mod-overlay.open');
   if (hasOpenUi) {
     _menuDebug('interactivity', 'open-ui');
@@ -578,6 +598,12 @@ function applyWindowInteractivity(){
 
 function setAppMode(nextMode, opts){
   const m = nextMode === APP_MODES.ANNOTATION ? APP_MODES.ANNOTATION : APP_MODES.WHITEBOARD;
+  if (_appMode === m) return;
+  
+  try {
+    document.body.classList.add('mode-switching');
+  } catch (e) {}
+
   _appMode = m;
   if (!opts || opts.persist !== false) persistAppMode(_appMode);
   try{ document.body.dataset.appMode = _appMode; }catch(e){}
@@ -589,6 +615,16 @@ function setAppMode(nextMode, opts){
   applyWindowInteractivity();
   scheduleInteractiveRectsUpdate();
   try{ Message.emit(EVENTS.APP_MODE_CHANGED, { mode: _appMode }); }catch(e){}
+
+  setTimeout(() => {
+    try {
+      document.body.classList.remove('mode-switching');
+      // For automated performance testing: notify when switch is complete
+      if (window.electronAPI && typeof window.electronAPI.sendToMain === 'function') {
+        window.electronAPI.sendToMain('tests:mode-switch-done', { mode: _appMode, ts: Date.now() });
+      }
+    } catch (e) {}
+  }, 160);
 }
 
 class SmartAnnotationController {
@@ -2855,6 +2891,28 @@ if (window.electronAPI && window.electronAPI.onReplyFromMain) {
   window.electronAPI.onReplyFromMain('app:prepare-exit', (data) => {
     console.log('[App] 收到退出准备信号:', data);
     Message.emit(EVENTS.APP_PREPARE_EXIT, data);
+  });
+
+  window.electronAPI.onReplyFromMain('pdf:state-changed', (data) => {
+    console.log('[App] PDF 状态变更:', data);
+    const count = (data && typeof data.count === 'number') ? data.count : 0;
+    if (count > 0) {
+      if (!_pdfMode) {
+        setPdfMode(true);
+        // 如果当前不在批注模式，可以考虑切过去，但为了不打断用户，这里只改 PDF 标志位
+        updateExitToolUI();
+      }
+    } else {
+      if (_pdfMode) {
+        setPdfMode(false);
+        // 如果当前处于 PDF 关联的批注模式，恢复到白板模式
+        if (_appMode === APP_MODES.ANNOTATION) {
+          enterWhiteboardMode({ persist: true });
+        }
+        applyWindowInteractivity();
+        scheduleInteractiveRectsUpdate();
+      }
+    }
   });
 }
 

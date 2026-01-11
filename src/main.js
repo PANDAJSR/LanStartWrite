@@ -23,6 +23,20 @@ let _overlayAllowDesired = null;
 let _overlayAllowDesiredAt = 0;
 let _overlayAllowLastSwitchAt = 0;
 
+let _pdfWindowCount = 0;
+let _mainWindowBounds = null;
+
+function _updatePdfModeState() {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('reply-from-main', 'pdf:state-changed', { count: _pdfWindowCount });
+  }
+}
+
+function _updateMainWindowBounds() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  _mainWindowBounds = mainWindow.getBounds();
+}
+
 function _appIconPath() {
   try { return path.join(__dirname, '..', 'iconpack', '1000120004.png'); } catch (e) { return undefined; }
 }
@@ -119,21 +133,30 @@ function _applyIgnoreMouse(ignore, forward) {
 }
 
 function _shouldAllowOverlayInteraction() {
-  if (!mainWindow) return false;
+  if (!mainWindow || mainWindow.isDestroyed()) return false;
   const rects = Array.isArray(_overlayInteractiveRects) ? _overlayInteractiveRects : [];
   if (rects.length === 0) return false;
-  const winBounds = mainWindow.getBounds();
+  
+  if (!_mainWindowBounds) _updateMainWindowBounds();
+  const winBounds = _mainWindowBounds;
+  if (!winBounds) return false;
+
   const p = screen.getCursorScreenPoint();
   const px = p.x;
   const py = p.y;
-  for (const r of rects) {
-    const left = winBounds.x + (Number(r.left) || 0);
-    const top = winBounds.y + (Number(r.top) || 0);
-    const width = Number(r.width) || 0;
-    const height = Number(r.height) || 0;
-    if (width <= 0 || height <= 0) continue;
-    const right = left + width;
-    const bottom = top + height;
+  
+  // Fast check: is the mouse even within the window bounds?
+  if (px < winBounds.x || px > winBounds.x + winBounds.width || 
+      py < winBounds.y || py > winBounds.y + winBounds.height) {
+    return false;
+  }
+
+  for (let i = 0, len = rects.length; i < len; i++) {
+    const r = rects[i];
+    const left = winBounds.x + r.left;
+    const top = winBounds.y + r.top;
+    const right = left + r.width;
+    const bottom = top + r.height;
     if (px >= left && px <= right && py >= top && py <= bottom) return true;
   }
   return false;
@@ -211,6 +234,14 @@ function createWindow(opts) {
 
   if (runTests) mainWindow.loadFile(path.join(__dirname, 'index.html'), { query: { runTests: '1' } });
   else mainWindow.loadFile(path.join(__dirname, 'index.html'));
+  
+  _updateMainWindowBounds();
+  mainWindow.on('move', _updateMainWindowBounds);
+  mainWindow.on('resize', _updateMainWindowBounds);
+
+  mainWindow.webContents.on('did-finish-load', () => {
+    _updatePdfModeState();
+  });
   try{ mainWindow.setAlwaysOnTop(true, 'screen-saver'); }catch(e){}
   try{ mainWindow.maximize(); }catch(e){}
   
@@ -1344,6 +1375,11 @@ ipcMain.handle('message', async (event, channel, data) => {
         return { success: false, error: String(e && e.message || e) };
       }
     }
+    case 'tests:stress-test-mode-switch': {
+      if (!_RUN_TESTS) return { success: false, error: 'not allowed' };
+      // This is a placeholder for stress test logic that can be triggered via IPC
+      return { success: true, started: true };
+    }
     case 'get-info':
       return {
         appVersion: app.getVersion(),
@@ -1404,27 +1440,76 @@ ipcMain.handle('message', async (event, channel, data) => {
         const rawPath = payload.path ? String(payload.path) : '';
         if (!rawPath) return { success: false, reason: 'no_path' };
         const mode = payload.mode === 'fullscreen' ? 'fullscreen' : 'window';
-        const fileUrl = pathToFileURL(rawPath).toString();
+        
+        // Load our custom UI instead of the raw PDF
+        const uiPath = path.join(__dirname, 'pdf_viewer_ui.html');
+        const fileUrl = pathToFileURL(uiPath).toString() + `?path=${encodeURIComponent(rawPath)}&mode=${mode}`;
+        
         const win = new BrowserWindow({
-          width: 980,
-          height: 720,
-          minWidth: 720,
-          minHeight: 520,
+          width: 1024,
+          height: 768,
+          minWidth: 800,
+          minHeight: 600,
           backgroundColor: '#ffffff',
-          frame: true,
-          show: true,
+          frame: false, // Use custom title bar for better control
+          show: false,
           icon: _appIconPath(),
-          title: 'PDF 预览',
+          title: 'PDF 浏览与批注',
           webPreferences: {
             contextIsolation: true,
-            nodeIntegration: false
+            nodeIntegration: false,
+            preload: path.join(__dirname, 'preload.js'),
+            webSecurity: false
           }
         });
-        if (mode === 'fullscreen') {
-          try { win.setFullScreen(true); } catch (e) {}
-        }
+
+        _pdfWindowCount++;
+        _updatePdfModeState();
+
+        win.once('ready-to-show', () => {
+          win.show();
+          if (mode === 'fullscreen') {
+            win.setFullScreen(true);
+          }
+        });
+
         await win.loadURL(fileUrl);
-        try { win.setMenuBarVisibility(true); } catch (e) {}
+        win.setMenuBarVisibility(false);
+
+        win.on('closed', () => {
+          _pdfWindowCount = Math.max(0, _pdfWindowCount - 1);
+          _updatePdfModeState();
+        });
+        
+        return { success: true };
+      } catch (e) {
+        return { success: false, error: String(e && e.message || e) };
+      }
+    }
+
+    case 'pdf:set-fullscreen': {
+      try {
+        const win = BrowserWindow.fromWebContents(event.sender);
+        if (win) {
+          const val = !!data;
+          win.setFullScreen(val);
+        }
+        return { success: true };
+      } catch (e) {
+        return { success: false, error: String(e && e.message || e) };
+      }
+    }
+
+    case 'pdf:close-window': {
+      try {
+        const win = BrowserWindow.fromWebContents(event.sender);
+        if (win) {
+          // Safety check: don't close the main window via this specific PDF channel
+          if (win === mainWindow) {
+             return { success: false, error: 'cannot_close_main_window_via_pdf_channel' };
+          }
+          win.close();
+        }
         return { success: true };
       } catch (e) {
         return { success: false, error: String(e && e.message || e) };

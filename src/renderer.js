@@ -116,6 +116,32 @@ export function setInkRecognitionEnabled(enabled){
   _inkRecognitionEnabled = !!enabled;
   _cancelInkTimers();
   if (!_inkRecognitionEnabled) _dismissInkPreview(false);
+  
+  // 同步触控输入模块的状态
+  try {
+    if (window.Curous && typeof window.Curous.enableSelectionMode === 'function') {
+      // 如果禁用了智能识别，且当前不是选择模式，则确保输入状态正确
+      // 这里可以根据需要添加更复杂的逻辑
+    }
+  } catch(e) {}
+}
+
+/**
+ * 彻底关闭触控输入相关模块（用于白板模式退出或异常恢复）
+ */
+export function shutdownTouchInput() {
+  _cancelInkTimers();
+  _dismissInkPreview(false);
+  _inkRecognitionEnabled = false;
+  inputEnabled = false;
+  multiTouchPenEnabled = false;
+  touchStrokeMap.clear();
+  
+  // 清理 UI 元素
+  if (_inkUi && _inkUi.parentElement) {
+    try { _inkUi.parentElement.removeChild(_inkUi); } catch(e) {}
+    _inkUi = null;
+  }
 }
 
 Message.on(EVENTS.SETTINGS_CHANGED, (payload)=>{

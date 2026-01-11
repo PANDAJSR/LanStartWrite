@@ -98,6 +98,20 @@
   border-top: 1px solid rgba(0,0,0,0.05);
 }
 
+.video-booth-window.minimized {
+  height: 40px !important;
+  min-height: 40px !important;
+}
+
+.video-booth-window.minimized .video-booth-wrap,
+.video-booth-window.minimized .video-booth-controls {
+  display: none !important;
+}
+
+.video-booth-window.minimized .minimize-btn svg {
+  transform: rotate(180deg);
+}
+
 .theme-dark .video-booth-controls {
   background: #2a2a2a;
   border-color: rgba(255,255,255,0.05);
