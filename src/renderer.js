@@ -1418,3 +1418,31 @@ _ensureDocInitialized('whiteboard');
 _ensureDocInitialized('annotation');
 _ensureDocInitialized('pdf');
 _loadDocState('whiteboard');
+
+// 监听应用退出准备信号，保存绘图状态
+try {
+  Message.on(EVENTS.APP_PREPARE_EXIT, () => {
+    console.log('[Renderer] 正在退出前保存绘图状态...');
+    // 保存所有文档的状态
+    try {
+      const s = Settings.loadSettings();
+      const annotations = s.annotations || {};
+      
+      // 更新当前文档的最新操作
+      _documents[_activeDocKey].ops = ops;
+      
+      // 遍历所有文档并保存
+      for (const key in _documents) {
+        if (_documents[key].ops && _documents[key].ops.length > 0) {
+          annotations[key] = snapshotOps(_documents[key].ops);
+        }
+      }
+      
+      Settings.updateSettings({ annotations });
+    } catch (e) {
+      console.error('Failed to save annotations on exit:', e);
+    }
+  });
+} catch (e) {
+  console.warn('Failed to bind exit listener in renderer:', e);
+}

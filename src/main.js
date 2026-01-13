@@ -393,11 +393,11 @@ function _createSettingsWindow() {
   const win = new BrowserWindow({
     width: 980,
     height: 720,
-    minWidth: 720,
-    minHeight: 520,
+    minWidth: 800,
+    minHeight: 600,
     backgroundColor: '#ffffff',
-    frame: true,
-    show: true,
+    frame: false,
+    show: false,
     icon: _appIconPath(),
     title: '设置 - LanStartWrite',
     webPreferences: {
@@ -406,7 +406,12 @@ function _createSettingsWindow() {
       nodeIntegration: false
     }
   });
-  win.loadFile(path.join(__dirname, 'index.html'), { query: { standalone: 'settings' } });
+
+  win.once('ready-to-show', () => {
+    win.show();
+  });
+
+  win.loadFile(path.join(__dirname, 'settings.html'));
   return win;
 }
 
@@ -414,12 +419,12 @@ function _createAboutWindow() {
   const win = new BrowserWindow({
     width: 520,
     height: 420,
-    resizable: false,
+    resizable: true,
     minimizable: true,
     maximizable: false,
     backgroundColor: '#ffffff',
-    frame: true,
-    show: true,
+    frame: false,
+    show: false,
     icon: _appIconPath(),
     title: '关于 - LanStartWrite',
     webPreferences: {
@@ -428,6 +433,11 @@ function _createAboutWindow() {
       nodeIntegration: false
     }
   });
+
+  win.once('ready-to-show', () => {
+    win.show();
+  });
+
   win.loadFile(path.join(__dirname, 'about.html'));
   return win;
 }
@@ -1239,12 +1249,7 @@ ipcMain.on('overlay:set-interactive-rects', (event, payload) => {
 });
 
 ipcMain.on('app:close', () => {
-  try{
-    if (mainWindow) mainWindow.close();
-    else app.quit();
-  }catch(e){
-    try{ app.quit(); }catch(err){}
-  }
+  _handleClose();
 });
 
 /**
@@ -1256,6 +1261,10 @@ ipcMain.handle('message', async (event, channel, data) => {
   
   // 根据不同的消息通道进行处理
   switch(channel) {
+    case 'app:quit': {
+      _handleClose();
+      return { success: true };
+    }
     case 'ui:open-settings-window': {
       try {
         _createSettingsWindow();
@@ -1513,6 +1522,74 @@ ipcMain.handle('message', async (event, channel, data) => {
         return { success: true };
       } catch (e) {
         return { success: false, error: String(e && e.message || e) };
+      }
+    }
+
+    case 'video-booth:open-window': {
+      try {
+        const uiPath = path.join(__dirname, 'video_booth.html');
+        const fileUrl = pathToFileURL(uiPath).toString();
+        
+        const win = new BrowserWindow({
+          width: 1366,
+          height: 768,
+          minWidth: 1280,
+          minHeight: 720,
+          backgroundColor: '#000000',
+          frame: false,
+          show: false,
+          icon: _appIconPath(),
+          title: '视频展台',
+          webPreferences: {
+            contextIsolation: true,
+            nodeIntegration: false,
+            preload: path.join(__dirname, 'preload.js'),
+            webSecurity: false
+          }
+        });
+
+        win.once('ready-to-show', () => {
+          win.show();
+        });
+
+        await win.loadURL(fileUrl);
+        win.setMenuBarVisibility(false);
+        return { success: true };
+      } catch (e) {
+        return { success: false, error: String(e && e.message || e) };
+      }
+    }
+
+    case 'window:minimize': {
+      try {
+        const win = BrowserWindow.fromWebContents(event.sender);
+        if (win) win.minimize();
+        return { success: true };
+      } catch (e) {
+        return { success: false, error: String(e) };
+      }
+    }
+
+    case 'window:maximize': {
+      try {
+        const win = BrowserWindow.fromWebContents(event.sender);
+        if (win) {
+          if (win.isMaximized()) win.unmaximize();
+          else win.maximize();
+        }
+        return { success: true };
+      } catch (e) {
+        return { success: false, error: String(e) };
+      }
+    }
+
+    case 'window:close': {
+      try {
+        const win = BrowserWindow.fromWebContents(event.sender);
+        if (win) win.close();
+        return { success: true };
+      } catch (e) {
+        return { success: false, error: String(e) };
       }
     }
 
