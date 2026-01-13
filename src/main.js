@@ -6,6 +6,9 @@ const yauzl = require('yauzl');
 const semver = require('semver');
 const zlib = require('zlib');
 const { pathToFileURL } = require('url');
+const { exec, fork } = require('child_process');
+
+const PPTLinkIPC = require('./pptlink/pptlink_ipc');
 
 const _RUN_TESTS = process.argv.includes('--run-tests');
 const _ALLOW_UNSIGNED_PLUGINS = true;
@@ -25,6 +28,29 @@ let _overlayAllowLastSwitchAt = 0;
 
 let _pdfWindowCount = 0;
 let _mainWindowBounds = null;
+
+// Initialize PPT Link Service
+const pptLinkIPC = new PPTLinkIPC({
+  broadcastMessage: (channel, data) => broadcastMessage(channel, data)
+});
+
+/**
+ * 辅助函数：从主进程环境加载设置
+ * 注意：主进程无法直接访问 localStorage，这里返回默认值或通过其他方式获取的配置
+ */
+function loadSettings() {
+  // 默认配置
+  const DEFAULTS = {
+    comEnabled: false,
+    comAutoConnect: true,
+    vstoEnabled: false,
+    vstoAutoConnect: true
+  };
+  
+  // 在实际应用中，这里应该读取磁盘上的配置文件
+  // 目前先返回默认值以防止 ReferenceError
+  return DEFAULTS;
+}
 
 function _updatePdfModeState() {
   if (mainWindow && !mainWindow.isDestroyed()) {
@@ -1172,6 +1198,19 @@ app.whenReady().then(async () => {
   _createTray();
   try { await _ensureAuditReady(); } catch (e) {}
   _ensureAuditReportTimer();
+
+  // Initialize PPT Link Service
+  pptLinkIPC.init();
+  
+  // 自动连接逻辑
+  const settings = loadSettings();
+  if (settings.vstoEnabled && settings.vstoAutoConnect) {
+    pptLinkIPC.sendToService('vsto_toggle', { enabled: true });
+  }
+  if (settings.comEnabled && settings.comAutoConnect) {
+    pptLinkIPC.sendToService('com_toggle', { enabled: true });
+  }
+
   if (_RUN_TESTS) {
     try{
       _testsTimeout = setTimeout(() => {
@@ -1560,6 +1599,65 @@ ipcMain.handle('message', async (event, channel, data) => {
       }
     }
 
+    case 'ppt:open-window': {
+      pptLinkIPC.openPPTWindow();
+      return { success: true };
+    }
+
+    case 'ppt:close-window': {
+      pptLinkIPC.closePPTWindow();
+      return { success: true };
+    }
+
+    case 'ppt:sync-state': {
+      // 同时广播给其他窗口（如 tool_ui）
+      broadcastMessage('ppt:sync-state', data);
+      return { success: true };
+    }
+
+    case 'ppt:goto-page': {
+      pptLinkIPC.sendToService('goto_page', { page: data });
+      broadcastMessage('ppt:goto-page', data);
+      return { success: true };
+    }
+
+    case 'ppt:exit': {
+      pptLinkIPC.sendToService('exit_slideshow');
+      pptLinkIPC.closePPTWindow();
+      broadcastMessage('ppt:exit');
+      return { success: true };
+    }
+
+    case 'vsto:toggle-service': {
+      const enabled = !!data;
+      pptLinkIPC.sendToService('vsto_toggle', { enabled });
+      return { success: true, status: pptLinkIPC.vstoStatus };
+    }
+
+    case 'vsto:get-status': {
+      return { success: true, status: pptLinkIPC.vstoStatus };
+    }
+
+    case 'vsto:goto-page': {
+      pptLinkIPC.sendToService('goto_page', { page: data });
+      return { success: true };
+    }
+
+    case 'com:toggle-service': {
+      const enabled = !!data;
+      pptLinkIPC.sendToService('com_toggle', { enabled });
+      return { success: true, status: pptLinkIPC.comStatus };
+    }
+
+    case 'com:get-status': {
+      return { success: true, status: pptLinkIPC.comStatus };
+    }
+
+    case 'com:goto-page': {
+      pptLinkIPC.sendToService('goto_page', { page: data });
+      return { success: true };
+    }
+
     case 'window:minimize': {
       try {
         const win = BrowserWindow.fromWebContents(event.sender);
@@ -1697,7 +1795,7 @@ ipcMain.on('sync-message', (event, channel, data) => {
  * @param {*} data - 消息数据
  */
 function broadcastMessage(channel, data) {
-  if (mainWindow && mainWindow.webContents) {
-    mainWindow.webContents.send(channel, data);
-  }
+  _broadcastAll('reply-from-main', { channel, data });
+  // 为了兼容现有代码，同时也发送直接通道
+  _broadcastAll(channel, data);
 }

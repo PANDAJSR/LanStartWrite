@@ -22,8 +22,94 @@ document.addEventListener('DOMContentLoaded', () => {
     initWindowControls();
     initRangeInputs();
     initThemeLogic();
+    initVstoLogic();
+    initComLogic();
     loadCurrentSettings();
 });
+
+// VSTO Logic
+function initVstoLogic() {
+    Message.on(EVENTS.VSTO_STATUS_CHANGED, (data) => {
+        updateVstoStatusDisplay(data.status, data.error);
+    });
+
+    // Initial status request
+    if (window.electronAPI && window.electronAPI.invokeMain) {
+        window.electronAPI.invokeMain('message', 'vsto:get-status').then(res => {
+            if (res && res.success) {
+                updateVstoStatusDisplay(res.status);
+            }
+        });
+    }
+}
+
+function updateVstoStatusDisplay(status, error) {
+    const dot = document.querySelector('#vstoStatusDisplay .status-dot');
+    const text = document.querySelector('#vstoStatusDisplay .status-text');
+    if (!dot || !text) return;
+
+    switch (status) {
+        case 'connected':
+            dot.style.background = '#4caf50';
+            text.textContent = '已连接';
+            break;
+        case 'connecting':
+            dot.style.background = '#ff9800';
+            text.textContent = '正在连接...';
+            break;
+        case 'error':
+            dot.style.background = '#f44336';
+            text.textContent = '连接失败' + (error ? `: ${error.message || error}` : '');
+            break;
+        case 'disconnected':
+        default:
+            dot.style.background = '#ccc';
+            text.textContent = '未启动';
+            break;
+    }
+}
+
+// COM Logic
+function initComLogic() {
+    Message.on(EVENTS.COM_STATUS_CHANGED, (data) => {
+        updateComStatusDisplay(data.status, data.error);
+    });
+
+    // Initial status request
+    if (window.electronAPI && window.electronAPI.invokeMain) {
+        window.electronAPI.invokeMain('message', 'com:get-status').then(res => {
+            if (res && res.success) {
+                updateComStatusDisplay(res.status);
+            }
+        });
+    }
+}
+
+function updateComStatusDisplay(status, error) {
+    const dot = document.querySelector('#comStatusDisplay .status-dot');
+    const text = document.querySelector('#comStatusDisplay .status-text');
+    if (!dot || !text) return;
+
+    switch (status) {
+        case 'connected':
+            dot.style.background = '#4caf50';
+            text.textContent = '已连接';
+            break;
+        case 'connecting':
+            dot.style.background = '#ff9800';
+            text.textContent = '正在连接...';
+            break;
+        case 'error':
+            dot.style.background = '#f44336';
+            text.textContent = '连接失败' + (error ? `: ${error.message || error}` : '');
+            break;
+        case 'disconnected':
+        default:
+            dot.style.background = '#ccc';
+            text.textContent = '未启动';
+            break;
+    }
+}
 
 // Theme Logic
 function initThemeLogic() {
@@ -151,6 +237,12 @@ function loadCurrentSettings() {
 
     // Toolbar
     setCheckbox('optVideoBoothEnabled', s.videoBoothEnabled);
+
+    // Office
+    setCheckbox('optVstoEnabled', s.vstoEnabled);
+    setCheckbox('optVstoAutoConnect', s.vstoAutoConnect);
+    setCheckbox('optComEnabled', s.comEnabled);
+    setCheckbox('optComAutoConnect', s.comAutoConnect);
 }
 
 // Save settings from form
@@ -177,14 +269,29 @@ function handleSave() {
             undo: getValue('keyUndo'),
             redo: getValue('keyRedo')
         },
-        videoBoothEnabled: getCheckbox('optVideoBoothEnabled')
+        videoBoothEnabled: getCheckbox('optVideoBoothEnabled'),
+        vstoEnabled: getCheckbox('optVstoEnabled'),
+        vstoAutoConnect: getCheckbox('optVstoAutoConnect'),
+        comEnabled: getCheckbox('optComEnabled'),
+        comAutoConnect: getCheckbox('optComAutoConnect')
     };
 
+    const currentSettings = loadSettings();
     saveSettings(patch);
 
     // Notify other windows/main process
     if (window.electronAPI && typeof window.electronAPI.sendToMain === 'function') {
         window.electronAPI.sendToMain('message', 'ui:settings-changed', patch);
+        
+        // Handle VSTO service toggle if changed
+        if (patch.vstoEnabled !== currentSettings.vstoEnabled) {
+             window.electronAPI.invokeMain('message', 'vsto:toggle-service', patch.vstoEnabled);
+        }
+
+        // Handle COM service toggle if changed
+        if (patch.comEnabled !== currentSettings.comEnabled) {
+             window.electronAPI.invokeMain('message', 'com:toggle-service', patch.comEnabled);
+        }
     }
 
     // Close window after saving

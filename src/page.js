@@ -98,6 +98,21 @@ function initPageToolbar(){
     prevBtn.style.opacity = prevBtn.disabled ? '0.5' : '1';
     // 下一页始终可点击（若在末页则会创建新页面）
     nextBtn.style.opacity = '1';
+
+    // 同步状态到 PPT 联动窗口
+    broadcastPPTState();
+  }
+
+  function broadcastPPTState() {
+    try {
+      Message.emit(EVENTS.PPT_SYNC_STATE, {
+        current: current + 1,
+        total: pages.length,
+        thumbnails: pages.map(p => p.thumbnail)
+      });
+    } catch (e) {
+      console.warn('Failed to broadcast PPT state:', e);
+    }
   }
 
   function saveCurrent(){
@@ -223,6 +238,7 @@ function initPageToolbar(){
   });
 
   updateUI();
+  broadcastPPTState(); // 初始同步一次状态
 
   try{
     const bootMode = document && document.body && document.body.dataset ? document.body.dataset.appMode : '';
@@ -248,6 +264,28 @@ function initPageToolbar(){
     } catch (e) {
       console.error('Failed to save pages session on exit:', e);
     }
+  });
+
+  // 监听 PPT 联动窗口的跳转请求
+  Message.on(EVENTS.PPT_GOTO_PAGE, (payload) => {
+    if (!enabled) return;
+    const targetPage = parseInt(payload && payload.page, 10);
+    if (!isNaN(targetPage) && targetPage >= 1 && targetPage <= pages.length) {
+      if (current === targetPage - 1) return;
+      
+      saveCurrent();
+      current = targetPage - 1;
+      loadSnapshot(pages[current].ops || []);
+      updateUI();
+      if (sidebar.classList.contains('open')) renderThumbnails();
+    }
+  });
+
+  // 监听 PPT 联动窗口的退出请求
+  Message.on(EVENTS.PPT_EXIT, () => {
+    // 这里可以处理退出放映模式的逻辑，比如切换回普通白板模式
+    // 目前主要是响应 UI 关闭请求，具体的 PPT 进程控制在主进程处理
+    console.log('PPT Presentation Exited');
   });
 }
 

@@ -630,10 +630,49 @@
                     <div class="settings-page" id="page-office">
                         <div class="settings-cards">
                             <section class="settings-card">
-                                <div class="settings-card-title">Office 集成</div>
+                                <div class="settings-card-title">PPT 联动 (VSTO)</div>
                                 <div class="settings-card-body">
-                                    <div class="settings-hint">配置 Office 插件与交互行为</div>
-                                    <!-- Office settings -->
+                                    <label class="settings-control">
+                                        <input type="checkbox" id="optVstoEnabled"> 
+                                        <span>启用 PPT 深度联动服务 (VSTO)</span>
+                                    </label>
+                                    <label class="settings-control">
+                                        <input type="checkbox" id="optVstoAutoConnect"> 
+                                        <span>自动连接 PowerPoint</span>
+                                    </label>
+                                    <div class="settings-divider"></div>
+                                    <div class="settings-field">
+                                        <span class="settings-field-label">服务状态</span>
+                                        <div id="vstoStatusDisplay" style="display:flex; align-items:center; gap:8px; font-size:13px;">
+                                            <span class="status-dot" style="width:8px; height:8px; border-radius:50%; background:#ccc;"></span>
+                                            <span class="status-text">未启动</span>
+                                        </div>
+                                    </div>
+                                    <div class="settings-hint">
+                                        深度联动服务通过 VSTO 接口实现与 PowerPoint 的精准同步（页码、总数等）。需要安装 Office 2016 或更高版本。
+                                    </div>
+                                </div>
+                            </section>
+
+                            <section class="settings-card">
+                                <div class="settings-card-title">PPT 联动 (COM)</div>
+                                <div class="settings-card-body">
+                                    <label class="settings-control">
+                                        <input type="checkbox" id="optComEnabled"> 
+                                        <span>启用 PPT 联动服务 (COM 接口)</span>
+                                    </label>
+                                    <label class="settings-control">
+                                        <input type="checkbox" id="optComAutoConnect"> 
+                                        <span>自动连接 PowerPoint</span>
+                                    </label>
+                                    <div class="settings-divider"></div>
+                                    <div class="settings-field">
+                                        <span class="settings-field-label">服务状态</span>
+                                        <div id="comStatusDisplay" style="display:flex; align-items:center; gap:8px; font-size:13px;">
+                                            <span class="status-dot" style="width:8px; height:8px; border-radius:50%; background:#ccc;"></span>
+                                            <span class="status-text">未启动</span>
+                                        </div>
+                                    </div>
                                 </div>
                             </section>
                         </div>

@@ -56,7 +56,11 @@ const DEFAULTS = {
   toolbarButtonHidden: [],
   videoBoothEnabled: false,
   pluginButtonDisplay: {},
-  pdfDefaultMode: 'window'
+  pdfDefaultMode: 'window',
+  vstoEnabled: false,
+  vstoAutoConnect: true,
+  comEnabled: false,
+  comAutoConnect: true
 };
 
 function _safeGet(key){

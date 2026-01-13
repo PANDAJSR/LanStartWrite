@@ -11,7 +11,8 @@
     "build:portable": "electron-builder --win portable --x64"
   },
   "dependencies": {
-    "semver": "^7.6.3",
+    "edge-js": "^20.0.0",
+    "semver": "^7.5.4",
     "yauzl": "^2.10.0"
   },
   "devDependencies": {
