@@ -49,31 +49,6 @@ export const EVENTS = {
   /** 撤销/重做可用状态变更（绘图引擎 → UI） */
   HISTORY_CHANGED: 'history:changed',
   
-  /** PPT 联动窗口状态同步 */
-  PPT_SYNC_STATE: 'ppt:sync-state',
-  /** PPT 切换页面 */
-  PPT_GOTO_PAGE: 'ppt:goto-page',
-  /** PPT 结束放映 */
-  PPT_EXIT: 'ppt:exit',
-  
-  /** VSTO 服务状态变更 */
-  VSTO_STATUS_CHANGED: 'vsto:status-changed',
-  /** 请求启动/停止 VSTO 服务 */
-  VSTO_TOGGLE_SERVICE: 'vsto:toggle-service',
-  /** VSTO 页面跳转请求 */
-  VSTO_GOTO_PAGE: 'vsto:goto-page',
-  /** VSTO 状态主动同步（主进程 -> 渲染进程） */
-  VSTO_SYNC_STATE: 'vsto:sync-state',
-  
-  /** COM 服务状态变更 */
-  COM_STATUS_CHANGED: 'com:status-changed',
-  /** 请求启动/停止 COM 服务 */
-  COM_TOGGLE_SERVICE: 'com:toggle-service',
-  /** COM 页面跳转请求 */
-  COM_GOTO_PAGE: 'com:goto-page',
-  /** COM 状态主动同步（主进程 -> 渲染进程） */
-  COM_SYNC_STATE: 'com:sync-state',
-  
   /** 应用准备退出/重启（主进程 → 渲染进程） */
   APP_PREPARE_EXIT: 'app:prepare-exit',
   

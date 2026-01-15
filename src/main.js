@@ -8,8 +8,6 @@ const zlib = require('zlib');
 const { pathToFileURL } = require('url');
 const { exec, fork } = require('child_process');
 
-const PPTLinkIPC = require('./pptlink/pptlink_ipc');
-
 const _RUN_TESTS = process.argv.includes('--run-tests');
 const _ALLOW_UNSIGNED_PLUGINS = true;
 
@@ -29,11 +27,6 @@ let _overlayAllowLastSwitchAt = 0;
 let _pdfWindowCount = 0;
 let _mainWindowBounds = null;
 
-// Initialize PPT Link Service
-const pptLinkIPC = new PPTLinkIPC({
-  broadcastMessage: (channel, data) => broadcastMessage(channel, data)
-});
-
 /**
  * 辅助函数：从主进程环境加载设置
  * 注意：主进程无法直接访问 localStorage，这里返回默认值或通过其他方式获取的配置
@@ -41,10 +34,6 @@ const pptLinkIPC = new PPTLinkIPC({
 function loadSettings() {
   // 默认配置
   const DEFAULTS = {
-    comEnabled: false,
-    comAutoConnect: true,
-    vstoEnabled: false,
-    vstoAutoConnect: true
   };
   
   // 在实际应用中，这里应该读取磁盘上的配置文件
@@ -844,7 +833,7 @@ function _validateManifest(manifest) {
   if (overrides) {
     if (type !== 'control-replace') throw new Error('overrides require control-replace type');
     if (!permissions.includes('ui:override')) throw new Error('missing ui:override permission');
-    const allow = new Set(['./tool_ui.html', './more_decide_ui.html', './setting_ui.html']);
+    const allow = new Set(['./setting_ui.html', './whiteboard.html']);
     for (const k of Object.keys(overrides)) {
       if (!allow.has(k)) throw new Error('invalid override key');
       const rel = String(overrides[k] || '').trim();
@@ -1148,7 +1137,7 @@ async function _readPluginAsset(id, relPath, as) {
 
 async function _getFragmentOverride(fragmentKey) {
   const key = String(fragmentKey || '').trim();
-  const allow = new Set(['./tool_ui.html', './more_decide_ui.html', './setting_ui.html']);
+  const allow = new Set(['./setting_ui.html', './whiteboard.html']);
   if (!allow.has(key)) return null;
   const { installed } = await _listInstalled();
   for (const pl of installed) {
@@ -1199,18 +1188,6 @@ app.whenReady().then(async () => {
   try { await _ensureAuditReady(); } catch (e) {}
   _ensureAuditReportTimer();
 
-  // Initialize PPT Link Service
-  pptLinkIPC.init();
-  
-  // 自动连接逻辑
-  const settings = loadSettings();
-  if (settings.vstoEnabled && settings.vstoAutoConnect) {
-    pptLinkIPC.sendToService('vsto_toggle', { enabled: true });
-  }
-  if (settings.comEnabled && settings.comAutoConnect) {
-    pptLinkIPC.sendToService('com_toggle', { enabled: true });
-  }
-
   if (_RUN_TESTS) {
     try{
       _testsTimeout = setTimeout(() => {
@@ -1221,6 +1198,14 @@ app.whenReady().then(async () => {
   }
   try { await _ensureModDirs(); } catch (e) {}
   try { _startModWatchers(); } catch (e) {}
+
+  // 初始化 PPT 联动后端
+  try {
+    const pptBackend = require('./ppt_backend.js');
+    pptBackend.init();
+  } catch (e) {
+    console.error('Failed to load ppt_backend:', e);
+  }
 });
 
 app.on('window-all-closed', () => {
@@ -1597,65 +1582,6 @@ ipcMain.handle('message', async (event, channel, data) => {
       } catch (e) {
         return { success: false, error: String(e && e.message || e) };
       }
-    }
-
-    case 'ppt:open-window': {
-      pptLinkIPC.openPPTWindow();
-      return { success: true };
-    }
-
-    case 'ppt:close-window': {
-      pptLinkIPC.closePPTWindow();
-      return { success: true };
-    }
-
-    case 'ppt:sync-state': {
-      // 同时广播给其他窗口（如 tool_ui）
-      broadcastMessage('ppt:sync-state', data);
-      return { success: true };
-    }
-
-    case 'ppt:goto-page': {
-      pptLinkIPC.sendToService('goto_page', { page: data });
-      broadcastMessage('ppt:goto-page', data);
-      return { success: true };
-    }
-
-    case 'ppt:exit': {
-      pptLinkIPC.sendToService('exit_slideshow');
-      pptLinkIPC.closePPTWindow();
-      broadcastMessage('ppt:exit');
-      return { success: true };
-    }
-
-    case 'vsto:toggle-service': {
-      const enabled = !!data;
-      pptLinkIPC.sendToService('vsto_toggle', { enabled });
-      return { success: true, status: pptLinkIPC.vstoStatus };
-    }
-
-    case 'vsto:get-status': {
-      return { success: true, status: pptLinkIPC.vstoStatus };
-    }
-
-    case 'vsto:goto-page': {
-      pptLinkIPC.sendToService('goto_page', { page: data });
-      return { success: true };
-    }
-
-    case 'com:toggle-service': {
-      const enabled = !!data;
-      pptLinkIPC.sendToService('com_toggle', { enabled });
-      return { success: true, status: pptLinkIPC.comStatus };
-    }
-
-    case 'com:get-status': {
-      return { success: true, status: pptLinkIPC.comStatus };
-    }
-
-    case 'com:goto-page': {
-      pptLinkIPC.sendToService('goto_page', { page: data });
-      return { success: true };
     }
 
     case 'window:minimize': {

@@ -600,11 +600,8 @@ async function runUnitTests(){
 
     {
       document.body.innerHTML = '<div class="canvas-wrap"><canvas id="board"></canvas></div>';
-      const toolNodes = await loadFragment('./tool_ui.html');
-      toolNodes.forEach(n => document.body.appendChild(n));
-      const moreNodes = await loadFragment('./more_decide_ui.html');
-      const panel = document.querySelector('.floating-panel');
-      if (panel) moreNodes.forEach(n => panel.appendChild(n)); else moreNodes.forEach(n => document.body.appendChild(n));
+      const whiteboardNodes = await loadFragment('./whiteboard.html');
+      whiteboardNodes.forEach(n => document.body.appendChild(n));
       const settingsNodes = await loadFragment('./setting_ui.html');
       settingsNodes.forEach(n => document.body.appendChild(n));
 
@@ -1122,13 +1119,10 @@ window.addEventListener('DOMContentLoaded', async ()=>{
     }
   }catch(e){}
 
-  // load tool UI first (so .floating-panel exists)
-  const toolNodes = await loadFragment('./tool_ui.html');
-  toolNodes.forEach(n => document.body.appendChild(n));
-  // then load submenus into the floating-panel so parent relations stay intact
-  const moreNodes = await loadFragment('./more_decide_ui.html');
-  const panel = document.querySelector('.floating-panel');
-  if (panel) moreNodes.forEach(n => panel.appendChild(n)); else moreNodes.forEach(n => document.body.appendChild(n));
+  // load whiteboard UI components
+  const whiteboardNodes = await loadFragment('./whiteboard.html');
+  whiteboardNodes.forEach(n => document.body.appendChild(n));
+  
   // settings UI appended to body
   const settingsNodes = await loadFragment('./setting_ui.html');
   settingsNodes.forEach(n => document.body.appendChild(n));
