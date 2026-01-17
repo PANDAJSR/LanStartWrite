@@ -1,4 +1,4 @@
-import Message, { EVENTS } from './message.js';
+import Message, { EVENTS } from '../message.js';
 import { attachDragHelper } from './drag_helper.js';
 
 function safeCall(fn, fallback) {

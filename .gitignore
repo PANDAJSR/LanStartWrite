@@ -25,3 +25,6 @@ dist_electron/
 .env.local
 .env.*.local
 /.trae
+/dist_build
+/dist_build_new
+/dist_build_tmp

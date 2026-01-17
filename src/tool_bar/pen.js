@@ -10,10 +10,10 @@
  * - 颜色二级菜单使用事件委托绑定，避免因 DOM 重新渲染导致监听丢失
  * - 颜色规范化由 setting.normalizeHexColor 统一处理
  */
-import { setBrushSize, setBrushColor, setErasing, getToolState } from './renderer.js';
+import { setBrushSize, setBrushColor, setErasing, getToolState } from '../renderer.js';
 import { cleanupMenuStyles } from './more_decide_windows.js';
-import { updateAppSettings } from './write_a_change.js';
-import { buildPenColorSettingsPatch, normalizeHexColor } from './setting.js';
+import { updateAppSettings } from '../write_a_change.js';
+import { buildPenColorSettingsPatch, normalizeHexColor } from '../setting.js';
 
 const penSizeInput = document.getElementById('size');
 const colorMenu = document.getElementById('colorMenu');

@@ -26,6 +26,16 @@ let _overlayAllowLastSwitchAt = 0;
 
 let _pdfWindowCount = 0;
 let _mainWindowBounds = null;
+let _screenListenersInstalled = false;
+let _lastFullscreenEnforceAt = 0;
+
+process.on('uncaughtException', (err) => {
+  try { console.error('uncaughtException', err); } catch (e) {}
+});
+
+process.on('unhandledRejection', (reason) => {
+  try { console.error('unhandledRejection', reason); } catch (e) {}
+});
 
 /**
  * 辅助函数：从主进程环境加载设置
@@ -229,6 +239,51 @@ function _stopOverlayPoll() {
 
 function createWindow(opts) {
   const runTests = !!(opts && opts.runTests);
+  const fullscreenPolicyEnabled = !runTests;
+
+  const _getTargetDisplay = () => {
+    try {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        return screen.getDisplayMatching(mainWindow.getBounds());
+      }
+    } catch (e) {}
+    try { return screen.getPrimaryDisplay(); } catch (e) {}
+    return null;
+  };
+
+  const _enforceFullscreen = (reason) => {
+    if (!fullscreenPolicyEnabled) return;
+    const now = Date.now();
+    if (now - _lastFullscreenEnforceAt < 200) return;
+    _lastFullscreenEnforceAt = now;
+
+    try {
+      if (!mainWindow || mainWindow.isDestroyed()) return;
+
+      const display = _getTargetDisplay();
+      const bounds = display && display.bounds ? display.bounds : null;
+
+      try { mainWindow.setResizable(false); } catch (e) {}
+      try { mainWindow.setMinimizable(false); } catch (e) {}
+      try { mainWindow.setMaximizable(false); } catch (e) {}
+      try { mainWindow.setFullScreenable(true); } catch (e) {}
+
+      try { mainWindow.setAlwaysOnTop(true, 'screen-saver', 1); } catch (e) {
+        try { mainWindow.setAlwaysOnTop(true, 'screen-saver'); } catch (err) {}
+      }
+
+      if (bounds) {
+        try { mainWindow.setBounds(bounds, false); } catch (e) {}
+      }
+
+      try { mainWindow.setFullScreen(true); } catch (e) {}
+      try { mainWindow.show(); } catch (e) {}
+      try { mainWindow.focus(); } catch (e) {}
+    } catch (e) {
+      try { console.warn('fullscreen enforce failed', { reason, error: String(e && e.message || e) }); } catch (err) {}
+    }
+  };
+
   mainWindow = new BrowserWindow({
     width: 900,
     height: 700,
@@ -239,6 +294,13 @@ function createWindow(opts) {
     skipTaskbar: true,
     alwaysOnTop: true,
     show: !runTests,
+    fullscreen: fullscreenPolicyEnabled,
+    resizable: !fullscreenPolicyEnabled,
+    minimizable: !fullscreenPolicyEnabled,
+    maximizable: !fullscreenPolicyEnabled,
+    movable: !fullscreenPolicyEnabled,
+    thickFrame: !fullscreenPolicyEnabled,
+    autoHideMenuBar: true,
     icon: _appIconPath(),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -253,12 +315,56 @@ function createWindow(opts) {
   _updateMainWindowBounds();
   mainWindow.on('move', _updateMainWindowBounds);
   mainWindow.on('resize', _updateMainWindowBounds);
+  mainWindow.on('minimize', (e) => {
+    if (!fullscreenPolicyEnabled) return;
+    try { e.preventDefault(); } catch (err) {}
+    _enforceFullscreen('minimize');
+  });
+  mainWindow.on('enter-full-screen', () => _enforceFullscreen('enter-full-screen'));
+  mainWindow.on('leave-full-screen', () => _enforceFullscreen('leave-full-screen'));
+  mainWindow.on('restore', () => _enforceFullscreen('restore'));
+  mainWindow.on('show', () => _enforceFullscreen('show'));
+  mainWindow.on('ready-to-show', () => _enforceFullscreen('ready-to-show'));
 
   mainWindow.webContents.on('did-finish-load', () => {
     _updatePdfModeState();
+    _enforceFullscreen('did-finish-load');
   });
-  try{ mainWindow.setAlwaysOnTop(true, 'screen-saver'); }catch(e){}
-  try{ mainWindow.maximize(); }catch(e){}
+
+  mainWindow.on('unresponsive', () => {
+    if (!fullscreenPolicyEnabled) return;
+    try { console.warn('mainWindow unresponsive'); } catch (e) {}
+    _enforceFullscreen('unresponsive');
+  });
+
+  mainWindow.webContents.on('render-process-gone', (event, details) => {
+    if (!fullscreenPolicyEnabled) return;
+    try { console.warn('render-process-gone', details); } catch (e) {}
+    try { mainWindow.reload(); } catch (e) {}
+    _enforceFullscreen('render-process-gone');
+  });
+
+  try { _enforceFullscreen('create'); } catch (e) {}
+
+  if (!_screenListenersInstalled) {
+    _screenListenersInstalled = true;
+    try {
+      const handler = () => {
+        _enforceFullscreen('display-change');
+        try {
+          const primary = screen.getPrimaryDisplay();
+          _broadcastAll('app:display-metrics-changed', {
+            bounds: primary.bounds,
+            workArea: primary.workArea,
+            scaleFactor: primary.scaleFactor
+          });
+        } catch (e) {}
+      };
+      screen.on('display-added', handler);
+      screen.on('display-removed', handler);
+      screen.on('display-metrics-changed', handler);
+    } catch (e) {}
+  }
   
   // 开发时打开开发者工具
   // mainWindow.webContents.openDevTools();
@@ -363,28 +469,46 @@ async function _handleClose() {
 
 /**
  * 处理重启逻辑
+ * @param {Object} opts - 选项
+ * @param {boolean} opts.force - 是否跳过确认
  */
-async function _handleRestart() {
+async function _handleRestart(opts) {
+  const force = opts && opts.force;
+  
   try {
-    const choice = dialog.showMessageBoxSync({
-      type: 'question',
-      buttons: ['确认重启', '取消'],
-      title: '重启确认',
-      message: '确定要重启白板应用吗？',
-      detail: '应用将保存当前状态并重新启动。',
-      defaultId: 1,
-      cancelId: 1
-    });
+    let choice = 0;
+    if (!force) {
+      choice = dialog.showMessageBoxSync({
+        type: 'question',
+        buttons: ['确认重启', '取消'],
+        title: '重启确认',
+        message: '确定要重启白板应用吗？',
+        detail: '应用将保存当前状态并重新启动。',
+        defaultId: 1,
+        cancelId: 1
+      });
+    }
 
     if (choice === 0) {
+      console.log('[Main] 执行重启流程...');
       _broadcastAll('app:prepare-exit', { restart: true });
       
+      // 增加延时以确保渲染进程完成保存
       setTimeout(() => {
-        app.relaunch();
+        console.log('[Main] 调用 app.relaunch()');
+        // 显式指定 execPath 以提高稳定性，特别是开发环境下
+        // 但对于打包后的应用，默认行为通常更好
+        // 这里添加异常捕获以防万一
+        try {
+          app.relaunch();
+        } catch (err) {
+          console.error('[Main] app.relaunch() 失败:', err);
+        }
         app.exit(0);
-      }, 500);
+      }, 800); // 稍微延长到 800ms
     }
   } catch (e) {
+    console.error('[Main] _handleRestart 异常:', e);
     app.relaunch();
     app.exit(0);
   }
@@ -455,6 +579,51 @@ function _createAboutWindow() {
 
   win.loadFile(path.join(__dirname, 'about.html'));
   return win;
+}
+
+function _createNoteManagerWindow() {
+  const win = new BrowserWindow({
+    width: 980,
+    height: 720,
+    minWidth: 800,
+    minHeight: 600,
+    backgroundColor: '#ffffff',
+    frame: false,
+    show: false,
+    icon: _appIconPath(),
+    title: '笔记管理 - LanStartWrite',
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false
+    }
+  });
+  win.once('ready-to-show', () => { win.show(); });
+  win.loadFile(path.join(__dirname, 'note_manager', 'index.html'));
+  return win;
+}
+
+function _noteHistoryPath() {
+  return path.join(app.getPath('userData'), 'note_history.json');
+}
+
+async function _readNoteHistory() {
+  try {
+    const fp = _noteHistoryPath();
+    const j = await _readJson(fp, { items: [] });
+    const arr = Array.isArray(j.items) ? j.items : [];
+    arr.sort((a, b) => Number(b.modifiedAt || 0) - Number(a.modifiedAt || 0));
+    return arr;
+  } catch (e) {
+    return [];
+  }
+}
+
+async function _saveNoteHistory(items) {
+  const fp = _noteHistoryPath();
+  const arr = Array.isArray(items) ? items : [];
+  await _writeJsonAtomic(fp, { items: arr });
+  return arr;
 }
 
 function _nowId() {
@@ -797,7 +966,7 @@ function _validateManifest(manifest) {
   if (!semver.valid(ver)) throw new Error('invalid version');
   const type = String(manifest.type || '').trim();
   if (!['control-replace', 'mode', 'feature'].includes(type)) throw new Error('invalid type');
-  const allowedPerms = new Set(['ui:toolbar', 'ui:mode', 'ui:overlay', 'ui:override', 'bus:cross', 'net:fetch']);
+  const allowedPerms = new Set(['ui:toolbar', 'ui:mode', 'ui:overlay', 'ui:override', 'bus:cross', 'net:fetch', 'sys:devtools']);
   const permissions = Array.isArray(manifest.permissions) ? manifest.permissions.map(String).filter((x) => allowedPerms.has(x)) : [];
   const dependencies = Array.isArray(manifest.dependencies) ? manifest.dependencies : [];
   const resources = Array.isArray(manifest.resources) ? manifest.resources : [];
@@ -833,7 +1002,7 @@ function _validateManifest(manifest) {
   if (overrides) {
     if (type !== 'control-replace') throw new Error('overrides require control-replace type');
     if (!permissions.includes('ui:override')) throw new Error('missing ui:override permission');
-    const allow = new Set(['./setting_ui.html', './whiteboard.html']);
+    const allow = new Set(['./setting_ui.html', './whiteboard.html', './tool_bar/whiteboard.html']);
     for (const k of Object.keys(overrides)) {
       if (!allow.has(k)) throw new Error('invalid override key');
       const rel = String(overrides[k] || '').trim();
@@ -1137,15 +1306,21 @@ async function _readPluginAsset(id, relPath, as) {
 
 async function _getFragmentOverride(fragmentKey) {
   const key = String(fragmentKey || '').trim();
-  const allow = new Set(['./setting_ui.html', './whiteboard.html']);
+  const allow = new Set(['./setting_ui.html', './whiteboard.html', './tool_bar/whiteboard.html']);
   if (!allow.has(key)) return null;
+  const keys = key === './tool_bar/whiteboard.html' ? [key, './whiteboard.html'] : [key];
   const { installed } = await _listInstalled();
   for (const pl of installed) {
     if (!pl.enabled) continue;
     const m = pl.manifest;
     const o = m && m.overrides && typeof m.overrides === 'object' ? m.overrides : null;
-    if (!o || !o[key]) continue;
-    const rel = String(o[key] || '');
+    if (!o) continue;
+    let hitKey = '';
+    for (const k of keys) {
+      if (o[k]) { hitKey = k; break; }
+    }
+    if (!hitKey) continue;
+    const rel = String(o[hitKey] || '');
     const data = await _readPluginAsset(pl.id, rel, 'utf8');
     return { pluginId: pl.id, content: data.data };
   }
@@ -1198,14 +1373,6 @@ app.whenReady().then(async () => {
   }
   try { await _ensureModDirs(); } catch (e) {}
   try { _startModWatchers(); } catch (e) {}
-
-  // 初始化 PPT 联动后端
-  try {
-    const pptBackend = require('./ppt_backend.js');
-    pptBackend.init();
-  } catch (e) {
-    console.error('Failed to load ppt_backend:', e);
-  }
 });
 
 app.on('window-all-closed', () => {
@@ -1289,6 +1456,23 @@ ipcMain.handle('message', async (event, channel, data) => {
       _handleClose();
       return { success: true };
     }
+    case 'app:restart': {
+      _handleRestart({ force: true });
+      return { success: true };
+    }
+    case 'app:get-display-metrics': {
+      try {
+        const primary = screen.getPrimaryDisplay();
+        return {
+          success: true,
+          bounds: primary.bounds,
+          workArea: primary.workArea,
+          scaleFactor: primary.scaleFactor
+        };
+      } catch (e) {
+        return { success: false, error: String(e && e.message || e) };
+      }
+    }
     case 'ui:open-settings-window': {
       try {
         _createSettingsWindow();
@@ -1305,11 +1489,56 @@ ipcMain.handle('message', async (event, channel, data) => {
         return { success: false, error: String(e && e.message || e) };
       }
     }
+    case 'ui:open-note-manager-window': {
+      try {
+        _createNoteManagerWindow();
+        return { success: true };
+      } catch (e) {
+        return { success: false, error: String(e && e.message || e) };
+      }
+    }
     case 'ui:broadcast-settings': {
       try {
         const s = data && typeof data === 'object' && data.settings && typeof data.settings === 'object' ? data.settings : (data && typeof data === 'object' ? data : {});
         _broadcastAll('app:settings-changed', s);
         return { success: true };
+      } catch (e) {
+        return { success: false, error: String(e && e.message || e) };
+      }
+    }
+    case 'system:get-taskbar-metrics': {
+      try {
+        const win = BrowserWindow.fromWebContents(event.sender) || mainWindow;
+        const winBounds = win ? win.getBounds() : null;
+        const display = winBounds ? screen.getDisplayMatching(winBounds) : screen.getPrimaryDisplay();
+        const bounds = display && display.bounds ? display.bounds : { x: 0, y: 0, width: 0, height: 0 };
+        const workArea = display && display.workArea ? display.workArea : bounds;
+        const insets = {
+          left: Math.max(0, Number(workArea.x) - Number(bounds.x)),
+          top: Math.max(0, Number(workArea.y) - Number(bounds.y)),
+          right: Math.max(0, (Number(bounds.x) + Number(bounds.width)) - (Number(workArea.x) + Number(workArea.width))),
+          bottom: Math.max(0, (Number(bounds.y) + Number(bounds.height)) - (Number(workArea.y) + Number(workArea.height)))
+        };
+        const byThickness = [
+          { position: 'bottom', thickness: insets.bottom },
+          { position: 'top', thickness: insets.top },
+          { position: 'left', thickness: insets.left },
+          { position: 'right', thickness: insets.right }
+        ].sort((a, b) => (b.thickness - a.thickness));
+        const taskbar = byThickness[0] && byThickness[0].thickness > 0 ? byThickness[0] : { position: 'bottom', thickness: 0 };
+        return {
+          success: true,
+          display: {
+            id: display && typeof display.id !== 'undefined' ? display.id : null,
+            bounds,
+            workArea,
+            scaleFactor: display && typeof display.scaleFactor === 'number' ? display.scaleFactor : 1,
+            rotation: display && typeof display.rotation === 'number' ? display.rotation : 0
+          },
+          windowBounds: winBounds,
+          insets,
+          taskbar
+        };
       } catch (e) {
         return { success: false, error: String(e && e.message || e) };
       }
@@ -1672,6 +1901,39 @@ ipcMain.handle('message', async (event, channel, data) => {
         const xaml = data && typeof data === 'object' && typeof data.xaml === 'string' ? data.xaml : '';
         const dec = _decodeCubenoteXaml(xaml);
         return Object.assign({ }, dec || { success: false, reason: 'decode_failed' });
+      }catch(e){
+        return { success: false, error: String(e && e.message || e) };
+      }
+    }
+    case 'note-manager:get-history': {
+      try {
+        const items = await _readNoteHistory();
+        return { success: true, items };
+      } catch (e) {
+        return { success: false, error: String(e && e.message || e) };
+      }
+    }
+    case 'note-manager:save-history': {
+      try {
+        const items = Array.isArray(data && data.items) ? data.items : [];
+        const saved = await _saveNoteHistory(items);
+        return { success: true, items: saved };
+      } catch (e) {
+        return { success: false, error: String(e && e.message || e) };
+      }
+    }
+    case 'note-manager:apply-to-whiteboard': {
+      try{
+        broadcastMessage('note:apply-preview-state', data && typeof data === 'object' ? data : {});
+        return { success: true };
+      }catch(e){
+        return { success: false, error: String(e && e.message || e) };
+      }
+    }
+    case 'note-manager:request-export': {
+      try{
+        broadcastMessage('note:request-export', {});
+        return { success: true };
       }catch(e){
         return { success: false, error: String(e && e.message || e) };
       }

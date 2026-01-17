@@ -1,8 +1,9 @@
-import Settings, { loadSettings, saveSettings } from './setting.js';
+import Settings, { loadSettings, saveSettings, installHyperOsButtonInteractions, normalizeHexColor, hexToRgb, rgbToHex, hexToHsl, hslToHex, loadRecentColors, pushRecentColor } from './setting.js';
 import Message, { EVENTS } from './message.js';
 import { buildPenTailSegment, normalizePenTailSettings } from './pen_tail.js';
 import { applyThemeMode, buildContrastReport } from './colors_features.js';
 import Mod from './mod.js';
+import { installHyperOs3Controls, loadSettingsHistory, clearSettingsHistory, undoSettingsHistoryEntry, undoSettingsHistoryBatch, updateAppSettings } from './write_a_change.js';
 
 // DOM Elements
 const sidebar = document.getElementById('sidebar');
@@ -20,6 +21,220 @@ const themePreviewReport = document.getElementById('themePreviewReport');
 
 let updateThemePreview;
 let updatePenTailPreview;
+let initialSettingsJSON = '';
+let isChangeListenersInitialized = false;
+let _lastPersistedJSON = '';
+let _autoSaveTimer = 0;
+
+// Simple Toast Implementation for Settings Window
+function showToast(msg, type='success', ms=1800){
+  let t = document.querySelector('.app-toast');
+  if (!t) {
+    t = document.createElement('div');
+    t.className = 'app-toast';
+    document.body.appendChild(t);
+  }
+  t.textContent = msg;
+  t.classList.remove('success','error');
+  t.classList.add(type);
+  void t.offsetWidth;
+  t.classList.add('show');
+  clearTimeout(t._hideT);
+  t._hideT = setTimeout(()=>{ t.classList.remove('show'); }, ms);
+}
+
+function initColorPickers(){
+    const inputs = Array.from(document.querySelectorAll('input[type="color"]'));
+    if (!inputs.length) return;
+    for (const native of inputs) {
+        try{ enhanceColorInput(native); }catch(e){}
+    }
+}
+
+function enhanceColorInput(native){
+    if (!native || native.nodeType !== 1) return;
+    if (native.dataset && native.dataset.lsColorEnhanced === '1') return;
+    if (native.dataset) native.dataset.lsColorEnhanced = '1';
+
+    const label = native.closest && native.closest('.settings-field');
+    if (!label) return;
+
+    const wrap = document.createElement('div');
+    wrap.className = 'ls-color-field';
+
+    const swatch = document.createElement('button');
+    swatch.type = 'button';
+    swatch.className = 'ls-color-swatch';
+    swatch.setAttribute('aria-label', '打开颜色选择器');
+
+    const hexInput = document.createElement('input');
+    hexInput.type = 'text';
+    hexInput.className = 'ls-color-hex';
+    hexInput.setAttribute('inputmode', 'text');
+    hexInput.setAttribute('aria-label', 'HEX');
+
+    const rgbGroup = document.createElement('div');
+    rgbGroup.className = 'ls-color-triplet';
+    const rgbTag = document.createElement('span');
+    rgbTag.textContent = 'RGB';
+    const rInput = document.createElement('input');
+    const gInput = document.createElement('input');
+    const bInput = document.createElement('input');
+    for (const it of [rInput, gInput, bInput]) {
+        it.type = 'number';
+        it.min = '0';
+        it.max = '255';
+        it.step = '1';
+    }
+    rInput.placeholder = 'R';
+    gInput.placeholder = 'G';
+    bInput.placeholder = 'B';
+    rgbGroup.appendChild(rgbTag);
+    rgbGroup.appendChild(rInput);
+    rgbGroup.appendChild(gInput);
+    rgbGroup.appendChild(bInput);
+
+    const hslGroup = document.createElement('div');
+    hslGroup.className = 'ls-color-triplet';
+    const hslTag = document.createElement('span');
+    hslTag.textContent = 'HSL';
+    const hInput = document.createElement('input');
+    const sInput = document.createElement('input');
+    const lInput = document.createElement('input');
+    hInput.type = 'number';
+    hInput.min = '0';
+    hInput.max = '360';
+    hInput.step = '1';
+    sInput.type = 'number';
+    sInput.min = '0';
+    sInput.max = '100';
+    sInput.step = '1';
+    lInput.type = 'number';
+    lInput.min = '0';
+    lInput.max = '100';
+    lInput.step = '1';
+    hInput.placeholder = 'H';
+    sInput.placeholder = 'S';
+    lInput.placeholder = 'L';
+    hslGroup.appendChild(hslTag);
+    hslGroup.appendChild(hInput);
+    hslGroup.appendChild(sInput);
+    hslGroup.appendChild(lInput);
+
+    const recent = document.createElement('div');
+    recent.className = 'ls-recent-colors';
+    recent.setAttribute('aria-label', '最近颜色');
+
+    const parent = native.parentElement;
+    if (!parent) return;
+
+    parent.insertBefore(wrap, native);
+    wrap.appendChild(swatch);
+    wrap.appendChild(hexInput);
+    wrap.appendChild(rgbGroup);
+    wrap.appendChild(hslGroup);
+    wrap.appendChild(recent);
+    wrap.appendChild(native);
+    try{ native.style.display = 'none'; }catch(e){}
+
+    let updating = false;
+
+    const renderRecent = ()=>{
+        const list = loadRecentColors(12);
+        recent.innerHTML = '';
+        for (const c of list) {
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'ls-recent-chip';
+            btn.title = c;
+            btn.setAttribute('aria-label', c);
+            btn.dataset.hex = c;
+            try{ btn.style.background = c; }catch(e){}
+            btn.addEventListener('click', ()=>{
+                applyHex(c, { push: true, fire: true });
+            });
+            recent.appendChild(btn);
+        }
+    };
+
+    const applyHex = (hex, opts)=>{
+        const o = (opts && typeof opts === 'object') ? opts : {};
+        const fallback = normalizeHexColor(native.value, '#000000');
+        const next = normalizeHexColor(hex, fallback);
+        const rgb = hexToRgb(next);
+        const hsl = hexToHsl(next);
+        if (!rgb || !hsl) return;
+
+        updating = true;
+        try{ native.value = next; }catch(e){}
+        try{ swatch.style.background = next; }catch(e){}
+        try{ hexInput.value = next; }catch(e){}
+        try{ rInput.value = String(rgb.r); gInput.value = String(rgb.g); bInput.value = String(rgb.b); }catch(e){}
+        try{
+            hInput.value = String(Math.round(hsl.h));
+            sInput.value = String(Math.round(hsl.s * 100));
+            lInput.value = String(Math.round(hsl.l * 100));
+        }catch(e){}
+        updating = false;
+
+        if (o.push) {
+            try{ pushRecentColor(next, 12); }catch(e){}
+            renderRecent();
+        }
+        if (o.fire) {
+            try{
+                native.dispatchEvent(new Event('input', { bubbles: true }));
+                native.dispatchEvent(new Event('change', { bubbles: true }));
+            }catch(e){}
+        }
+    };
+
+    swatch.addEventListener('click', ()=>{
+        try{ native.click(); }catch(e){}
+    });
+
+    native.addEventListener('input', ()=>{
+        if (updating) return;
+        applyHex(native.value, { push: true, fire: false });
+    });
+
+    hexInput.addEventListener('input', ()=>{
+        if (updating) return;
+        const v = String(hexInput.value || '').trim();
+        const next = normalizeHexColor(v, '');
+        if (!next) return;
+        applyHex(next, { push: false, fire: true });
+    });
+
+    const onRgb = ()=>{
+        if (updating) return;
+        const r = Number(rInput.value);
+        const g = Number(gInput.value);
+        const b = Number(bInput.value);
+        if (!Number.isFinite(r) || !Number.isFinite(g) || !Number.isFinite(b)) return;
+        const hex = rgbToHex({ r, g, b });
+        applyHex(hex, { push: false, fire: true });
+    };
+    rInput.addEventListener('input', onRgb);
+    gInput.addEventListener('input', onRgb);
+    bInput.addEventListener('input', onRgb);
+
+    const onHsl = ()=>{
+        if (updating) return;
+        const h = Number(hInput.value);
+        const s = Number(sInput.value);
+        const l = Number(lInput.value);
+        if (!Number.isFinite(h) || !Number.isFinite(s) || !Number.isFinite(l)) return;
+        const hex = hslToHex({ h, s: s / 100, l: l / 100 });
+        applyHex(hex, { push: false, fire: true });
+    };
+    hInput.addEventListener('input', onHsl);
+    sInput.addEventListener('input', onHsl);
+    lInput.addEventListener('input', onHsl);
+
+    applyHex(native.value, { push: false, fire: false });
+    renderRecent();
+}
 
 // Core Toolbar Items Definition
 const CORE_TOOLBAR_ITEMS = {
@@ -46,14 +261,28 @@ const rangeInputs = [
 
 // Initialize
 document.addEventListener('DOMContentLoaded', () => {
+    installHyperOsButtonInteractions(document);
+    installHyperOs3Controls(document);
     initTabs();
     initWindowControls();
+    initColorPickers();
     initRangeInputs();
     initThemeLogic();
     initPenTailLogic();
     initPluginLogic();
     initToolbarLogic();
+    initSettingsHistory();
     loadCurrentSettings();
+    try{
+        document.querySelectorAll('input[type="range"]').forEach(el=>{
+            try{ el.dispatchEvent(new Event('input', { bubbles: true })); }catch(e){}
+        });
+    }catch(e){}
+    try{
+        document.querySelectorAll('input[type="color"]').forEach(el=>{
+            try{ el.dispatchEvent(new Event('input', { bubbles: true })); }catch(e){}
+        });
+    }catch(e){}
 });
 
 // Theme Logic
@@ -623,6 +852,446 @@ function getDragAfterElement(container, y, selector) {
     }, { offset: Number.NEGATIVE_INFINITY }).element;
 }
 
+const _historyUi = {
+    all: [],
+    rendered: 0,
+    pageSize: 60,
+    selected: new Set(),
+    timelineEl: null,
+    metaEl: null,
+    loadMoreBtn: null,
+    selectAllBtn: null,
+    undoSelectedBtn: null,
+    clearBtn: null
+};
+
+function _formatTs(ts) {
+    const d = new Date(Number(ts || 0));
+    if (Number.isNaN(d.getTime())) return '';
+    const pad = (n) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
+
+function _pathToJumpTarget(path) {
+    const p = String(path || '');
+    const root = p.split('.')[0] || '';
+    if (!root) return { tab: 'general', id: '' };
+    if (root === 'enableAutoResize') return { tab: 'general', id: 'optAutoResize' };
+    if (root === 'toolbarCollapsed') return { tab: 'general', id: 'optCollapsed' };
+    if (root === 'showTooltips') return { tab: 'general', id: 'optTooltips' };
+
+    if (root === 'theme') return { tab: 'appearance', id: 'optTheme' };
+    if (root === 'designLanguage') return { tab: 'appearance', id: 'optDesignLanguage' };
+    if (root === 'visualStyle') return { tab: 'appearance', id: 'optVisualStyle' };
+    if (root === 'canvasColor') return { tab: 'appearance', id: 'optCanvasColor' };
+    if (root === 'pdfDefaultMode') return { tab: 'appearance', id: 'optPdfDefaultMode' };
+
+    if (root === 'themeCustom') {
+        const sub = p.slice('themeCustom.'.length);
+        if (sub) return { tab: 'appearance', id: `optTheme${sub.charAt(0).toUpperCase()}${sub.slice(1)}` };
+        return { tab: 'appearance', id: '' };
+    }
+    if (root === 'mica') {
+        const sub = p.slice('mica.'.length);
+        if (sub === 'intensity') return { tab: 'appearance', id: 'optMicaIntensity' };
+        return { tab: 'appearance', id: '' };
+    }
+
+    if (root === 'multiTouchPen') return { tab: 'input', id: 'optMultiTouchPen' };
+    if (root === 'annotationPenColor') return { tab: 'input', id: 'optAnnotationPenColor' };
+    if (root === 'whiteboardPenColor') return { tab: 'input', id: 'optWhiteboardPenColor' };
+    if (root === 'smartInkRecognition') return { tab: 'input', id: 'optSmartInk' };
+    if (root === 'penTail') {
+        const sub = p.slice('penTail.'.length);
+        if (sub === 'enabled') return { tab: 'input', id: 'optPenTailEnabled' };
+        if (sub === 'profile') return { tab: 'input', id: 'optPenTailProfile' };
+        if (sub === 'intensity') return { tab: 'input', id: 'optPenTailIntensity' };
+        if (sub === 'samplePoints') return { tab: 'input', id: 'optPenTailSamplePoints' };
+        if (sub === 'speedSensitivity') return { tab: 'input', id: 'optPenTailSpeedSensitivity' };
+        if (sub === 'pressureSensitivity') return { tab: 'input', id: 'optPenTailPressureSensitivity' };
+        if (sub === 'shape') return { tab: 'input', id: 'optPenTailShape' };
+        return { tab: 'input', id: '' };
+    }
+
+    if (root === 'shortcuts') {
+        const sub = p.slice('shortcuts.'.length);
+        if (sub === 'undo') return { tab: 'shortcuts', id: 'keyUndo' };
+        if (sub === 'redo') return { tab: 'shortcuts', id: 'keyRedo' };
+        return { tab: 'shortcuts', id: '' };
+    }
+
+    if (root === 'videoBoothEnabled') return { tab: 'toolbar', id: 'optVideoBoothEnabled' };
+    if (root === 'toolbarButtonOrder' || root === 'toolbarButtonHidden') return { tab: 'toolbar', id: 'toolbarLayoutList' };
+    if (root === 'pluginButtonDisplay') return { tab: 'plugins', id: 'pluginList' };
+
+    return { tab: 'general', id: '' };
+}
+
+function _jumpToSettingPath(path) {
+    const target = _pathToJumpTarget(path);
+    const btn = document.querySelector(`.settings-tab[data-tab="${target.tab}"]`);
+    if (btn) btn.click();
+    if (!target.id) return;
+    const el = document.getElementById(target.id);
+    if (!el) return;
+    try { el.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch (e) { }
+    try {
+        el.classList.add('ls-jump-highlight');
+        setTimeout(() => { try { el.classList.remove('ls-jump-highlight'); } catch (e) { } }, 1200);
+    } catch (e) { }
+}
+
+function _historyRenderMeta() {
+    if (!_historyUi.metaEl) return;
+    const total = _historyUi.all.length;
+    const undone = _historyUi.all.filter(r => r && r.undone).length;
+    _historyUi.metaEl.textContent = `记录: ${total}  已撤回: ${undone}  已选择: ${_historyUi.selected.size}`;
+}
+
+// Optimized History Renderer with Virtualization (Chunking)
+const _HISTORY_CHUNK_SIZE = 20;
+
+class HistoryChunkManager {
+    constructor(container) {
+        this.container = container;
+        this.observer = new IntersectionObserver(this.onIntersect.bind(this), { rootMargin: '400px 0px' });
+        this.chunks = new Map(); // index -> { el, height, isRendered }
+        this.data = [];
+    }
+
+    setData(data) {
+        this.data = data || [];
+        this.renderPlaceholders();
+    }
+
+    renderPlaceholders() {
+        this.observer.disconnect();
+        this.container.innerHTML = '';
+        this.chunks.clear();
+
+        const count = Math.ceil(this.data.length / _HISTORY_CHUNK_SIZE);
+        for (let i = 0; i < count; i++) {
+            const el = document.createElement('div');
+            el.className = 'ls-history-chunk';
+            el.dataset.index = i;
+            // Initial estimate or stored? For now auto.
+            // Min height to prevent all chunks overlapping and triggering at once
+            el.style.minHeight = '1px'; 
+            this.container.appendChild(el);
+            this.observer.observe(el);
+            this.chunks.set(i, { el, height: 0, isRendered: false });
+        }
+        
+        // Add footer padding to ensure scrolling
+        const footer = document.createElement('div');
+        footer.style.height = '20px';
+        this.container.appendChild(footer);
+    }
+
+    onIntersect(entries) {
+        for (const entry of entries) {
+            const idx = Number(entry.target.dataset.index);
+            const chunk = this.chunks.get(idx);
+            if (!chunk) continue;
+
+            if (entry.isIntersecting) {
+                if (!chunk.isRendered) {
+                    this.renderChunk(idx);
+                }
+            } else {
+                // Unload if far away? For now, let's keep it simple:
+                // Only unload if we have height measured.
+                // To meet 30% memory reduction, we SHOULD unload.
+                if (chunk.isRendered && chunk.height > 0) {
+                    this.unloadChunk(idx);
+                }
+            }
+        }
+    }
+
+    renderChunk(index) {
+        const chunk = this.chunks.get(index);
+        if (!chunk) return;
+
+        const start = index * _HISTORY_CHUNK_SIZE;
+        const end = Math.min(start + _HISTORY_CHUNK_SIZE, this.data.length);
+        const frag = document.createDocumentFragment();
+
+        for (let i = start; i < end; i++) {
+            frag.appendChild(_buildHistoryItem(this.data[i]));
+        }
+        
+        chunk.el.innerHTML = '';
+        chunk.el.appendChild(frag);
+        chunk.el.style.height = 'auto'; // Let content dictate height
+        chunk.isRendered = true;
+    }
+
+    unloadChunk(index) {
+        const chunk = this.chunks.get(index);
+        if (!chunk) return;
+
+        // Measure before unload
+        const rect = chunk.el.getBoundingClientRect();
+        if (rect.height > 0) chunk.height = rect.height;
+
+        chunk.el.innerHTML = '';
+        chunk.el.style.height = `${chunk.height}px`;
+        chunk.isRendered = false;
+    }
+}
+
+let _historyChunkManager = null;
+
+function _historyRender(reset) {
+    if (!_historyUi.timelineEl) return;
+    
+    // Initialize manager if needed
+    if (!_historyChunkManager || reset) {
+        _historyChunkManager = new HistoryChunkManager(_historyUi.timelineEl);
+    }
+    
+    if (reset) {
+        _historyChunkManager.setData(_historyUi.all);
+    }
+    
+    _historyRenderMeta();
+}
+
+function _buildHistoryItem(rec) {
+    const item = document.createElement('div');
+    item.className = 'ls-history-item';
+    item.setAttribute('role', 'listitem');
+
+    const card = document.createElement('div');
+    card.className = `ls-history-card${rec && rec.undone ? ' is-undone' : ''}`;
+    const recId = String(rec && rec.id || '');
+    card.dataset.id = recId;
+    item.appendChild(card);
+
+    // Header
+    const header = document.createElement('div');
+    header.className = 'ls-history-card-header';
+    card.appendChild(header);
+
+    const titleWrap = document.createElement('div');
+    titleWrap.className = 'ls-history-card-title';
+    header.appendChild(titleWrap);
+
+    const timeEl = document.createElement('div');
+    timeEl.className = 'ls-history-time';
+    timeEl.textContent = _formatTs(rec && rec.ts);
+    titleWrap.appendChild(timeEl);
+
+    const mainEl = document.createElement('div');
+    mainEl.className = 'ls-history-main';
+    const changes = Array.isArray(rec && rec.changes) ? rec.changes : [];
+    mainEl.textContent = changes.length === 1 ? String(changes[0].path || '设置变更') : `${changes.length || 0} 项设置变更`;
+    titleWrap.appendChild(mainEl);
+
+    const badges = document.createElement('div');
+    badges.className = 'ls-history-badges';
+    header.appendChild(badges);
+
+    const sourceBadge = document.createElement('div');
+    sourceBadge.className = 'ls-history-badge';
+    sourceBadge.textContent = String(rec && rec.source || 'settings');
+    badges.appendChild(sourceBadge);
+
+    if (rec && rec.undone) {
+        const undoneBadge = document.createElement('div');
+        undoneBadge.className = 'ls-history-badge ls-history-badge-undone';
+        undoneBadge.textContent = '已撤回';
+        badges.appendChild(undoneBadge);
+    }
+
+    // Body
+    const body = document.createElement('div');
+    body.className = 'ls-history-card-body';
+    card.appendChild(body);
+
+    const diffs = document.createElement('div');
+    diffs.className = 'ls-history-diff';
+    body.appendChild(diffs);
+
+    for (const c of changes) {
+        const row = document.createElement('div');
+        row.className = 'ls-history-diff-row';
+        diffs.appendChild(row);
+
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.dataset.action = 'jump';
+        btn.dataset.path = String(c && c.path || '');
+        row.appendChild(btn);
+
+        const p = document.createElement('div');
+        p.className = 'ls-history-diff-path';
+        p.textContent = String(c && c.path || '');
+        btn.appendChild(p);
+
+        const v = document.createElement('div');
+        v.className = 'ls-history-diff-values';
+        v.textContent = `${String(c && c.beforeText || '')} → ${String(c && c.afterText || '')}`;
+        row.appendChild(v);
+    }
+
+    // Actions
+    const actions = document.createElement('div');
+    actions.className = 'ls-history-actions';
+    body.appendChild(actions);
+
+    const select = document.createElement('input');
+    select.type = 'checkbox';
+    select.className = 'ls-history-select';
+    select.dataset.id = recId; // Add ID to checkbox for easier delegation
+    select.checked = _historyUi.selected.has(recId);
+    if (rec && rec.undone) select.disabled = true;
+    actions.appendChild(select);
+
+    const jumpBtn = document.createElement('button');
+    jumpBtn.type = 'button';
+    jumpBtn.className = 'mode-btn';
+    jumpBtn.textContent = '跳转';
+    jumpBtn.dataset.action = 'jump';
+    jumpBtn.dataset.path = changes[0] ? String(changes[0].path || '') : '';
+    actions.appendChild(jumpBtn);
+
+    const undoBtn = document.createElement('button');
+    undoBtn.type = 'button';
+    undoBtn.className = 'mode-btn';
+    undoBtn.textContent = '撤回';
+    undoBtn.dataset.action = 'undo';
+    undoBtn.dataset.id = recId;
+    if (rec && rec.undone) undoBtn.disabled = true;
+    actions.appendChild(undoBtn);
+
+    return item;
+}
+
+let _historyRefreshTimer = 0;
+function _historyRefresh(opts) {
+    const o = (opts && typeof opts === 'object') ? opts : {};
+    if (_historyRefreshTimer) clearTimeout(_historyRefreshTimer);
+    _historyRefreshTimer = setTimeout(() => {
+        // Use requestIdleCallback for loading heavy history if available
+        const run = () => {
+            _historyUi.all = loadSettingsHistory(2000);
+            if (o.reset) _historyUi.selected.clear();
+            _historyRenderMeta();
+            const page = document.getElementById('page-history');
+            const isActive = page && page.classList.contains('active');
+            if (isActive) _historyRender(true);
+            if (o.reloadSettings) loadCurrentSettings();
+        };
+        
+        if (window.requestIdleCallback) {
+            window.requestIdleCallback(run);
+        } else {
+            setTimeout(run, 10);
+        }
+    }, 50); // Increased debounce slightly
+}
+
+function initSettingsHistory() {
+    _historyUi.timelineEl = document.getElementById('settingsHistoryTimeline');
+    if (!_historyUi.timelineEl) return;
+    _historyUi.metaEl = document.getElementById('settingsHistoryMeta');
+    _historyUi.loadMoreBtn = document.getElementById('historyLoadMoreBtn');
+    _historyUi.selectAllBtn = document.getElementById('historySelectAllBtn');
+    _historyUi.undoSelectedBtn = document.getElementById('historyUndoSelectedBtn');
+    _historyUi.clearBtn = document.getElementById('historyClearBtn');
+    
+    // Hide Load More button as we use virtual scrolling
+    if (_historyUi.loadMoreBtn) _historyUi.loadMoreBtn.style.display = 'none';
+
+    // Event Delegation for Timeline
+    _historyUi.timelineEl.addEventListener('click', (e) => {
+        const target = e.target;
+        
+        // Handle Checkbox
+        if (target.matches('.ls-history-select')) {
+            const id = target.dataset.id;
+            if (!id) return;
+            if (target.checked) _historyUi.selected.add(id);
+            else _historyUi.selected.delete(id);
+            _historyRenderMeta();
+            e.stopPropagation();
+            return;
+        }
+
+        // Handle Action Buttons (Jump/Undo) or Diff Rows
+        const btn = target.closest('button');
+        if (btn) {
+            const action = btn.dataset.action;
+            if (action === 'jump') {
+                e.stopPropagation();
+                _jumpToSettingPath(btn.dataset.path || '');
+                return;
+            }
+            if (action === 'undo') {
+                e.stopPropagation();
+                const id = btn.dataset.id;
+                if (!id) return;
+                if (!confirm('确定要撤回该次修改吗？')) return;
+                try { undoSettingsHistoryEntry(id, { source: 'settings_window_history' }); } catch (err) { }
+                _historyRefresh({ reset: true, reloadSettings: true });
+                return;
+            }
+        }
+        
+        // Handle Card Expansion
+        const header = target.closest('.ls-history-card-header');
+        if (header) {
+            const card = header.closest('.ls-history-card');
+            if (card) card.classList.toggle('expanded');
+        }
+    });
+
+    if (_historyUi.selectAllBtn) {
+        _historyUi.selectAllBtn.addEventListener('click', () => {
+            const selectable = _historyUi.all.filter(r => r && !r.undone).map(r => String(r.id || '')).filter(Boolean);
+            const allSelected = selectable.length && selectable.every(id => _historyUi.selected.has(id));
+            if (allSelected) _historyUi.selected.clear();
+            else for (const id of selectable) _historyUi.selected.add(id);
+            
+            // Update visible checkboxes only
+            try {
+                _historyUi.timelineEl.querySelectorAll('input.ls-history-select').forEach(cb => {
+                    if (cb.disabled) return;
+                    cb.checked = _historyUi.selected.has(cb.dataset.id);
+                });
+            } catch (e) { }
+            _historyRenderMeta();
+        });
+    }
+    if (_historyUi.undoSelectedBtn) {
+        _historyUi.undoSelectedBtn.addEventListener('click', () => {
+            const ids = Array.from(_historyUi.selected);
+            if (!ids.length) return;
+            if (!confirm(`确定要撤回选中的 ${ids.length} 条记录吗？`)) return;
+            try { undoSettingsHistoryBatch(ids, { source: 'settings_window_history_batch' }); } catch (e) { }
+            _historyRefresh({ reset: true, reloadSettings: true });
+        });
+    }
+    if (_historyUi.clearBtn) {
+        _historyUi.clearBtn.addEventListener('click', () => {
+            if (!confirm('确定要清空全部历史记录吗？')) return;
+            try { clearSettingsHistory(); } catch (e) { }
+            _historyRefresh({ reset: true });
+        });
+    }
+
+    try { Message.on(EVENTS.SETTINGS_HISTORY_CHANGED, () => _historyRefresh({ reset: true })); } catch (e) { }
+    try {
+        window.addEventListener('storage', (e) => {
+            if (!e) return;
+            if (e.key === 'ls_settings_history_v1') _historyRefresh({ reset: true });
+        });
+    } catch (e) { }
+    _historyRefresh({ reset: true });
+}
+
 // Tab switching logic
 function initTabs() {
     tabs.forEach(tab => {
@@ -645,6 +1314,9 @@ function initTabs() {
             // Special logic for certain tabs
             if (targetTab === 'plugins') {
                 loadPlugins();
+            }
+            if (targetTab === 'history') {
+                _historyRender(true);
             }
 
             // Scroll to top of content area
@@ -739,11 +1411,150 @@ function loadCurrentSettings() {
     // Initial previews
     if (updateThemePreview) updateThemePreview();
     if (updatePenTailPreview) updatePenTailPreview();
+
+    // Store initial state for change detection
+    // We use a slight delay to ensure all UI updates (like ranges) are settled
+    setTimeout(() => {
+        initialSettingsJSON = JSON.stringify(getSettingsFromUI());
+        _lastPersistedJSON = initialSettingsJSON;
+        if (!isChangeListenersInitialized) {
+            initChangeListeners();
+            isChangeListenersInitialized = true;
+        }
+    }, 100);
+}
+
+function _requestSettingsChangedToMain(merged){
+    try{
+        if (window.electronAPI && typeof window.electronAPI.invokeMain === 'function') {
+            window.electronAPI.invokeMain('message', EVENTS.SETTINGS_CHANGED, merged);
+        }
+    }catch(e){}
+}
+
+function _autoSaveSettings(currentSettings, currentJSON){
+    if (!currentJSON || currentJSON === _lastPersistedJSON) return;
+    if (_autoSaveTimer) clearTimeout(_autoSaveTimer);
+    _autoSaveTimer = setTimeout(() => {
+        _autoSaveTimer = 0;
+        try{
+            const merged = updateAppSettings(currentSettings, { history: { skipRecord: true, source: 'settings_window_autosave' } });
+        _requestSettingsChangedToMain(merged);
+        _lastPersistedJSON = currentJSON;
+        
+        // Show auto-save feedback if needed (subtle)
+        // const saveIndicator = document.getElementById('saveIndicator');
+        // if (saveIndicator) { ... }
+        
+        // Use Toast from ui-bootstrap (if available) or settings window specific toast
+        if (typeof showToast === 'function') {
+           // We might want to be less intrusive for auto-save, maybe only on error?
+           // For now, let's just log or keep silent on success to avoid spamming
+        }
+    }catch(e){
+        try{ console.warn('[settings] autosave failed', e); }catch(err){}
+        if (typeof showToast === 'function') {
+             showToast('自动保存失败', 'error');
+        }
+    }
+}, 250);
+}
+
+// Change Detection Logic
+function initChangeListeners() {
+    const inputs = document.querySelectorAll('input, select, textarea');
+    inputs.forEach(el => {
+        el.addEventListener('change', checkForChanges);
+        el.addEventListener('input', checkForChanges);
+    });
+
+    // Special case for toolbar layout which uses custom logic
+    const layoutList = document.getElementById('toolbarLayoutList');
+    if (layoutList) {
+        // Observer for DOM changes in list (drag drop) or click on toggle
+        const observer = new MutationObserver(() => {
+            // Debounce slightly
+            setTimeout(checkForChanges, 50);
+        });
+        observer.observe(layoutList, { childList: true, subtree: true, attributes: true, attributeFilter: ['class'] });
+    }
+    
+    const restartBtn = document.getElementById('restartBtn');
+    if (restartBtn) {
+        restartBtn.addEventListener('click', handleRestart);
+    }
+}
+
+function checkForChanges() {
+    if (!initialSettingsJSON) return;
+    
+    // Debounce to avoid performance hit on rapid input
+    if (window._checkChangeTimer) clearTimeout(window._checkChangeTimer);
+    window._checkChangeTimer = setTimeout(() => {
+        const currentSettings = getSettingsFromUI();
+        const currentJSON = JSON.stringify(currentSettings);
+        
+        const notification = document.getElementById('restartNotification');
+        if (notification) {
+            if (currentJSON !== initialSettingsJSON) {
+                notification.classList.add('show');
+            } else {
+                notification.classList.remove('show');
+            }
+        }
+
+        _autoSaveSettings(currentSettings, currentJSON);
+    }, 100);
+}
+
+function handleRestart() {
+    const restartBtn = document.getElementById('restartBtn');
+    if (restartBtn) {
+        restartBtn.textContent = '正在重启...';
+        restartBtn.disabled = true;
+    }
+
+    const s = getSettingsFromUI();
+    const merged = updateAppSettings(s, { history: { source: 'settings_window_restart' } });
+    
+    // Notify main process or other windows
+    if (window.electronAPI && typeof window.electronAPI.invokeMain === 'function') {
+        window.electronAPI.invokeMain('message', EVENTS.SETTINGS_CHANGED, merged);
+        // Call restart IPC
+        window.electronAPI.invokeMain('message', 'app:restart', {});
+    }
 }
 
 // Save settings from form
 function handleSave() {
+    const s = getSettingsFromUI();
+    const merged = updateAppSettings(s, { history: { source: 'settings_window_save' } });
+    
+    // Notify main process or other windows
+    _requestSettingsChangedToMain(merged);
+    try{ _lastPersistedJSON = JSON.stringify(s); }catch(e){}
+
+    // Show feedback and close
+    const originalText = saveBtn.textContent;
+    saveBtn.textContent = '已保存';
+    saveBtn.disabled = true;
+    
+    // Also show toast for better feedback
+    if (typeof showToast === 'function') {
+        showToast('设置已保存', 'success');
+    }
+    
+    setTimeout(() => {
+        window.close();
+    }, 500);
+}
+
+function getSettingsFromUI() {
     const currentSettings = loadSettings();
+    const toInt = (v, fallback) => {
+        const n = parseInt(String(v), 10);
+        return Number.isFinite(n) ? n : fallback;
+    };
     const s = {
         ...currentSettings,
         enableAutoResize: getCheckbox('optAutoResize'),
@@ -754,7 +1565,7 @@ function handleSave() {
         visualStyle: getValue('optVisualStyle'),
         mica: {
             ...currentSettings.mica,
-            intensity: parseInt(getValue('optMicaIntensity'))
+            intensity: toInt(getValue('optMicaIntensity'), Number(currentSettings.mica && currentSettings.mica.intensity) || 0)
         },
         themeCustom: {
             ...currentSettings.themeCustom,
@@ -768,10 +1579,10 @@ function handleSave() {
         penTail: {
             enabled: getCheckbox('optPenTailEnabled'),
             profile: getValue('optPenTailProfile'),
-            intensity: parseInt(getValue('optPenTailIntensity')),
-            samplePoints: parseInt(getValue('optPenTailSamplePoints')),
-            speedSensitivity: parseInt(getValue('optPenTailSpeedSensitivity')),
-            pressureSensitivity: parseInt(getValue('optPenTailPressureSensitivity')),
+            intensity: toInt(getValue('optPenTailIntensity'), Number(currentSettings.penTail && currentSettings.penTail.intensity) || 0),
+            samplePoints: toInt(getValue('optPenTailSamplePoints'), Number(currentSettings.penTail && currentSettings.penTail.samplePoints) || 0),
+            speedSensitivity: toInt(getValue('optPenTailSpeedSensitivity'), Number(currentSettings.penTail && currentSettings.penTail.speedSensitivity) || 0),
+            pressureSensitivity: toInt(getValue('optPenTailPressureSensitivity'), Number(currentSettings.penTail && currentSettings.penTail.pressureSensitivity) || 0),
             shape: getValue('optPenTailShape')
         },
         smartInkRecognition: getCheckbox('optSmartInk'),
@@ -788,22 +1599,23 @@ function handleSave() {
         s.toolbarButtonOrder = layout.order;
         s.toolbarButtonHidden = layout.hidden;
     }
-
-    saveSettings(s);
     
-    // Notify main process or other windows
-    if (window.electronAPI && typeof window.electronAPI.invokeMain === 'function') {
-        window.electronAPI.invokeMain('message', EVENTS.SETTINGS_CHANGED, s);
-    }
-
-    // Show feedback and close
-    const originalText = saveBtn.textContent;
-    saveBtn.textContent = '已保存';
-    saveBtn.disabled = true;
-    setTimeout(() => {
-        window.close();
-    }, 500);
+    return s;
 }
+
+try{
+    window.addEventListener('beforeunload', () => {
+        try{
+            const currentSettings = getSettingsFromUI();
+            const currentJSON = JSON.stringify(currentSettings);
+            if (currentJSON !== _lastPersistedJSON) {
+                const merged = updateAppSettings(currentSettings, { history: { skipRecord: true, source: 'settings_window_beforeunload' } });
+                _requestSettingsChangedToMain(merged);
+                _lastPersistedJSON = currentJSON;
+            }
+        }catch(e){}
+    });
+}catch(e){}
 
 // Helper functions
 function setValue(id, val) {

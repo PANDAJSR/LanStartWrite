@@ -25,6 +25,16 @@ async function runUnitTests(){
     const assert = (cond, msg) => { if (!cond) throw new Error(msg || 'assert'); };
     const eq = (a, b, msg) => { if (a !== b) throw new Error(msg || `expected ${String(b)} got ${String(a)}`); };
     try{
+      try{
+        const head = document.head || document.getElementsByTagName('head')[0];
+        if (head && String(head.dataset._lsBodyStylesMoved || '') !== '1') {
+          const styles = Array.from(document.body ? document.body.querySelectorAll('style') : []);
+          for (const st of styles) {
+            try{ head.appendChild(st); }catch(e){}
+          }
+          try{ head.dataset._lsBodyStylesMoved = '1'; }catch(e){}
+        }
+      }catch(e){}
       try{ localStorage.removeItem('appSettings'); }catch(e){}
       const SettingsMod = await import('./setting.js');
       const MessageMod = await import('./message.js');
@@ -40,6 +50,24 @@ async function runUnitTests(){
       assert(typeof s === 'object' && s, 'loadSettings returns object');
       assert(typeof s.annotationPenColor === 'string', 'annotationPenColor exists');
       assert(typeof s.whiteboardPenColor === 'string', 'whiteboardPenColor exists');
+    }
+
+    {
+      try{ localStorage.setItem('appSettings', '{bad json'); }catch(e){}
+      const s = Settings.loadSettings();
+      assert(typeof s === 'object' && s, 'loadSettings returns object after corruption');
+      assert(typeof s.annotationPenColor === 'string', 'annotationPenColor exists after corruption');
+      let repaired = null;
+      try{ repaired = JSON.parse(String(localStorage.getItem('appSettings') || '')); }catch(e){ repaired = null; }
+      assert(repaired && typeof repaired === 'object', 'corrupted appSettings repaired to valid json');
+    }
+
+    {
+      Settings.resetSettings();
+      const merged = Settings.saveSettings({ theme: 'dark' });
+      assert(merged && merged.__lsPersistOk === true, 'saveSettings marks persist ok');
+      const raw = JSON.parse(String(localStorage.getItem('appSettings') || '{}'));
+      eq(String(raw.theme || ''), 'dark', 'theme persisted to storage');
     }
 
     {
@@ -127,7 +155,7 @@ async function runUnitTests(){
       document.body.appendChild(menu);
 
       const Renderer = await import('./renderer.js');
-      const Pen = await import('./pen.js');
+      const Pen = await import('./tool_bar/pen.js');
       Pen.initPenUI();
 
       document.body.dataset.appMode = 'annotation';
@@ -240,7 +268,7 @@ async function runUnitTests(){
       const pinBtn = document.createElement('button');
       pinBtn.className = 'submenu-pin';
       moreMenu.appendChild(pinBtn);
-      const MainTool = await import('./main_tool.js');
+      const MainTool = await import('./tool_bar/main_tool.js');
       let pointerCalls = 0;
       let applyCalls = 0;
       let rectCalls = 0;
@@ -417,7 +445,7 @@ async function runUnitTests(){
       aboutModal.appendChild(closeAbout);
       document.body.appendChild(aboutModal);
 
-      await import('./ui-tools.js');
+      await import('./tool_bar/ui-tools.js');
 
       const moreTool = document.getElementById('moreTool');
       assert(!!moreTool, 'moreTool exists');
@@ -600,12 +628,12 @@ async function runUnitTests(){
 
     {
       document.body.innerHTML = '<div class="canvas-wrap"><canvas id="board"></canvas></div>';
-      const whiteboardNodes = await loadFragment('./whiteboard.html');
+      const whiteboardNodes = await loadFragment('./tool_bar/whiteboard.html');
       whiteboardNodes.forEach(n => document.body.appendChild(n));
       const settingsNodes = await loadFragment('./setting_ui.html');
       settingsNodes.forEach(n => document.body.appendChild(n));
 
-      const Ui = await import(`./ui-tools.js?tabsTest=${Date.now()}`);
+      const Ui = await import(`./tool_bar/ui-tools.js?tabsTest=${Date.now()}`);
 
       const tab = document.querySelector('.settings-tab[data-tab="appearance"]') || document.querySelector('.settings-tab[data-tab="input"]');
       assert(!!tab, 'settings tab exists');
@@ -634,6 +662,18 @@ async function runUnitTests(){
       const root = document.documentElement;
       const anyToolBtn = document.querySelector('.tool-btn');
       assert(!!anyToolBtn, 'tool-btn exists for style regression');
+      const _hexToRgb = (hex)=>{
+        const s = String(hex || '').trim();
+        const m = /^#?([0-9a-fA-F]{6})$/.exec(s);
+        if (!m) return '';
+        const h = m[1];
+        const r = parseInt(h.slice(0, 2), 16);
+        const g = parseInt(h.slice(2, 4), 16);
+        const b = parseInt(h.slice(4, 6), 16);
+        return `rgb(${r}, ${g}, ${b})`;
+      };
+      const md3Primary = _hexToRgb(getComputedStyle(root).getPropertyValue('--md-sys-color-primary'));
+      assert(!!md3Primary, `md3 primary token exists (got ${String(getComputedStyle(root).getPropertyValue('--md-sys-color-primary') || '').trim()})`);
 
       try{ if (Ui && typeof Ui.setDesignLanguage === 'function') Ui.setDesignLanguage('material3'); }catch(e){}
       await waitRaf();
@@ -644,16 +684,21 @@ async function runUnitTests(){
       const md3FilledBtn = document.querySelector('.md3-button.filled');
       assert(!!md3FilledBtn, 'md3 filled button exists');
       const md3FilledStyle = getComputedStyle(md3FilledBtn);
-      eq(String(md3FilledStyle.backgroundColor || ''), 'rgb(0, 90, 193)', `md3 filled button bg primary (got ${md3FilledStyle.backgroundColor})`);
+      eq(String(md3FilledStyle.backgroundColor || ''), md3Primary, `md3 filled button bg primary (got ${md3FilledStyle.backgroundColor})`);
 
       try{ if (Ui && typeof Ui.setDesignLanguage === 'function') Ui.setDesignLanguage('fluent'); }catch(e){}
       await waitRaf();
       await waitRaf();
       const fluentToolStyle = getComputedStyle(anyToolBtn);
       assert(String(fluentToolStyle.borderTopWidth || '') === '1px', `fluent tool-btn border restored (got ${fluentToolStyle.borderTopWidth})`);
-      assert(String(fluentToolStyle.backgroundColor || '').includes('0.86') || String(fluentToolStyle.backgroundColor || '').includes('rgba(255, 255, 255'), `fluent tool-btn background restored (got ${fluentToolStyle.backgroundColor})`);
+      const fluentBg = String(fluentToolStyle.backgroundColor || '');
+      if (root.classList.contains('theme-dark')) {
+        eq(fluentBg, 'rgb(18, 18, 18)', `fluent tool-btn background restored (got ${fluentBg})`);
+      } else {
+        assert(fluentBg.includes('0.86') || fluentBg.includes('rgba(255, 255, 255'), `fluent tool-btn background restored (got ${fluentBg})`);
+      }
       const fluentFilledStyle = getComputedStyle(md3FilledBtn);
-      assert(String(fluentFilledStyle.backgroundColor || '') !== 'rgb(0, 90, 193)', `fluent md3 filled not styled as md3 (got ${fluentFilledStyle.backgroundColor})`);
+      assert(String(fluentFilledStyle.backgroundColor || '') !== md3Primary, `fluent md3 filled not styled as md3 (got ${fluentFilledStyle.backgroundColor})`);
 
       try{ root.classList.add('theme-dark'); }catch(e){}
       await waitRaf();
@@ -1026,7 +1071,20 @@ window.addEventListener('DOMContentLoaded', async ()=>{
       }
 
       function _saveAndBroadcast(patch){
-        const merged = Settings.saveSettings(patch);
+        let merged = null;
+        try{
+          merged = Settings.saveSettings(patch);
+        }catch(e){
+          try{ console.warn('[Settings] saveSettings exception', e); }catch(err){}
+          try{ showToast('保存失败：设置写入异常', 'error', 2600); }catch(err){}
+          return null;
+        }
+        try{
+          if (merged && merged.__lsPersistOk === false) {
+            console.warn('[Settings] persist failed', merged.__lsPersistError || '');
+            showToast('保存失败：无法写入本地存储', 'error', 2600);
+          }
+        }catch(e){}
         try{
           if (patch && typeof patch === 'object') {
             if (typeof patch.designLanguage !== 'undefined') {
@@ -1045,8 +1103,12 @@ window.addEventListener('DOMContentLoaded', async ()=>{
       function _wireRealtime(el){
         if (!el) return;
         const handler = ()=>{
-          const patch = _readForm();
-          _saveAndBroadcast(patch);
+          try{
+            const patch = _readForm();
+            _saveAndBroadcast(patch);
+          }catch(e){
+            try{ console.warn('[settings] realtime save failed', e); }catch(err){}
+          }
         };
         el.addEventListener('change', handler);
         el.addEventListener('input', handler);
@@ -1120,7 +1182,7 @@ window.addEventListener('DOMContentLoaded', async ()=>{
   }catch(e){}
 
   // load whiteboard UI components
-  const whiteboardNodes = await loadFragment('./whiteboard.html');
+  const whiteboardNodes = await loadFragment('./tool_bar/whiteboard.html');
   whiteboardNodes.forEach(n => document.body.appendChild(n));
   
   // settings UI appended to body
@@ -1131,8 +1193,35 @@ window.addEventListener('DOMContentLoaded', async ()=>{
   try{ await import('./renderer.js'); }catch(e){ console.warn('import renderer failed', e); }
   // small IPC bridge to forward Message-based file write requests to main process
   try{ await import('./ipc_bridge.js'); }catch(e){ console.warn('import ipc_bridge failed', e); }
-  try{ await import('./ui-tools.js'); }catch(e){ console.warn('import ui-tools failed', e); }
+  try{ await import('./tool_bar/ui-tools.js'); }catch(e){ console.warn('import ui-tools failed', e); }
   try{ await import('./page.js'); }catch(e){ console.warn('import page failed', e); }
   try{ await import('./mod.js'); }catch(e){ console.warn('import mod failed', e); }
+
+  // Auto-install DevTools plugin for development
+  (async () => {
+    try {
+      const Mod = (await import('./mod.js')).default;
+      const list = await Mod.list();
+      const installed = list && list.installed ? list.installed : [];
+      const hasDevTools = installed.some(p => p.id === 'lanstart.devtools');
+      if (!hasDevTools) {
+        console.log('Auto-installing DevTools plugin...');
+        const path = (await import('path'));
+        // We assume we are running in dev mode where source is available
+        // Try absolute path resolution if possible via IPC?
+        // Since we can't easily get absolute path here, let's rely on main process resolving relative path from CWD or App Root
+        // "src/plugins/lanstart.devtools.lanmod"
+        const res = await Mod.install('src/plugins/lanstart.devtools.lanmod');
+        if (res && res.success) {
+           console.log('DevTools installed successfully.');
+           await Mod.reload();
+        } else {
+           console.warn('DevTools install failed:', res);
+        }
+      }
+    } catch (e) {
+      console.warn('DevTools auto-install error:', e);
+    }
+  })();
 
 });

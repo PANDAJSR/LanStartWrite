@@ -1,7 +1,7 @@
 import Settings from './setting.js';
 import { updateAppSettings } from './write_a_change.js';
 import Message, { EVENTS } from './message.js';
-import ButtonBox from './button_box.js';
+import ButtonBox from './tool_bar/button_box.js';
 import { openPdfFile } from './pdf_viewer.js';
 
 /**

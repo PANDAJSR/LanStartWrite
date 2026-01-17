@@ -9,7 +9,7 @@
  * - 橡皮模式的具体擦除算法在 renderer.js 内实现
  * - 本模块仅负责 UI 状态与引擎参数的同步
  */
-import { setEraserSize, setEraserMode, setErasing, getToolState } from './renderer.js';
+import { setEraserSize, setEraserMode, setErasing, getToolState } from '../renderer.js';
 import { cleanupMenuStyles } from './more_decide_windows.js';
 
 const eraserSizeInput = document.getElementById('eraserSize');

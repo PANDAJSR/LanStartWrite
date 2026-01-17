@@ -7,11 +7,11 @@
 // - 渲染器：导出画布的核心 API（颜色、大小、清空、撤销/重做等）
 
 // 画笔与橡皮模块
-export { default as Pen } from './pen.js';
-export { default as Erase } from './erese.js';
+export { default as Pen } from './tool_bar/pen.js';
+export { default as Erase } from './tool_bar/erese.js';
 
 // 子菜单定位与固定逻辑（more_decide_windows.js）
-export { showSubmenu, cleanupMenuStyles, initPinHandlers, closeAllSubmenus, positionMenu } from './more_decide_windows.js';
+export { showSubmenu, cleanupMenuStyles, initPinHandlers, closeAllSubmenus, positionMenu } from './tool_bar/more_decide_windows.js';
 
 // 渲染器核心 API（直接复用 renderer.js 中的导出）
 export {

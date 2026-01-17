@@ -13,20 +13,22 @@
  * 1. UI 打开/关闭子菜单、弹窗 → 计算可交互矩形 → 发送给主进程
  * 2. 主进程根据矩形决定窗口哪些区域接收鼠标，其他区域穿透到下层应用
  */
-import { clearAll, undo, redo, setBrushColor, setErasing, canUndo, canRedo, replaceStrokeColors, getToolState, setInputEnabled, setMultiTouchPenEnabled, setInkRecognitionEnabled, setViewTransform, setCanvasMode, getCubenoteState, applyCubenoteState } from './renderer.js';
-import Curous from './curous.js';
-import Settings, { getPenColorFromSettings, normalizeHexColor } from './setting.js';
+import { clearAll, undo, redo, setBrushColor, setErasing, canUndo, canRedo, replaceStrokeColors, getToolState, setInputEnabled, setMultiTouchPenEnabled, setInkRecognitionEnabled, setViewTransform, setCanvasMode, getCubenoteState, applyCubenoteState, setViewRotation } from '../renderer.js';
+import Curous from '../curous.js';
+import Settings, { getPenColorFromSettings, normalizeHexColor } from '../setting.js';
 import { showSubmenu, cleanupMenuStyles, initPinHandlers, closeAllSubmenus } from './more_decide_windows.js';
-import Message, { EVENTS } from './message.js';
-import { updateAppSettings } from './write_a_change.js';
+import Message, { EVENTS } from '../message.js';
+import { updateAppSettings, installHyperOs3Controls, loadSettingsHistory, clearSettingsHistory, undoSettingsHistoryEntry, undoSettingsHistoryBatch } from '../write_a_change.js';
 import { initPenUI, updatePenModeLabel } from './pen.js';
 import { initEraserUI, updateEraserModeLabel } from './erese.js';
-import VideoBoothUI from './video_booth/video_booth_ui.js';
+import VideoBoothUI from '../video_booth/video_booth_ui.js';
 import ButtonBox from './button_box.js';
-import { initAppCase } from './app_case.js';
-import { applyModeCanvasBackground } from './mode_background.js';
-import { buildPenTailSegment, normalizePenTailSettings } from './pen_tail.js';
-import { applyThemeMode, initThemeAutoSync, buildContrastReport, measureApplyCost, serializeLanTheme, parseLanTheme } from './colors_features.js';
+import { initAppCase } from '../app_case.js';
+import { applyModeCanvasBackground } from '../mode_background.js';
+import { buildPenTailSegment, normalizePenTailSettings } from '../pen_tail.js';
+import { applyThemeMode, initThemeAutoSync, buildContrastReport, measureApplyCost, serializeLanTheme, parseLanTheme } from '../colors_features.js';
+
+try{ installHyperOs3Controls(document); }catch(e){}
 
 const colorTool = document.getElementById('colorTool');
 const pointerTool = document.getElementById('pointerTool');
@@ -224,7 +226,7 @@ function persistAppMode(mode){
  */
 function bindTouchTap(el, onTap, opts){
   if (!el || typeof onTap !== 'function') return;
-  const delayMs = (opts && typeof opts.delayMs === 'number') ? Math.max(0, opts.delayMs) : 20;
+  const delayMs = (opts && typeof opts.delayMs === 'number') ? Math.max(0, opts.delayMs) : 0;
   const moveThreshold = (opts && typeof opts.moveThreshold === 'number') ? Math.max(0, opts.moveThreshold) : 8;
   let down = null;
   let moved = false;
@@ -275,7 +277,11 @@ function bindTouchTap(el, onTap, opts){
     if (!shouldFire) return;
     _lastTouchActionAt = Date.now();
     try{ ev.preventDefault(); ev.stopImmediatePropagation(); ev.stopPropagation(); }catch(err){}
-    setTimeout(()=>{ try{ onTap(ev); }catch(err){} }, delay);
+    if (delay <= 0) {
+      try{ onTap(ev); }catch(err){}
+    } else {
+      setTimeout(()=>{ try{ onTap(ev); }catch(err){} }, delay);
+    }
   }, { passive: false });
 
   el.addEventListener('touchcancel', (e)=>{
@@ -414,6 +420,17 @@ function openAboutWindow(){
   try{
     if (window && window.electronAPI && typeof window.electronAPI.invokeMain === 'function') {
       window.electronAPI.invokeMain('message', 'ui:open-about-window', {});
+      return true;
+    }
+  }catch(e){}
+  return false;
+}
+
+function openNoteManagerWindow(){
+  if (_IS_RUN_TESTS) return false;
+  try{
+    if (window && window.electronAPI && typeof window.electronAPI.invokeMain === 'function') {
+      window.electronAPI.invokeMain('message', 'ui:open-note-manager-window', {});
       return true;
     }
   }catch(e){}
@@ -598,14 +615,16 @@ function _applyWindowInteractivityNow(){
 
 function setAppMode(nextMode, opts){
   const m = nextMode === APP_MODES.ANNOTATION ? APP_MODES.ANNOTATION : APP_MODES.WHITEBOARD;
-  if (_appMode === m) return;
+  const domMode = (()=>{ try{ return String(document.body && document.body.dataset ? (document.body.dataset.appMode || '') : ''); }catch(e){ return ''; } })();
+  if (_appMode === m && domMode === m) return;
   
   try {
     document.body.classList.add('mode-switching');
   } catch (e) {}
 
+  const changed = _appMode !== m;
   _appMode = m;
-  if (!opts || opts.persist !== false) persistAppMode(_appMode);
+  if (changed && (!opts || opts.persist !== false)) persistAppMode(_appMode);
   try{ document.body.dataset.appMode = _appMode; }catch(e){}
   try{
     const s = Settings.loadSettings();
@@ -614,7 +633,9 @@ function setAppMode(nextMode, opts){
   updateExitToolUI();
   applyWindowInteractivity();
   scheduleInteractiveRectsUpdate();
-  try{ Message.emit(EVENTS.APP_MODE_CHANGED, { mode: _appMode }); }catch(e){}
+  if (changed) {
+    try{ Message.emit(EVENTS.APP_MODE_CHANGED, { mode: _appMode }); }catch(e){}
+  }
 
   setTimeout(() => {
     try {
@@ -676,6 +697,17 @@ class WhiteboardController {
     syncToolbarIcons();
     applyWindowInteractivity();
     scheduleInteractiveRectsUpdate();
+    
+    // Ensure no scrollbars
+    try {
+      const board = document.getElementById('board');
+      if (board) {
+        board.scrollLeft = 0;
+        board.scrollTop = 0;
+        board.style.overflow = 'hidden';
+      }
+      document.body.style.overflow = 'hidden';
+    } catch(e) {}
   }
 
   deactivate(){
@@ -768,7 +800,7 @@ if (colorTool) {
   };
   colorTool.addEventListener('click', openPen);
   colorTool.addEventListener('mousedown', (e)=>{ try{ openPen(e); }catch(err){} });
-  bindTouchTap(colorTool, openPen, { delayMs: 20 });
+  bindTouchTap(colorTool, openPen, { delayMs: 0 });
 }
 
 if (eraserTool) {
@@ -795,7 +827,7 @@ if (eraserTool) {
     scheduleInteractiveRectsUpdate();
   };
   eraserTool.addEventListener('click', openEraser);
-  bindTouchTap(eraserTool, openEraser, { delayMs: 20 });
+  bindTouchTap(eraserTool, openEraser, { delayMs: 0 });
 }
 
 if (featureLibraryTool) {
@@ -811,7 +843,7 @@ if (featureLibraryTool) {
     showSubmenu(menu, opener);
   };
   featureLibraryTool.addEventListener('click', openFeatureLibrary);
-  bindTouchTap(featureLibraryTool, openFeatureLibrary, { delayMs: 20 });
+  bindTouchTap(featureLibraryTool, openFeatureLibrary, { delayMs: 0 });
 }
 
 const toggleVideoBooth = async () => {
@@ -834,7 +866,7 @@ Message.on(EVENTS.TOGGLE_VIDEO_BOOTH, toggleVideoBooth);
 
 if (videoBoothTool) {
   videoBoothTool.addEventListener('click', toggleVideoBooth);
-  bindTouchTap(videoBoothTool, toggleVideoBooth, { delayMs: 20 });
+  bindTouchTap(videoBoothTool, toggleVideoBooth, { delayMs: 0 });
 }
 
 if (pointerTool) {
@@ -857,7 +889,7 @@ if (pointerTool) {
     scheduleInteractiveRectsUpdate();
   };
   pointerTool.addEventListener('click', togglePointer);
-  bindTouchTap(pointerTool, togglePointer, { delayMs: 20 });
+  bindTouchTap(pointerTool, togglePointer, { delayMs: 0 });
 }
 
 if (moreTool) {
@@ -872,10 +904,9 @@ if (moreTool) {
     scheduleInteractiveRectsUpdate();
   };
   moreTool.addEventListener('click', openMore);
-  bindTouchTap(moreTool, openMore, { delayMs: 20 });
+  bindTouchTap(moreTool, openMore, { delayMs: 0 });
   // simple action hooks
-  const noteExportBtn = document.getElementById('noteExportBtn');
-  const noteImportBtn = document.getElementById('noteImportBtn');
+  const noteManagerBtn = document.getElementById('noteManagerBtn');
   const settingsBtn = document.getElementById('settingsBtn');
   const pluginManagerBtn = document.getElementById('pluginManagerBtn');
   const aboutBtn = document.getElementById('aboutBtn');
@@ -894,6 +925,13 @@ if (moreTool) {
     applyWindowInteractivity();
     scheduleInteractiveRectsUpdate();
     try{ await startNoteImportFlow(); }catch(e){ try{ showToast('导入失败', 'error'); }catch(err){} }
+  };
+  const onOpenNoteManager = ()=>{
+    closeAllSubmenus();
+    syncToolbarIcons();
+    applyWindowInteractivity();
+    scheduleInteractiveRectsUpdate();
+    openNoteManagerWindow();
   };
   const onSettings = ()=>{ closeAllSubmenus(); syncToolbarIcons(); applyWindowInteractivity(); scheduleInteractiveRectsUpdate(); if (!openSettingsWindow()) Message.emit(EVENTS.OPEN_SETTINGS, {}); };
   const onPluginManager = ()=>{ closeAllSubmenus(); syncToolbarIcons(); applyWindowInteractivity(); scheduleInteractiveRectsUpdate(); try{ openPluginModal(); }catch(e){} };
@@ -923,18 +961,33 @@ if (moreTool) {
     }catch(e){}
     try{ window.close(); }catch(e){}
   };
-  if (noteExportBtn) { noteExportBtn.addEventListener('click', onNoteExport); bindTouchTap(noteExportBtn, onNoteExport, { delayMs: 50 }); }
-  if (noteImportBtn) { noteImportBtn.addEventListener('click', onNoteImport); bindTouchTap(noteImportBtn, onNoteImport, { delayMs: 50 }); }
-  if (settingsBtn) { settingsBtn.addEventListener('click', onSettings); bindTouchTap(settingsBtn, onSettings, { delayMs: 50 }); }
-  if (pluginManagerBtn) { pluginManagerBtn.addEventListener('click', onPluginManager); bindTouchTap(pluginManagerBtn, onPluginManager, { delayMs: 50 }); }
-  if (aboutBtn) { aboutBtn.addEventListener('click', onAbout); bindTouchTap(aboutBtn, onAbout, { delayMs: 50 }); }
-  if (restartWhiteboardBtn) { restartWhiteboardBtn.addEventListener('click', onRestartWhiteboard); bindTouchTap(restartWhiteboardBtn, onRestartWhiteboard, { delayMs: 50 }); }
-  if (closeWhiteboardBtnSettings) { closeWhiteboardBtnSettings.addEventListener('click', onCloseWhiteboard); bindTouchTap(closeWhiteboardBtnSettings, onCloseWhiteboard, { delayMs: 50 }); }
+  if (noteManagerBtn) { noteManagerBtn.addEventListener('click', onOpenNoteManager); bindTouchTap(noteManagerBtn, onOpenNoteManager, { delayMs: 0 }); }
+  if (settingsBtn) { settingsBtn.addEventListener('click', onSettings); bindTouchTap(settingsBtn, onSettings, { delayMs: 0 }); }
+  if (pluginManagerBtn) { pluginManagerBtn.addEventListener('click', onPluginManager); bindTouchTap(pluginManagerBtn, onPluginManager, { delayMs: 0 }); }
+  if (aboutBtn) { aboutBtn.addEventListener('click', onAbout); bindTouchTap(aboutBtn, onAbout, { delayMs: 0 }); }
+  if (restartWhiteboardBtn) { restartWhiteboardBtn.addEventListener('click', onRestartWhiteboard); bindTouchTap(restartWhiteboardBtn, onRestartWhiteboard, { delayMs: 0 }); }
+  if (closeWhiteboardBtnSettings) { closeWhiteboardBtnSettings.addEventListener('click', onCloseWhiteboard); bindTouchTap(closeWhiteboardBtnSettings, onCloseWhiteboard, { delayMs: 0 }); }
 }
 
 (async () => {
   try {
     await initAppCase();
+    // Add scroll prevention watchdog
+    const preventScroll = () => {
+      try {
+        const board = document.getElementById('board');
+        if (board && (board.scrollLeft !== 0 || board.scrollTop !== 0)) {
+          board.scrollLeft = 0;
+          board.scrollTop = 0;
+        }
+        if (document.body.scrollLeft !== 0 || document.body.scrollTop !== 0) {
+          document.body.scrollLeft = 0;
+          document.body.scrollTop = 0;
+        }
+      } catch (e) {}
+    };
+    window.addEventListener('scroll', preventScroll, { passive: false, capture: true });
+    setInterval(preventScroll, 1000);
   } catch (e) {
     console.error('Failed to initialize AppCase:', e);
   }
@@ -946,7 +999,7 @@ if (exitTool) {
     else enterWhiteboardMode();
   };
   exitTool.addEventListener('click', toggleMode);
-  bindTouchTap(exitTool, toggleMode, { delayMs: 20 });
+  bindTouchTap(exitTool, toggleMode, { delayMs: 0 });
 }
 
 // submenu logic moved to more_decide_windows.js
@@ -956,6 +1009,11 @@ document.addEventListener('keydown', (e)=>{ if (e.key==='Escape') { closeAllSubm
 try{
   Message.on(EVENTS.SUBMENU_OPEN, ()=>{ applyWindowInteractivity(); scheduleInteractiveRectsUpdate(); });
   Message.on(EVENTS.SUBMENU_CLOSE, ()=>{ applyWindowInteractivity(); scheduleInteractiveRectsUpdate(); });
+  Message.on(EVENTS.APP_PREPARE_EXIT, ()=>{
+    try {
+      document.body.classList.add('hyperos-exit');
+    } catch(e) {}
+  });
 }catch(e){}
 
 // pin button handlers: toggle data-pinned on submenu
@@ -966,32 +1024,205 @@ initPinHandlers();
 import { attachDragHelper } from './drag_helper.js';
 const panel = document.querySelector('.floating-panel');
 const dragHandle = document.getElementById('dragHandle');
+const _PIN_TOOLBAR_TO_TASKBAR = true;
+const _TOOLBAR_BOOT_DELAY_MS = 120;
+const _TOOLBAR_ANIM_DUR_MS = 350;
+const _TOOLBAR_GAP_DP = 10;
+let _toolbarAnchorTimer = null;
+let _toolbarUserMoved = false;
+let _toolbarDragPrevTransition = null;
+
+function _getViewportClampRect(){
+  try{
+    const vv = window.visualViewport;
+    if (vv && Number.isFinite(vv.width) && Number.isFinite(vv.height)) {
+      const left = Number(vv.offsetLeft || 0);
+      const top = Number(vv.offsetTop || 0);
+      return { left, top, right: left + Number(vv.width), bottom: top + Number(vv.height) };
+    }
+  }catch(e){}
+  return { left: 0, top: 0, right: window.innerWidth, bottom: window.innerHeight };
+}
+
+function _clampNumber(n, min, max){
+  const v = Number(n);
+  if (!Number.isFinite(v)) return min;
+  return Math.max(min, Math.min(max, v));
+}
+
+async function _readTaskbarMetrics(){
+  try{
+    const res = await _invokeMainMessage('system:get-taskbar-metrics', {});
+    if (res && res.success) return res;
+  }catch(e){}
+  return null;
+}
+
+function _calcToolbarAnchoredPosition(panelRect, metrics){
+  const gap = _TOOLBAR_GAP_DP;
+  const insets = metrics && metrics.insets && typeof metrics.insets === 'object'
+    ? metrics.insets
+    : { left: 0, top: 0, right: 0, bottom: 0 };
+  const taskbar = metrics && metrics.taskbar && typeof metrics.taskbar === 'object'
+    ? metrics.taskbar
+    : { position: 'bottom', thickness: Number(insets.bottom) || 0 };
+
+  let left = Math.round((window.innerWidth - panelRect.width) / 2);
+  let top = Math.round(window.innerHeight - (Number(insets.bottom) || 0) - gap - panelRect.height);
+
+  if (taskbar.position === 'top') top = Math.round((Number(insets.top) || 0) + gap);
+  if (taskbar.position === 'left') left = Math.round((Number(insets.left) || 0) + gap);
+  if (taskbar.position === 'right') left = Math.round(window.innerWidth - (Number(insets.right) || 0) - gap - panelRect.width);
+
+  left = _clampNumber(left, 0, Math.max(0, window.innerWidth - panelRect.width));
+  top = _clampNumber(top, 0, Math.max(0, window.innerHeight - panelRect.height));
+  return { left, top };
+}
+
+function _applyToolbarFixedPosition(targetPanel, pos){
+  if (!targetPanel) return;
+  targetPanel.style.position = 'fixed';
+  targetPanel.style.left = Math.round(pos.left) + 'px';
+  targetPanel.style.top = Math.round(pos.top) + 'px';
+  targetPanel.style.right = 'auto';
+  targetPanel.style.bottom = 'auto';
+}
+
+function _measureElSize(el){
+  try{
+    if (!el) return { width: 0, height: 0 };
+    const w = Number(el.offsetWidth || 0);
+    const h = Number(el.offsetHeight || 0);
+    if (w > 0 && h > 0) return { width: w, height: h };
+    const r = el.getBoundingClientRect();
+    return { width: Number(r && r.width || 0), height: Number(r && r.height || 0) };
+  }catch(e){
+    return { width: 0, height: 0 };
+  }
+}
+
+function _nudgeToolbarIconsPaint(panel){
+  try{
+    const svgs = panel ? panel.querySelectorAll('.tool-btn svg') : [];
+    for (const svg of svgs) {
+      const prev = svg && svg.style ? String(svg.style.transform || '') : '';
+      try{ svg.style.transform = prev ? `${prev} translateZ(0)` : 'translateZ(0)'; }catch(e){}
+      try{ svg.getBoundingClientRect(); }catch(e){}
+      try{ svg.style.transform = prev; }catch(e){}
+    }
+  }catch(e){}
+}
+
+async function _repositionToolbarToTaskbar(targetPanel, opts){
+  if (!targetPanel) return;
+  if (_toolbarUserMoved) return;
+  const rect = _measureElSize(targetPanel);
+  const metrics = await _readTaskbarMetrics();
+  const pos = _calcToolbarAnchoredPosition(rect, metrics || {});
+  if (opts && opts.animate) {
+    targetPanel.classList.add('ls-toolbar-enter');
+    requestAnimationFrame(() => _applyToolbarFixedPosition(targetPanel, pos));
+    setTimeout(() => { try{ targetPanel.classList.remove('ls-toolbar-enter'); }catch(e){} }, _TOOLBAR_ANIM_DUR_MS + 20);
+  } else {
+    _applyToolbarFixedPosition(targetPanel, pos);
+  }
+}
+
+function _scheduleToolbarReposition(targetPanel){
+  if (_toolbarAnchorTimer) clearTimeout(_toolbarAnchorTimer);
+  if (_toolbarUserMoved) return;
+  _toolbarAnchorTimer = setTimeout(() => {
+    _repositionToolbarToTaskbar(targetPanel, { animate: false });
+  }, 60);
+}
+
+async function _runToolbarBootAnimation(targetPanel){
+  if (!targetPanel) return;
+  targetPanel.classList.add('ls-toolbar-ready');
+  targetPanel.style.visibility = 'hidden';
+  targetPanel.classList.add('ls-toolbar-boot');
+
+  const rect = _measureElSize(targetPanel);
+  const startLeft = Math.round((window.innerWidth - rect.width) / 2);
+  const startTop = Math.round(window.innerHeight + 24);
+  _applyToolbarFixedPosition(targetPanel, { left: startLeft, top: startTop });
+
+  await new Promise((r) => requestAnimationFrame(r));
+  await new Promise((r) => setTimeout(r, _TOOLBAR_BOOT_DELAY_MS));
+  targetPanel.style.visibility = '';
+  await new Promise((r) => requestAnimationFrame(r));
+  await _repositionToolbarToTaskbar(targetPanel, { animate: true });
+  setTimeout(() => {
+    try{ targetPanel.classList.remove('ls-toolbar-boot'); }catch(e){}
+    _nudgeToolbarIconsPaint(targetPanel);
+  }, _TOOLBAR_ANIM_DUR_MS + 20);
+}
+
+if (_PIN_TOOLBAR_TO_TASKBAR && panel) {
+  _runToolbarBootAnimation(panel);
+  window.addEventListener('resize', () => _scheduleToolbarReposition(panel));
+  try{
+    if (window.electronAPI && typeof window.electronAPI.onReplyFromMain === 'function') {
+      window.electronAPI.onReplyFromMain('system:display-metrics-changed', () => _scheduleToolbarReposition(panel));
+    }
+  }catch(e){}
+}
+
 if (dragHandle && panel) {
   dragHandle.style.touchAction = 'none';
-  const detachPanelDrag = attachDragHelper(dragHandle, panel, {
+  attachDragHelper(dragHandle, panel, {
     threshold: 2,
     touchThreshold: 5,
-    clampRect: ()=>({ left: 0, top: 0, right: window.innerWidth, bottom: window.innerHeight }),
+    clampRect: _getViewportClampRect,
+    onStart: () => {
+      _toolbarUserMoved = true;
+      if (_toolbarAnchorTimer) {
+        try{ clearTimeout(_toolbarAnchorTimer); }catch(e){}
+        _toolbarAnchorTimer = null;
+      }
+      try{ panel.classList.remove('ls-toolbar-enter'); }catch(e){}
+      try{ panel.classList.remove('hyperos-entrance'); }catch(e){}
+      try{
+        const r = panel.getBoundingClientRect();
+        panel.style.position = 'fixed';
+        panel.style.left = Math.round(r.left) + 'px';
+        panel.style.top = Math.round(r.top) + 'px';
+        panel.style.right = 'auto';
+        panel.style.bottom = 'auto';
+      }catch(e){}
+      try{
+        _toolbarDragPrevTransition = panel.style.transition;
+        panel.style.transition = 'none';
+      }catch(e){}
+    },
     onMove: ({ left, top }) => { try{ Message.emit(EVENTS.TOOLBAR_MOVE, { left, top }); }catch(e){} scheduleInteractiveRectsUpdate(); },
-    onEnd: (ev, rect) => { try{ Message.emit(EVENTS.TOOLBAR_MOVE, { left: rect.left, top: rect.top }); }catch(e){} scheduleInteractiveRectsUpdate(); }
+    onEnd: (ev, rect) => {
+      try{
+        if (_toolbarDragPrevTransition !== null) panel.style.transition = _toolbarDragPrevTransition;
+        else panel.style.transition = '';
+      }catch(e){}
+      _toolbarDragPrevTransition = null;
+      try{ Message.emit(EVENTS.TOOLBAR_MOVE, { left: rect.left, top: rect.top }); }catch(e){}
+      scheduleInteractiveRectsUpdate();
+    }
   });
 }
 
 if (clearBtn) {
   const onClear = ()=>{ clearAll(); setErasing(false); if (eraserTool) eraserTool.classList.remove('active'); updatePenModeLabel(); updateEraserModeLabel(); syncToolbarIcons(); applyWindowInteractivity(); scheduleInteractiveRectsUpdate(); };
   clearBtn.addEventListener('click', onClear);
-  bindTouchTap(clearBtn, onClear, { delayMs: 20 });
+  bindTouchTap(clearBtn, onClear, { delayMs: 0 });
 }
 
 if (undoBtn) {
   const onUndo = ()=>{ undo(); };
   undoBtn.addEventListener('click', onUndo);
-  bindTouchTap(undoBtn, onUndo, { delayMs: 20 });
+  bindTouchTap(undoBtn, onUndo, { delayMs: 0 });
 }
 if (redoBtn) {
   const onRedo = ()=>{ redo(); };
   redoBtn.addEventListener('click', onRedo);
-  bindTouchTap(redoBtn, onRedo, { delayMs: 20 });
+  bindTouchTap(redoBtn, onRedo, { delayMs: 0 });
 }
 document.addEventListener('keydown', (e)=>{
   if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase()==='z') { e.preventDefault(); undo(); }
@@ -1037,7 +1268,7 @@ if (collapseTool && panel) {
     applyCollapsed(next);
   };
   collapseTool.addEventListener('click', toggleCollapse);
-  bindTouchTap(collapseTool, toggleCollapse, { delayMs: 20 });
+  bindTouchTap(collapseTool, toggleCollapse, { delayMs: 0 });
 
   // restore persisted state
   try{
@@ -1156,6 +1387,12 @@ const historyStateDisplay = document.getElementById('historyStateDisplay');
 const toolbarLayoutList = document.getElementById('toolbarLayoutList');
 const toolbarLayoutPreview = document.getElementById('toolbarLayoutPreview');
 const toolbarLayoutResetBtn = document.getElementById('toolbarLayoutReset');
+const settingsHistoryTimeline = document.getElementById('settingsHistoryTimeline');
+const settingsHistoryMeta = document.getElementById('settingsHistoryMeta');
+const historyLoadMoreBtn = document.getElementById('historyLoadMoreBtn');
+const historySelectAllBtn = document.getElementById('historySelectAllBtn');
+const historyUndoSelectedBtn = document.getElementById('historyUndoSelectedBtn');
+const historyClearBtn = document.getElementById('historyClearBtn');
 
 const settingsContent = settingsModal ? settingsModal.querySelector('.settings-content') : null;
 const settingsLoading = settingsModal ? settingsModal.querySelector('.settings-loading') : null;
@@ -1755,7 +1992,7 @@ function _wireSettingsUi(){
         const t = String(btn.dataset.tab || '');
         if (!t) return;
         _settingsUiSelectTab(t, { focus: true });
-      }, { delayMs: 20 });
+      }, { delayMs: 0 });
     }
   }
 
@@ -1940,6 +2177,427 @@ function _wireSettingsUi(){
     }
   });
 }
+
+const _settingsHistoryUi = {
+  all: [],
+  rendered: 0,
+  pageSize: 60,
+  selected: new Set(),
+  lastTab: ''
+};
+
+function _formatHistoryTs(ts){
+  const d = new Date(Number(ts || 0));
+  if (Number.isNaN(d.getTime())) return '';
+  const pad = (n)=>String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
+
+function _historyPathToJumpTarget(path){
+  const p = String(path || '');
+  const root = p.split('.')[0] || '';
+  if (!root) return { tab: 'general', id: '' };
+  if (root === 'enableAutoResize') return { tab: 'general', id: 'optAutoResize' };
+  if (root === 'toolbarCollapsed') return { tab: 'general', id: 'optCollapsed' };
+  if (root === 'showTooltips') return { tab: 'general', id: 'optTooltips' };
+
+  if (root === 'theme') return { tab: 'appearance', id: 'optTheme' };
+  if (root === 'designLanguage') return { tab: 'appearance', id: 'optDesignLanguage' };
+  if (root === 'visualStyle') return { tab: 'appearance', id: 'optVisualStyle' };
+  if (root === 'canvasColor') return { tab: 'appearance', id: 'optCanvasColor' };
+  if (root === 'pdfDefaultMode') return { tab: 'appearance', id: 'optPdfDefaultMode' };
+
+  if (root === 'themeCustom') {
+    const sub = p.slice('themeCustom.'.length);
+    if (sub) return { tab: 'appearance', id: `optTheme${sub.charAt(0).toUpperCase()}${sub.slice(1)}` };
+    return { tab: 'appearance', id: '' };
+  }
+  if (root === 'mica') {
+    const sub = p.slice('mica.'.length);
+    if (sub === 'intensity') return { tab: 'appearance', id: 'optMicaIntensity' };
+    return { tab: 'appearance', id: '' };
+  }
+
+  if (root === 'multiTouchPen') return { tab: 'input', id: 'optMultiTouchPen' };
+  if (root === 'annotationPenColor') return { tab: 'input', id: 'optAnnotationPenColor' };
+  if (root === 'smartInkRecognition') return { tab: 'input', id: 'optSmartInk' };
+  if (root === 'penTail') {
+    const sub = p.slice('penTail.'.length);
+    if (sub === 'enabled') return { tab: 'input', id: 'optPenTailEnabled' };
+    if (sub === 'profile') return { tab: 'input', id: 'optPenTailProfile' };
+    if (sub === 'intensity') return { tab: 'input', id: 'optPenTailIntensity' };
+    if (sub === 'samplePoints') return { tab: 'input', id: 'optPenTailSamplePoints' };
+    if (sub === 'speedSensitivity') return { tab: 'input', id: 'optPenTailSpeedSensitivity' };
+    if (sub === 'pressureSensitivity') return { tab: 'input', id: 'optPenTailPressureSensitivity' };
+    if (sub === 'shape') return { tab: 'input', id: 'optPenTailShape' };
+    return { tab: 'input', id: '' };
+  }
+
+  if (root === 'shortcuts') {
+    const sub = p.slice('shortcuts.'.length);
+    if (sub === 'undo') return { tab: 'shortcuts', id: 'keyUndo' };
+    if (sub === 'redo') return { tab: 'shortcuts', id: 'keyRedo' };
+    return { tab: 'shortcuts', id: '' };
+  }
+
+  if (root === 'videoBoothEnabled') return { tab: 'toolbar', id: 'optVideoBoothEnabled' };
+  if (root === 'toolbarButtonOrder' || root === 'toolbarButtonHidden') return { tab: 'toolbar', id: 'toolbarLayoutList' };
+  if (root === 'pluginButtonDisplay') return { tab: 'plugins', id: 'pluginList' };
+  return { tab: 'general', id: '' };
+}
+
+function _historyJumpToPath(path){
+  const target = _historyPathToJumpTarget(path);
+  _settingsUiSelectTab(target.tab, { focus: false });
+  if (!target.id) return;
+  const el = document.getElementById(target.id);
+  if (!el) return;
+  try{ el.scrollIntoView({ behavior: 'smooth', block: 'center' }); }catch(e){}
+  try{
+    el.classList.add('ls-jump-highlight');
+    setTimeout(()=>{ try{ el.classList.remove('ls-jump-highlight'); }catch(e){} }, 1200);
+  }catch(e){}
+}
+
+function _historyRenderMeta(){
+  if (!settingsHistoryMeta) return;
+  const total = _settingsHistoryUi.all.length;
+  const undone = _settingsHistoryUi.all.filter(r => r && r.undone).length;
+  settingsHistoryMeta.textContent = `记录: ${total}  已撤回: ${undone}  已选择: ${_settingsHistoryUi.selected.size}`;
+}
+
+// Optimized History Renderer with Virtualization (Chunking) for Modal
+const _HISTORY_CHUNK_SIZE = 20;
+
+class HistoryChunkManager {
+    constructor(container) {
+        this.container = container;
+        this.observer = new IntersectionObserver(this.onIntersect.bind(this), { rootMargin: '400px 0px' });
+        this.chunks = new Map(); // index -> { el, height, isRendered }
+        this.data = [];
+    }
+
+    setData(data) {
+        this.data = data || [];
+        this.renderPlaceholders();
+    }
+
+    renderPlaceholders() {
+        this.observer.disconnect();
+        this.container.innerHTML = '';
+        this.chunks.clear();
+
+        const count = Math.ceil(this.data.length / _HISTORY_CHUNK_SIZE);
+        for (let i = 0; i < count; i++) {
+            const el = document.createElement('div');
+            el.className = 'ls-history-chunk';
+            el.dataset.index = i;
+            el.style.minHeight = '1px'; 
+            this.container.appendChild(el);
+            this.observer.observe(el);
+            this.chunks.set(i, { el, height: 0, isRendered: false });
+        }
+        
+        const footer = document.createElement('div');
+        footer.style.height = '20px';
+        this.container.appendChild(footer);
+    }
+
+    onIntersect(entries) {
+        for (const entry of entries) {
+            const idx = Number(entry.target.dataset.index);
+            const chunk = this.chunks.get(idx);
+            if (!chunk) continue;
+
+            if (entry.isIntersecting) {
+                if (!chunk.isRendered) {
+                    this.renderChunk(idx);
+                }
+            } else {
+                if (chunk.isRendered && chunk.height > 0) {
+                    this.unloadChunk(idx);
+                }
+            }
+        }
+    }
+
+    renderChunk(index) {
+        const chunk = this.chunks.get(index);
+        if (!chunk) return;
+
+        const start = index * _HISTORY_CHUNK_SIZE;
+        const end = Math.min(start + _HISTORY_CHUNK_SIZE, this.data.length);
+        const frag = document.createDocumentFragment();
+
+        for (let i = start; i < end; i++) {
+            frag.appendChild(_historyBuildItem(this.data[i]));
+        }
+        
+        chunk.el.innerHTML = '';
+        chunk.el.appendChild(frag);
+        chunk.el.style.height = 'auto'; 
+        chunk.isRendered = true;
+    }
+
+    unloadChunk(index) {
+        const chunk = this.chunks.get(index);
+        if (!chunk) return;
+
+        const rect = chunk.el.getBoundingClientRect();
+        if (rect.height > 0) chunk.height = rect.height;
+
+        chunk.el.innerHTML = '';
+        chunk.el.style.height = `${chunk.height}px`;
+        chunk.isRendered = false;
+    }
+}
+
+let _historyChunkManager = null;
+
+function _historyRender(reset) {
+    if (!settingsHistoryTimeline) return;
+    
+    if (!_historyChunkManager || reset) {
+        _historyChunkManager = new HistoryChunkManager(settingsHistoryTimeline);
+    }
+    
+    if (reset) {
+        _historyChunkManager.setData(_settingsHistoryUi.all);
+    }
+    
+    _historyRenderMeta();
+}
+
+function _historyBuildItem(rec){
+  const item = document.createElement('div');
+  item.className = 'ls-history-item';
+  item.setAttribute('role', 'listitem');
+
+  const card = document.createElement('div');
+  card.className = `ls-history-card${rec && rec.undone ? ' is-undone' : ''}`;
+  const recId = String(rec && rec.id || '');
+  card.dataset.id = recId;
+  item.appendChild(card);
+
+  const header = document.createElement('div');
+  header.className = 'ls-history-card-header';
+  card.appendChild(header);
+
+  const titleWrap = document.createElement('div');
+  titleWrap.className = 'ls-history-card-title';
+  header.appendChild(titleWrap);
+
+  const timeEl = document.createElement('div');
+  timeEl.className = 'ls-history-time';
+  timeEl.textContent = _formatHistoryTs(rec && rec.ts);
+  titleWrap.appendChild(timeEl);
+
+  const mainEl = document.createElement('div');
+  mainEl.className = 'ls-history-main';
+  const changes = Array.isArray(rec && rec.changes) ? rec.changes : [];
+  mainEl.textContent = changes.length === 1 ? String(changes[0].path || '设置变更') : `${changes.length || 0} 项设置变更`;
+  titleWrap.appendChild(mainEl);
+
+  const badges = document.createElement('div');
+  badges.className = 'ls-history-badges';
+  header.appendChild(badges);
+
+  const sourceBadge = document.createElement('div');
+  sourceBadge.className = 'ls-history-badge';
+  sourceBadge.textContent = String(rec && rec.source || 'settings');
+  badges.appendChild(sourceBadge);
+
+  if (rec && rec.undone) {
+    const undoneBadge = document.createElement('div');
+    undoneBadge.className = 'ls-history-badge ls-history-badge-undone';
+    undoneBadge.textContent = '已撤回';
+    badges.appendChild(undoneBadge);
+  }
+
+  const body = document.createElement('div');
+  body.className = 'ls-history-card-body';
+  card.appendChild(body);
+
+  const diffs = document.createElement('div');
+  diffs.className = 'ls-history-diff';
+  body.appendChild(diffs);
+
+  for (const c of changes) {
+    const row = document.createElement('div');
+    row.className = 'ls-history-diff-row';
+    diffs.appendChild(row);
+
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.dataset.action = 'jump';
+    btn.dataset.path = String(c && c.path || '');
+    row.appendChild(btn);
+
+    const p = document.createElement('div');
+    p.className = 'ls-history-diff-path';
+    p.textContent = String(c && c.path || '');
+    btn.appendChild(p);
+
+    const v = document.createElement('div');
+    v.className = 'ls-history-diff-values';
+    v.textContent = `${String(c && c.beforeText || '')} → ${String(c && c.afterText || '')}`;
+    row.appendChild(v);
+  }
+
+  const actions = document.createElement('div');
+  actions.className = 'ls-history-actions';
+  body.appendChild(actions);
+
+  const select = document.createElement('input');
+  select.type = 'checkbox';
+  select.className = 'ls-history-select';
+  select.dataset.id = recId;
+  select.checked = _settingsHistoryUi.selected.has(recId);
+  if (rec && rec.undone) select.disabled = true;
+  actions.appendChild(select);
+
+  const jumpBtn = document.createElement('button');
+  jumpBtn.type = 'button';
+  jumpBtn.className = 'mode-btn';
+  jumpBtn.textContent = '跳转';
+  jumpBtn.dataset.action = 'jump';
+  jumpBtn.dataset.path = changes[0] ? String(changes[0].path || '') : '';
+  actions.appendChild(jumpBtn);
+
+  const undoBtn = document.createElement('button');
+  undoBtn.type = 'button';
+  undoBtn.className = 'mode-btn';
+  undoBtn.textContent = '撤回';
+  undoBtn.dataset.action = 'undo';
+  undoBtn.dataset.id = recId;
+  if (rec && rec.undone) undoBtn.disabled = true;
+  actions.appendChild(undoBtn);
+
+  return item;
+}
+
+let _historyRefreshTimer = 0;
+function _historyRefresh(opts){
+  const o = (opts && typeof opts === 'object') ? opts : {};
+  if (_historyRefreshTimer) clearTimeout(_historyRefreshTimer);
+  _historyRefreshTimer = setTimeout(()=>{
+    const run = () => {
+        _settingsHistoryUi.all = loadSettingsHistory(2000);
+        if (o.reset) _settingsHistoryUi.selected.clear();
+        _historyRenderMeta();
+        const st = _settingsUiStore.getState();
+        const tab = st && st.selectedTab ? String(st.selectedTab) : '';
+        if (tab === 'history') _historyRender(true);
+        if (o.reload) {
+          const s = Settings.loadSettings();
+          _settingsUiStore.dispatch({ type: 'OPEN', settings: s });
+          _renderSettingsUi();
+        }
+    };
+    if (window.requestIdleCallback) window.requestIdleCallback(run);
+    else setTimeout(run, 10);
+  }, 50);
+}
+
+function _initSettingsHistoryUi(){
+  if (!settingsHistoryTimeline) return;
+  if (settingsHistoryTimeline.dataset.historyWired === '1') return;
+  settingsHistoryTimeline.dataset.historyWired = '1';
+
+  if (historyLoadMoreBtn) historyLoadMoreBtn.style.display = 'none';
+  
+  // Event Delegation
+  settingsHistoryTimeline.addEventListener('click', (e) => {
+      const target = e.target;
+      
+      if (target.matches('.ls-history-select')) {
+          const id = target.dataset.id;
+          if (!id) return;
+          if (target.checked) _settingsHistoryUi.selected.add(id);
+          else _settingsHistoryUi.selected.delete(id);
+          _historyRenderMeta();
+          e.stopPropagation();
+          return;
+      }
+
+      const btn = target.closest('button');
+      if (btn) {
+          const action = btn.dataset.action;
+          if (action === 'jump') {
+              e.stopPropagation();
+              const path = btn.dataset.path || '';
+              const target = _historyPathToJumpTarget(path);
+              _settingsUiSelectTab(target.tab, { focus: false });
+              if (target.id) {
+                setTimeout(()=>{
+                    const el = document.getElementById(target.id);
+                    if (el) {
+                        try{ el.scrollIntoView({ behavior: 'smooth', block: 'center' }); }catch(e){}
+                        el.classList.add('ls-jump-highlight');
+                        setTimeout(()=>{ el.classList.remove('ls-jump-highlight'); }, 1200);
+                    }
+                }, 100);
+              }
+              return;
+          }
+          if (action === 'undo') {
+              e.stopPropagation();
+              const id = btn.dataset.id;
+              if (!id) return;
+              if (!confirm('确定要撤回该次修改吗？')) return;
+              try{ undoSettingsHistoryEntry(id, { source: 'settings_modal_history' }); }catch(err){}
+              _historyRefresh({ reset: true, reload: true });
+              return;
+          }
+      }
+      
+      const header = target.closest('.ls-history-card-header');
+      if (header) {
+          const card = header.closest('.ls-history-card');
+          if (card) card.classList.toggle('expanded');
+      }
+  });
+
+  if (historySelectAllBtn) historySelectAllBtn.addEventListener('click', ()=>{
+    const selectable = _settingsHistoryUi.all.filter(r => r && !r.undone).map(r => String(r.id || '')).filter(Boolean);
+    const allSelected = selectable.length && selectable.every(id => _settingsHistoryUi.selected.has(id));
+    if (allSelected) _settingsHistoryUi.selected.clear();
+    else for (const id of selectable) _settingsHistoryUi.selected.add(id);
+    try{
+      settingsHistoryTimeline.querySelectorAll('input.ls-history-select').forEach(cb=>{
+        if (cb.disabled) return;
+        cb.checked = _settingsHistoryUi.selected.has(cb.dataset.id);
+      });
+    }catch(e){}
+    _historyRenderMeta();
+  });
+  if (historyUndoSelectedBtn) historyUndoSelectedBtn.addEventListener('click', ()=>{
+    const ids = Array.from(_settingsHistoryUi.selected);
+    if (!ids.length) return;
+    if (!confirm(`确定要撤回选中的 ${ids.length} 条记录吗？`)) return;
+    try{ undoSettingsHistoryBatch(ids, { source: 'settings_modal_history_batch' }); }catch(e){}
+    _historyRefresh({ reset: true, reload: true });
+  });
+  if (historyClearBtn) historyClearBtn.addEventListener('click', ()=>{
+    if (!confirm('确定要清空全部历史记录吗？')) return;
+    try{ clearSettingsHistory(); }catch(e){}
+    _historyRefresh({ reset: true });
+  });
+
+  try{ Message.on(EVENTS.SETTINGS_HISTORY_CHANGED, ()=>_historyRefresh({ reset: true })); }catch(e){}
+  try{
+    _settingsUiStore.subscribe(()=>{
+      const st = _settingsUiStore.getState();
+      const tab = st && st.selectedTab ? String(st.selectedTab) : '';
+      if (tab === _settingsHistoryUi.lastTab) return;
+      _settingsHistoryUi.lastTab = tab;
+      if (tab === 'history') _historyRender(true);
+    });
+  }catch(e){}
+  _historyRefresh({ reset: true });
+}
+
+try{ _initSettingsHistoryUi(); }catch(e){}
 
 _wireSettingsUi();
 
@@ -2789,6 +3447,28 @@ try{
         showNoteProgress(title, stage, percent);
       }catch(e){}
     });
+    window.electronAPI.onReplyFromMain('note:apply-preview-state', (payload)=>{
+      try{
+        const p = payload && typeof payload === 'object' ? payload : {};
+        const s = p.state && typeof p.state === 'object' ? p.state : null;
+        const key = String(p.activeDocKey || 'whiteboard');
+        const scale = Number(p.viewScale || 1) || 1;
+        const rot = Number(p.rotationDeg || 0) || 0;
+        if (key) setCanvasMode(key);
+        if (s) applyCubenoteState(s, { conflict: 'overwrite' });
+        try{ setViewTransform(scale, 0, 0); }catch(e){}
+        try{ setViewRotation(rot); }catch(e){}
+        showToast('已应用预览状态', 'success');
+      }catch(e){
+        showToast('应用预览失败', 'error');
+      }
+    });
+    window.electronAPI.onReplyFromMain('note:request-import', ()=>{
+      try{ startNoteImportFlow(); }catch(e){ showToast('导入失败', 'error'); }
+    });
+    window.electronAPI.onReplyFromMain('note:request-export', ()=>{
+      try{ startNoteExportFlow(); }catch(e){ showToast('导出失败', 'error'); }
+    });
   }
 }catch(e){}
 
@@ -2937,6 +3617,57 @@ try{ if (settings && typeof settings.multiTouchPen !== 'undefined') setMultiTouc
 try{ if (settings && typeof settings.smartInkRecognition !== 'undefined') setInkRecognitionEnabled(!!settings.smartInkRecognition); }catch(e){}
 try{ initThemeAutoSync(()=>Settings.loadSettings()); }catch(e){}
 
+async function getDisplayMetrics() {
+  try {
+    const res = await _invokeMainMessage('app:get-display-metrics', {});
+    if (res && res.success) return res;
+    return null;
+  } catch (e) { return null; }
+}
+
+async function positionToolbarIdeally(animate = true) {
+  const panel = document.querySelector('.floating-panel');
+  if (!panel) return;
+
+  const metrics = await getDisplayMetrics();
+  if (!metrics || !metrics.workArea) return;
+
+  const { workArea } = metrics;
+  
+  const width = Number(panel.offsetWidth || 0) || Number(panel.getBoundingClientRect().width || 0) || 64;
+  const height = Number(panel.offsetHeight || 0) || Number(panel.getBoundingClientRect().height || 0) || 300;
+
+  // Calculate center bottom position relative to workArea
+  const left = workArea.x + (workArea.width - width) / 2;
+  const marginBottom = 24;
+  const top = workArea.y + workArea.height - height - marginBottom;
+
+  panel.style.left = `${left}px`;
+  panel.style.right = 'auto';
+  panel.style.top = `${top}px`;
+  panel.style.bottom = 'auto';
+  
+  if (animate) {
+    panel.classList.remove('hyperos-entrance');
+    void panel.offsetWidth; // Trigger reflow
+    panel.classList.add('hyperos-entrance');
+  }
+  
+  scheduleInteractiveRectsUpdate();
+}
+
+if (!_PIN_TOOLBAR_TO_TASKBAR) {
+  if (window.electronAPI && window.electronAPI.onReplyFromMain) {
+    window.electronAPI.onReplyFromMain('app:display-metrics-changed', (data) => {
+      positionToolbarIdeally(false);
+    });
+  }
+
+  setTimeout(() => {
+    positionToolbarIdeally(true);
+  }, 100);
+}
+
 // Auto-adjust floating panel width based on tools content
 (() => {
   const panel = document.querySelector('.floating-panel');
@@ -2955,8 +3686,8 @@ try{ initThemeAutoSync(()=>Settings.loadSettings()); }catch(e){}
     try{
       if (!toolsSection) { applyWidth(MIN_W); return; }
       // measure natural content width
-      const rect = toolsSection.getBoundingClientRect();
-      applyWidth(rect.width);
+      const w = Math.max(Number(toolsSection.scrollWidth || 0), Number(toolsSection.offsetWidth || 0));
+      applyWidth(w);
     }catch(e){}
   }
 

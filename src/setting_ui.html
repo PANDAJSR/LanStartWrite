@@ -1,7 +1,340 @@
 <!-- setting_ui.html: settings modal fragment -->
+<style>
+  @font-face{
+    font-family:'MiSans';
+    src:local('MiSans'),local('MiSans-Regular'),local('System Font');
+    font-weight:400;
+    font-display:swap;
+  }
+  @font-face{
+    font-family:'MiSans';
+    src:local('MiSans-Bold'),local('System Font Bold');
+    font-weight:700;
+    font-display:swap;
+  }
+
+  .settings-modal{
+    --ls-font-family:"MiSans",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    --ls-font-size-base:15px;
+    --ls-line-height:1.5;
+    --ls-ease:cubic-bezier(0.2,0,0,1);
+    --ls-theme-dur:300ms;
+    --ls-press-dur:150ms;
+    --ls-motion-dur:400ms;
+    --ls-motion-ease:cubic-bezier(0.2,0,0,1);
+    --ls-radius-sm:8px;
+    --ls-radius-md:16px;
+    --ls-radius-lg:24px;
+    --ls-sys-color-primary:#3478F6;
+    --ls-sys-color-on-primary:#fff;
+    --ls-sys-color-error:#FF453A;
+    --ls-shadow-sm:0 2px 8px rgba(0,0,0,0.04);
+    --ls-shadow-md:0 8px 24px rgba(0,0,0,0.06);
+    --ls-shadow-lg:0 16px 40px rgba(0,0,0,0.08);
+
+    --ls-sys-color-secondary:#535f70;
+    --ls-sys-color-surface:#F2F3F5;
+    --ls-sys-color-on-surface:#191919;
+    --ls-sys-color-background:#F2F3F5;
+    --ls-sys-color-outline:#E5E6EB;
+    --ls-sys-color-surface-variant:#FFFFFF;
+
+    --ls-card-bg:rgba(255,255,255,0.95);
+    --ls-glass-border:rgba(255,255,255,0.6);
+    --ls-btn-bg:rgba(255,255,255,0.8);
+    --ls-btn-fg:#191919;
+    --ls-btn-border:rgba(0,0,0,0.05);
+    --ls-btn-hover-bg:#FFFFFF;
+    --ls-btn-hover-shadow:0 4px 12px rgba(0,0,0,0.08);
+    --ls-btn-active-bg:#F0F0F0;
+    --ls-btn-active-scale:0.95;
+
+    --text-high:rgba(0,0,0,0.9);
+    --text-medium:rgba(0,0,0,0.6);
+    --text-disabled:rgba(0,0,0,0.3);
+  }
+
+  .theme-dark .settings-modal{
+    --ls-sys-color-surface:#0E0E10;
+    --ls-sys-color-on-surface:#F7F7F7;
+    --ls-sys-color-background:#0E0E10;
+    --ls-sys-color-outline:rgba(255,255,255,0.10);
+    --ls-sys-color-surface-variant:rgba(255,255,255,0.06);
+
+    --ls-card-bg:rgba(18,18,18,0.72);
+    --ls-glass-border:rgba(255,255,255,0.10);
+    --ls-btn-bg:rgba(255,255,255,0.08);
+    --ls-btn-fg:#F7F7F7;
+    --ls-btn-border:rgba(255,255,255,0.10);
+    --ls-btn-hover-bg:rgba(255,255,255,0.12);
+    --ls-btn-hover-shadow:0 4px 14px rgba(0,0,0,0.40);
+    --ls-btn-active-bg:rgba(255,255,255,0.16);
+
+    --text-high:rgba(255,255,255,0.92);
+    --text-medium:rgba(255,255,255,0.64);
+    --text-disabled:rgba(255,255,255,0.36);
+  }
+
+  .settings-modal{
+    font-family:var(--ls-font-family);
+    font-size:var(--ls-font-size-base);
+    line-height:var(--ls-line-height);
+    color:var(--text-high);
+  }
+
+  .settings-backdrop{
+    background:rgba(0,0,0,0.25);
+    backdrop-filter:blur(6px);
+    -webkit-backdrop-filter:blur(6px);
+  }
+
+  .settings-panel{
+    width:min(980px,calc(100vw - 32px));
+    height:min(720px,calc(100vh - 32px));
+    background:rgba(255,255,255,0.65);
+    backdrop-filter:blur(24px) saturate(1.2);
+    -webkit-backdrop-filter:blur(24px) saturate(1.2);
+    border:1px solid var(--ls-glass-border);
+    border-radius:var(--ls-radius-lg);
+    box-shadow:var(--ls-shadow-lg);
+    overflow:hidden;
+  }
+
+  .theme-dark .settings-panel{
+    background:rgba(18,18,18,0.55);
+  }
+
+  .settings-header{
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    padding:18px 18px 12px;
+  }
+
+  .settings-header h3{
+    margin:0;
+    font-size:18px;
+    font-weight:700;
+    letter-spacing:0.2px;
+  }
+
+  .settings-modal .tool-btn{
+    width:36px;
+    height:36px;
+    border-radius:var(--ls-radius-sm);
+    border:1px solid var(--ls-btn-border);
+    background:var(--ls-btn-bg);
+    color:var(--ls-btn-fg);
+    cursor:pointer;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    transition:transform 180ms var(--ls-ease),box-shadow 180ms var(--ls-ease),background-color 180ms var(--ls-ease);
+  }
+  .settings-modal .tool-btn:hover,
+  .settings-modal .tool-btn[data-force-hover="true"]{
+    background:var(--ls-btn-hover-bg);
+    box-shadow:var(--ls-btn-hover-shadow);
+    transform:translateY(-1px);
+  }
+  .settings-modal .tool-btn:active,
+  .settings-modal .tool-btn[data-force-active="true"]{
+    background:var(--ls-btn-active-bg);
+    transform:scale(var(--ls-btn-active-scale));
+  }
+
+  .settings-body{
+    height:calc(100% - 62px - 64px);
+    padding:0 12px 12px;
+  }
+
+  .settings-shell{
+    display:grid;
+    grid-template-columns:240px 1fr;
+    gap:8px;
+    height:100%;
+  }
+
+  .settings-sidebar{
+    background:rgba(255,255,255,0.4);
+    border:1px solid var(--ls-glass-border);
+    border-radius:var(--ls-radius-md);
+    padding:10px;
+    display:flex;
+    flex-direction:column;
+    gap:6px;
+    overflow:auto;
+  }
+  .theme-dark .settings-sidebar{
+    background:rgba(255,255,255,0.04);
+    border-color:rgba(255,255,255,0.08);
+  }
+
+  .settings-content{
+    background:var(--ls-sys-color-background);
+    border-radius:var(--ls-radius-md);
+    overflow:hidden;
+    border:1px solid var(--ls-sys-color-outline);
+  }
+
+  .settings-content-inner{
+    height:100%;
+    overflow:auto;
+    padding:18px;
+  }
+
+  .settings-tab{
+    display:flex;
+    align-items:center;
+    gap:10px;
+    width:100%;
+    padding:10px 12px;
+    border-radius:12px;
+    border:1px solid transparent;
+    background:transparent;
+    color:var(--text-medium);
+    cursor:pointer;
+    transition:background-color 180ms var(--ls-ease),color 180ms var(--ls-ease),transform 180ms var(--ls-ease);
+    text-align:left;
+  }
+  .settings-tab:hover{
+    background:rgba(52,120,246,0.10);
+    color:var(--text-high);
+  }
+  .settings-tab[aria-selected="true"], .settings-tab.active{
+    background:rgba(52,120,246,0.16);
+    color:var(--ls-sys-color-primary);
+    font-weight:700;
+  }
+  .settings-tab:active{
+    transform:scale(0.98);
+  }
+  .settings-tab svg{flex:0 0 auto;opacity:0.95}
+  .settings-tab-text{font-size:14px}
+
+  .settings-cards{display:flex;flex-direction:column;gap:14px}
+
+  .settings-card{
+    background:var(--ls-card-bg);
+    border:1px solid var(--ls-glass-border);
+    border-radius:var(--ls-radius-md);
+    box-shadow:var(--ls-shadow-md);
+    overflow:hidden;
+  }
+
+  .settings-card-title{
+    padding:16px 18px 0;
+    font-weight:700;
+    color:var(--text-high);
+    font-size:15px;
+  }
+
+  .settings-card-body{
+    padding:12px 18px 16px;
+    color:var(--text-medium);
+  }
+
+  .settings-divider{
+    height:1px;
+    background:var(--ls-sys-color-outline);
+    margin:12px 0;
+  }
+
+  .settings-row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+
+  .settings-modal .mode-btn{
+    padding:10px 16px;
+    border-radius:var(--ls-radius-sm);
+    border:1px solid var(--ls-btn-border);
+    background:var(--ls-btn-bg);
+    color:var(--ls-btn-fg);
+    cursor:pointer;
+    font-size:14px;
+    font-weight:600;
+    backdrop-filter:blur(10px);
+    -webkit-backdrop-filter:blur(10px);
+    transition:transform 180ms var(--ls-ease),box-shadow 180ms var(--ls-ease),background-color 180ms var(--ls-ease),border-color 180ms var(--ls-ease);
+    user-select:none;
+    -webkit-user-select:none;
+    touch-action:manipulation;
+  }
+  .settings-modal .mode-btn:hover,
+  .settings-modal .mode-btn[data-force-hover="true"]{
+    background:var(--ls-btn-hover-bg);
+    box-shadow:var(--ls-btn-hover-shadow);
+    transform:translateY(-1px);
+  }
+  .settings-modal .mode-btn:active,
+  .settings-modal .mode-btn[data-force-active="true"]{
+    background:var(--ls-btn-active-bg);
+    transform:scale(var(--ls-btn-active-scale));
+  }
+  .settings-modal .mode-btn:focus-visible{
+    outline:2px solid rgba(52,120,246,0.55);
+    outline-offset:2px;
+  }
+  .settings-modal .mode-btn-primary{
+    background:var(--ls-sys-color-primary);
+    border-color:transparent;
+    color:var(--ls-sys-color-on-primary);
+  }
+  .settings-modal .mode-btn-primary:hover,
+  .settings-modal .mode-btn-primary[data-force-hover="true"]{
+    background:color-mix(in srgb,var(--ls-sys-color-primary) 86%, #000);
+  }
+  .settings-modal .mode-btn-danger{
+    background:rgba(255,69,58,0.10);
+    border-color:rgba(255,69,58,0.24);
+    color:var(--ls-sys-color-error);
+  }
+  .settings-modal .mode-btn-danger:hover,
+  .settings-modal .mode-btn-danger[data-force-hover="true"]{
+    background:rgba(255,69,58,0.14);
+  }
+
+  .settings-control{display:flex;gap:10px;align-items:center;color:var(--text-high)}
+  .settings-field{display:flex;align-items:center;justify-content:space-between;gap:12px}
+  .settings-field-label{color:var(--text-medium);font-size:13px;font-weight:600}
+  .settings-hint{color:var(--text-medium);font-size:13px}
+  .settings-field select,
+  .settings-field input[type="text"],
+  .settings-field input[type="color"],
+  .settings-field input[type="range"]{
+    font:inherit;
+  }
+
+  .settings-footer{
+    height:64px;
+    padding:0 18px;
+    display:flex;
+    align-items:center;
+    justify-content:flex-end;
+    gap:12px;
+    background:rgba(255,255,255,0.35);
+    border-top:1px solid var(--ls-glass-border);
+  }
+  .theme-dark .settings-footer{
+    background:rgba(255,255,255,0.03);
+    border-top-color:rgba(255,255,255,0.08);
+  }
+
+  @media (max-width: 768px){
+    .settings-panel{width:calc(100vw - 16px);height:calc(100vh - 16px)}
+    .settings-shell{grid-template-columns:1fr;grid-template-rows:auto 1fr}
+    .settings-sidebar{flex-direction:row;gap:8px;overflow:auto}
+    .settings-tab{min-width:72px;justify-content:center}
+    .settings-tab-text{font-size:12px}
+    .settings-content-inner{padding:14px}
+  }
+
+  @media (max-width: 360px){
+    .settings-header{padding:14px 14px 10px}
+    .settings-content-inner{padding:12px}
+  }
+</style>
 <div id="settingsModal" class="settings-modal" role="dialog" aria-hidden="true">
   <div class="settings-backdrop"></div>
-  <div class="settings-panel settings-gnome" aria-modal="true" aria-label="设置">
+  <div class="settings-panel settings-gnome settings-hyperos" aria-modal="true" aria-label="设置">
     <div class="settings-header">
       <h3>设置</h3>
       <button id="closeSettings" class="tool-btn">✕</button>
@@ -28,6 +361,10 @@
           <button class="settings-tab" type="button" role="tab" id="settingsTab-toolbar" data-tab="toolbar" aria-controls="settingsPanel-toolbar" aria-selected="false" tabindex="-1">
             <svg class="md-icon" width="24" height="24" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M4 5.75A1.75 1.75 0 0 1 5.75 4h12.5A1.75 1.75 0 0 1 20 5.75v2.5A1.75 1.75 0 0 1 18.25 10H5.75A1.75 1.75 0 0 1 4 8.25Zm0 8.5A1.75 1.75 0 0 1 5.75 12h7.5A1.75 1.75 0 0 1 15 13.75v4.5A1.75 1.75 0 0 1 13.25 20h-7.5A1.75 1.75 0 0 1 4 18.25Z"/></svg>
             <span class="settings-tab-text">工具栏控件</span>
+          </button>
+          <button class="settings-tab" type="button" role="tab" id="settingsTab-history" data-tab="history" aria-controls="settingsPanel-history" aria-selected="false" tabindex="-1">
+            <svg class="md-icon" width="24" height="24" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 8a1 1 0 0 1 1 1v2.585l1.707 1.707a1 1 0 0 1-1.414 1.414l-2-2A1 1 0 0 1 11 12V9a1 1 0 0 1 1-1z"/><path fill="currentColor" d="M12 2a10 10 0 1 1-7.07 2.93l-1.22-1.22a1 1 0 1 1 1.41-1.41l2.63 2.63A1 1 0 0 1 7.05 6.3A8 8 0 1 0 12 4a1 1 0 1 1 0-2z"/></svg>
+            <span class="settings-tab-text">历史修改</span>
           </button>
         </div>
         <div class="settings-content" aria-live="polite" aria-busy="false">
@@ -281,13 +618,32 @@
                 </section>
               </div>
             </div>
+            <div class="settings-page" id="settingsPanel-history" data-tab="history" role="tabpanel" aria-labelledby="settingsTab-history" hidden>
+              <div class="settings-cards">
+                <section class="settings-card" aria-label="历史修改">
+                  <div class="settings-card-title">历史修改</div>
+                  <div class="settings-card-body">
+                    <div class="ls-history-toolbar">
+                      <button id="historySelectAllBtn" class="mode-btn" type="button">全选</button>
+                      <button id="historyUndoSelectedBtn" class="mode-btn" type="button">撤回选中</button>
+                      <button id="historyClearBtn" class="mode-btn mode-btn-danger" type="button">清空</button>
+                    </div>
+                    <div id="settingsHistoryMeta" class="ls-history-meta" aria-live="polite"></div>
+                    <div id="settingsHistoryTimeline" class="ls-history-timeline" role="list"></div>
+                    <div class="ls-history-footer">
+                      <button id="historyLoadMoreBtn" class="mode-btn" type="button">加载更多</button>
+                    </div>
+                  </div>
+                </section>
+              </div>
+            </div>
           </div>
         </div>
       </div>
     </div>
     <div class="settings-footer">
-      <button id="resetSettings">重置为默认</button>
-      <button id="saveSettings">保存</button>
+      <button id="resetSettings" class="mode-btn" type="button">重置为默认</button>
+      <button id="saveSettings" class="mode-btn mode-btn-primary" type="button">保存</button>
     </div>
   </div>
 </div>

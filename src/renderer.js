@@ -89,6 +89,7 @@ function updateCanvasSize(){
 let viewScale = 1;
 let viewOffsetX = 0;
 let viewOffsetY = 0;
+let viewRotationDeg = 0;
 
 // allow enabling/disabling pointer input for drawing (selection mode will disable)
 let inputEnabled = true;
@@ -155,18 +156,28 @@ Message.on(EVENTS.SETTINGS_CHANGED, (payload)=>{
 
 function applyViewTransform(){
   canvas.style.transformOrigin = '0 0';
-  canvas.style.transform = `translate(${viewOffsetX}px, ${viewOffsetY}px) scale(${viewScale})`;
+  const rot = Number(viewRotationDeg) || 0;
+  canvas.style.transform = `translate(${viewOffsetX}px, ${viewOffsetY}px) scale(${viewScale}) rotate(${rot}deg)`;
 }
 
 export function setViewTransform(scale, offsetX, offsetY){
-  viewScale = Math.max(0.1, Math.min(3.0, scale));
+  viewScale = Math.max(0.1, Math.min(10.0, scale));
   viewOffsetX = Number(offsetX) || 0;
   viewOffsetY = Number(offsetY) || 0;
-  try{ _documents[_activeDocKey].view = { scale: viewScale, offsetX: viewOffsetX, offsetY: viewOffsetY }; }catch(e){}
+  try{ _documents[_activeDocKey].view = { scale: viewScale, offsetX: viewOffsetX, offsetY: viewOffsetY, rotation: Number(viewRotationDeg) || 0 }; }catch(e){}
   applyViewTransform();
 }
 
-export function getViewTransform(){ return { scale: viewScale, offsetX: viewOffsetX, offsetY: viewOffsetY }; }
+export function getViewTransform(){ return { scale: viewScale, offsetX: viewOffsetX, offsetY: viewOffsetY, rotation: Number(viewRotationDeg) || 0 }; }
+
+export function setViewRotation(deg){
+  viewRotationDeg = Number(deg) || 0;
+  try{
+    const v = _documents[_activeDocKey].view || {};
+    _documents[_activeDocKey].view = { scale: Number(v.scale) || viewScale, offsetX: Number(v.offsetX) || viewOffsetX, offsetY: Number(v.offsetY) || viewOffsetY, rotation: Number(viewRotationDeg) || 0 };
+  }catch(e){}
+  applyViewTransform();
+}
 
 function screenToCanvas(clientX, clientY){
   const rect = canvas.getBoundingClientRect();
@@ -772,7 +783,7 @@ export function getCubenoteState(){
     _documents[_activeDocKey].erasing = erasing;
     _documents[_activeDocKey].eraserMode = eraserMode;
     _documents[_activeDocKey].toolMode = toolMode;
-    _documents[_activeDocKey].view = { scale: viewScale, offsetX: viewOffsetX, offsetY: viewOffsetY };
+    _documents[_activeDocKey].view = { scale: viewScale, offsetX: viewOffsetX, offsetY: viewOffsetY, rotation: Number(viewRotationDeg) || 0 };
   }catch(e){}
   return {
     format: 'cubenote-state',
@@ -819,8 +830,8 @@ export function applyCubenoteState(state, opts){
     _documents.whiteboard.eraserMode = String(wb.eraserMode || 'pixel');
     _documents.whiteboard.toolMode = String(wb.toolMode || 'brush');
     _documents.whiteboard.view = wb.view && typeof wb.view === 'object'
-      ? { scale: Number(wb.view.scale) || 1, offsetX: Number(wb.view.offsetX) || 0, offsetY: Number(wb.view.offsetY) || 0 }
-      : { scale: 1, offsetX: 0, offsetY: 0 };
+      ? { scale: Number(wb.view.scale) || 1, offsetX: Number(wb.view.offsetX) || 0, offsetY: Number(wb.view.offsetY) || 0, rotation: Number(wb.view.rotation) || 0 }
+      : { scale: 1, offsetX: 0, offsetY: 0, rotation: 0 };
 
     _documents.annotation.ops = Array.isArray(an.ops) ? an.ops : [];
     _documents.annotation.history = Array.isArray(an.history) ? an.history : [];
@@ -832,8 +843,8 @@ export function applyCubenoteState(state, opts){
     _documents.annotation.eraserMode = String(an.eraserMode || 'pixel');
     _documents.annotation.toolMode = String(an.toolMode || 'brush');
     _documents.annotation.view = an.view && typeof an.view === 'object'
-      ? { scale: Number(an.view.scale) || 1, offsetX: Number(an.view.offsetX) || 0, offsetY: Number(an.view.offsetY) || 0 }
-      : { scale: 1, offsetX: 0, offsetY: 0 };
+      ? { scale: Number(an.view.scale) || 1, offsetX: Number(an.view.offsetX) || 0, offsetY: Number(an.view.offsetY) || 0, rotation: Number(an.view.rotation) || 0 }
+      : { scale: 1, offsetX: 0, offsetY: 0, rotation: 0 };
 
     const pdf = JSON.parse(JSON.stringify(docs.pdf));
     _documents.pdf.ops = Array.isArray(pdf.ops) ? pdf.ops : [];
@@ -846,8 +857,8 @@ export function applyCubenoteState(state, opts){
     _documents.pdf.eraserMode = String(pdf.eraserMode || 'pixel');
     _documents.pdf.toolMode = String(pdf.toolMode || 'brush');
     _documents.pdf.view = pdf.view && typeof pdf.view === 'object'
-      ? { scale: Number(pdf.view.scale) || 1, offsetX: Number(pdf.view.offsetX) || 0, offsetY: Number(pdf.view.offsetY) || 0 }
-      : { scale: 1, offsetX: 0, offsetY: 0 };
+      ? { scale: Number(pdf.view.scale) || 1, offsetX: Number(pdf.view.offsetX) || 0, offsetY: Number(pdf.view.offsetY) || 0, rotation: Number(pdf.view.rotation) || 0 }
+      : { scale: 1, offsetX: 0, offsetY: 0, rotation: 0 };
 
     _activeDocKey = (s.activeDocKey === 'pdf') ? 'pdf' : ((s.activeDocKey === 'annotation') ? 'annotation' : 'whiteboard');
     _ensureDocInitialized('whiteboard');
@@ -1338,6 +1349,7 @@ function _loadDocState(key){
   viewScale = (doc.view && doc.view.scale) || 1;
   viewOffsetX = (doc.view && doc.view.offsetX) || 0;
   viewOffsetY = (doc.view && doc.view.offsetY) || 0;
+  viewRotationDeg = (doc.view && doc.view.rotation) || 0;
   applyViewTransform();
 }
 
@@ -1405,7 +1417,7 @@ export function setCanvasMode(mode){
     _documents[_activeDocKey].erasing = erasing;
     _documents[_activeDocKey].eraserMode = eraserMode;
     _documents[_activeDocKey].toolMode = toolMode;
-    _documents[_activeDocKey].view = { scale: viewScale, offsetX: viewOffsetX, offsetY: viewOffsetY };
+    _documents[_activeDocKey].view = { scale: viewScale, offsetX: viewOffsetX, offsetY: viewOffsetY, rotation: Number(viewRotationDeg) || 0 };
   }catch(e){}
   _activeDocKey = next;
   _ensureDocInitialized(_activeDocKey);

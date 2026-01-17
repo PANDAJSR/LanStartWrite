@@ -44,6 +44,7 @@ export const EVENTS = {
   REQUEST_FILE_WRITE: 'io:request-file-write',
   /** 设置已变更（payload 为合并后的完整设置对象） */
   SETTINGS_CHANGED: 'settings:changed',
+  SETTINGS_HISTORY_CHANGED: 'settings-history:changed',
   /** 应用模式切换（白板 / 批注） */
   APP_MODE_CHANGED: 'app:mode-changed',
   /** 撤销/重做可用状态变更（绘图引擎 → UI） */

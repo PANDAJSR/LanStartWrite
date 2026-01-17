@@ -1,6 +1,6 @@
 import MiniEventEmitter from './mini_eventemitter.js';
 import Message, { EVENTS } from './message.js';
-import ButtonBox from './button_box.js';
+import ButtonBox from './tool_bar/button_box.js';
 import Settings from './setting.js';
 
 const _hostBus = new MiniEventEmitter();
@@ -86,7 +86,17 @@ function _ensureOverlay() {
 function _openOverlay(html) {
   const root = _ensureOverlay();
   const panel = root.querySelector('.mod-panel');
-  if (panel) panel.innerHTML = String(html || '');
+  if (panel) {
+    panel.innerHTML = String(html || '');
+    // Execute scripts
+    const scripts = panel.querySelectorAll('script');
+    scripts.forEach(oldScript => {
+      const newScript = document.createElement('script');
+      Array.from(oldScript.attributes).forEach(attr => newScript.setAttribute(attr.name, attr.value));
+      newScript.textContent = oldScript.textContent;
+      oldScript.parentNode.replaceChild(newScript, oldScript);
+    });
+  }
   root.classList.add('open');
 }
 
@@ -445,7 +455,11 @@ async function _spawnWorker(pluginId, manifest, entryPath, meta) {
       registerMenuButton: (def)=>{ self.postMessage({ type:'register-menu-button', def }); },
       showOverlay: (def)=>{ self.postMessage({ type:'show-overlay', def }); },
       closeOverlay: ()=>{ self.postMessage({ type:'close-overlay' }); },
-      inject: (def)=> new Promise((resolve)=>{ const reqId=_rid(); _req.set(reqId, resolve); self.postMessage({ type:'ui-inject', reqId, def }); })
+      inject: (def)=> new Promise((resolve)=>{ const reqId=_rid(); _req.set(reqId, resolve); self.postMessage({ type:'ui-inject', reqId, def }); }),
+      devtools: {
+        eval: (code) => new Promise((resolve) => { const reqId=_rid(); _req.set(reqId, resolve); self.postMessage({ type:'devtools-eval', reqId, code }); }),
+        inspect: (selector) => self.postMessage({ type:'devtools-inspect', selector })
+      }
     };
     self.Mod = Mod;
     self.onmessage = (ev)=>{
@@ -459,6 +473,7 @@ async function _spawnWorker(pluginId, manifest, entryPath, meta) {
       if (m.type === 'ui-action') _evt.emit('ui', m.data || {});
       if (m.type === 'ui-inject-applied') _evt.emit('inject', m.data || {});
       if (m.type === 'ui-inject-res') { const fn=_req.get(String(m.reqId||'')); if(fn){ _req.delete(String(m.reqId||'')); try{ fn(m.data||{}); }catch(e){} } }
+      if (m.type === 'devtools-eval-res') { const fn=_req.get(String(m.reqId||'')); if(fn){ _req.delete(String(m.reqId||'')); try{ fn(m.data||{}); }catch(e){} } }
     };
     (async()=>{ await import(${JSON.stringify(moduleUrl)}); self.postMessage({ type:'ready' }); })().catch((e)=>{ self.postMessage({ type:'error', error: String(e && e.message || e) }); });
   `;
@@ -652,6 +667,43 @@ async function _spawnWorker(pluginId, manifest, entryPath, meta) {
       if (unsigned) _audit('plugin:activity', { pluginId, action: 'ui-inject', selector: rec.selector });
       return;
     }
+    if (msg.type === 'devtools-eval') {
+      if (!_hasPerm(manifest, 'sys:devtools')) {
+        _sendToPlugin(pluginId, { type: 'devtools-eval-res', reqId: msg.reqId, data: { success: false, error: 'permission denied' } });
+        return;
+      }
+      try {
+        // Evaluate in main thread (renderer context)
+        const code = String(msg.code || '');
+        // We use indirect eval to run in global scope, or new Function
+        // But since we are in module, new Function is safer/cleaner?
+        // Let's use new Function to avoid local scope pollution
+        const result = (new Function('Mod', code))(Mod);
+        // If result is promise, wait
+        Promise.resolve(result).then(r => {
+           _sendToPlugin(pluginId, { type: 'devtools-eval-res', reqId: msg.reqId, data: { success: true, result: r } });
+        }).catch(e => {
+           _sendToPlugin(pluginId, { type: 'devtools-eval-res', reqId: msg.reqId, data: { success: false, error: String(e && e.message || e) } });
+        });
+      } catch (e) {
+        _sendToPlugin(pluginId, { type: 'devtools-eval-res', reqId: msg.reqId, data: { success: false, error: String(e && e.message || e) } });
+      }
+      return;
+    }
+    if (msg.type === 'devtools-inspect') {
+       if (!_hasPerm(manifest, 'sys:devtools')) return;
+       const selector = String(msg.selector || '');
+       if (selector) {
+         const el = document.querySelector(selector);
+         if (el) {
+           console.log('[DevTools] Inspected:', el);
+           // Maybe highlight it?
+           const rect = el.getBoundingClientRect();
+           // Draw a highlight box (implementation skipped for brevity, just log)
+         }
+       }
+       return;
+    }
   };
 
   worker.onmessage = _onWorkerMessage;
@@ -743,6 +795,14 @@ export const Mod = {
       if (kind === 'html') _openOverlay(String(def.ui.html || ''));
     }
     return { success: true };
+  },
+  eval: async (pluginId, code) => {
+    // Check permission - must be called from worker logic that has sys:devtools
+    // But since this Mod object runs in renderer, we can't easily check manifest here without lookup.
+    // However, the worker can only call Mod.eval if we expose it in the worker shim.
+    // The worker shim currently does NOT expose eval. We need to add it there.
+    // And here we need to implement the handler for the message from worker.
+    return { success: false, error: 'not implemented in renderer Mod API directly' };
   },
   closeMode: () => {
     if (_activeModeId) {

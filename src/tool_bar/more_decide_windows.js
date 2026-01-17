@@ -12,7 +12,7 @@
  * - 通过 Message 总线广播 SUBMENU_OPEN / SUBMENU_CLOSE / SUBMENU_PIN / SUBMENU_MOVE
  * - 监听 TOOLBAR_MOVE 以在拖拽工具栏时实时重排未固定的 submenu
  */
-import Message, { EVENTS } from './message.js';
+import Message, { EVENTS } from '../message.js';
 
 function _menuDebug(){
   try{
@@ -28,6 +28,60 @@ function _openerForMenu(menu){
   if (id === 'eraserMenu') return document.getElementById('eraserTool');
   if (id === 'moreMenu') return document.getElementById('moreTool');
   return null;
+}
+
+function _applySubmenuStagger(menu){
+  if (!menu) return;
+  let idx = 0;
+  const list = menu.querySelectorAll('.more-title,.submenu-quick-grid > *,.submenu-body > *');
+  for (let i = 0; i < list.length; i++) {
+    const el = list[i];
+    if (!el || !el.dataset) continue;
+    el.dataset.lsSubmenuItem = '1';
+    try{ el.style.setProperty('--ls-item-index', String(idx)); }catch(e){}
+    idx++;
+  }
+}
+
+function _clearSubmenuAnim(menu){
+  if (!menu) return;
+  if (menu._lsOpenRaf) {
+    try{ cancelAnimationFrame(menu._lsOpenRaf); }catch(e){}
+    menu._lsOpenRaf = null;
+  }
+  if (menu._lsCloseTimer) {
+    try{ clearTimeout(menu._lsCloseTimer); }catch(e){}
+    menu._lsCloseTimer = null;
+  }
+  if (menu._lsCloseOnEnd) {
+    try{ menu.removeEventListener('transitionend', menu._lsCloseOnEnd); }catch(e){}
+    menu._lsCloseOnEnd = null;
+  }
+}
+
+function _closeSubmenuAnimated(menu, openerEl){
+  if (!menu) return;
+  _clearSubmenuAnim(menu);
+  try{ menu.dataset.anim = 'closing'; }catch(e){}
+  menu.classList.remove('open');
+  menu.setAttribute('aria-hidden','true');
+  if (openerEl) openerEl.classList.remove('active');
+
+  const done = ()=>{
+    _clearSubmenuAnim(menu);
+    try{ delete menu.dataset.anim; }catch(e){ try{ menu.dataset.anim = ''; }catch(e2){} }
+    cleanupMenuStyles(menu);
+  };
+
+  const onEnd = (e)=>{
+    if (!e || e.target !== menu) return;
+    if (e.propertyName && e.propertyName !== 'opacity' && e.propertyName !== 'transform') return;
+    done();
+  };
+
+  menu._lsCloseOnEnd = onEnd;
+  menu.addEventListener('transitionend', onEnd);
+  menu._lsCloseTimer = setTimeout(done, 380);
 }
 
 /**
@@ -56,6 +110,9 @@ export function cleanupMenuStyles(menu){
   menu.style.flexDirection = '';
   menu.style.flexWrap = '';
   menu.style.maxWidth = '';
+  menu.style.transformOrigin = '';
+  menu.style.removeProperty('--ls-origin-x');
+  menu.style.zIndex = '';
 }
 
 /**
@@ -77,9 +134,9 @@ export function closeAllSubmenus(){
    *    - 若 pinned === 'true'：保持打开（固定菜单应持久存在）
    * 3. 清理三个按钮的 active 状态
    */
-  if (colorMenu && colorMenu.classList.contains('open') && colorMenu.dataset.pinned!=='true') { cleanupMenuStyles(colorMenu); colorMenu.classList.remove('open'); colorMenu.setAttribute('aria-hidden','true'); _menuDebug('submenu', 'closeAll', colorMenu.id); try{ Message.emit(EVENTS.SUBMENU_CLOSE, { id: colorMenu.id, pinned: false }); }catch(e){} }
-  if (eraserMenu && eraserMenu.classList.contains('open') && eraserMenu.dataset.pinned!=='true') { cleanupMenuStyles(eraserMenu); eraserMenu.classList.remove('open'); eraserMenu.setAttribute('aria-hidden','true'); _menuDebug('submenu', 'closeAll', eraserMenu.id); try{ Message.emit(EVENTS.SUBMENU_CLOSE, { id: eraserMenu.id, pinned: false }); }catch(e){} }
-  if (moreMenu && moreMenu.classList.contains('open') && moreMenu.dataset.pinned!=='true') { cleanupMenuStyles(moreMenu); moreMenu.classList.remove('open'); moreMenu.setAttribute('aria-hidden','true'); _menuDebug('submenu', 'closeAll', moreMenu.id); try{ Message.emit(EVENTS.SUBMENU_CLOSE, { id: moreMenu.id, pinned: false }); }catch(e){} }
+  if (colorMenu && colorMenu.classList.contains('open') && colorMenu.dataset.pinned!=='true') { _closeSubmenuAnimated(colorMenu, colorTool); _menuDebug('submenu', 'closeAll', colorMenu.id); try{ Message.emit(EVENTS.SUBMENU_CLOSE, { id: colorMenu.id, pinned: false }); }catch(e){} }
+  if (eraserMenu && eraserMenu.classList.contains('open') && eraserMenu.dataset.pinned!=='true') { _closeSubmenuAnimated(eraserMenu, eraserTool); _menuDebug('submenu', 'closeAll', eraserMenu.id); try{ Message.emit(EVENTS.SUBMENU_CLOSE, { id: eraserMenu.id, pinned: false }); }catch(e){} }
+  if (moreMenu && moreMenu.classList.contains('open') && moreMenu.dataset.pinned!=='true') { _closeSubmenuAnimated(moreMenu, moreTool); _menuDebug('submenu', 'closeAll', moreMenu.id); try{ Message.emit(EVENTS.SUBMENU_CLOSE, { id: moreMenu.id, pinned: false }); }catch(e){} }
   if (colorTool) colorTool.classList.remove('active');
   if (eraserTool) eraserTool.classList.remove('active');
   if (moreTool) moreTool.classList.remove('active');
@@ -114,11 +171,9 @@ export function positionMenu(menu, openerEl, pinned){
 
   /** 临时显示用于测量（避免 display:none 时拿到 0 尺寸） */
   menu.style.visibility = 'hidden';
-  menu.classList.add('open');
-  menu.setAttribute('aria-hidden','false');
   const mRect = menu.getBoundingClientRect();
   const menuHeight = mRect.height;
-  const GAP = 8;
+  const GAP = 12;
 
   /** 未固定：absolute 相对 panel；固定：fixed 相对视口/画布 */
   if (!pinned) {
@@ -152,18 +207,29 @@ export function positionMenu(menu, openerEl, pinned){
       }
     }
     
-    let left = (parentRect.width - mRect.width) / 2;
-    if (left < 6) left = 6;
+    // Horizontal logic - Center on Opener
+    const openerCenter = openerRect.left + openerRect.width / 2;
+    // Calculate left in Viewport coords
+    let leftInViewport = openerCenter - mRect.width / 2;
     
-    try{
-      const maxLeft = Math.max(6, parentRect.width - mRect.width - 6);
-      left = Math.min(Math.max(left, 6), maxLeft);
-    }catch(e){}
+    // Constraint: Keep within viewport (with margin)
+    const margin = 12;
+    if (leftInViewport < canvasRect.left + margin) leftInViewport = canvasRect.left + margin;
+    if (leftInViewport + mRect.width > canvasRect.right - margin) leftInViewport = canvasRect.right - margin - mRect.width;
+
+    // Convert to relative to Panel
+    let left = leftInViewport - parentRect.left;
     
     menu.style.left = left + 'px';
     menu.style.top = top + 'px';
     menu.style.zIndex = 2500;
     menu.dataset.placement = isAbove ? 'above' : 'below';
+
+    // Set transform origin to align with opener center
+    const originX = openerCenter - leftInViewport;
+    const originY = isAbove ? 'bottom' : 'top';
+    menu.style.transformOrigin = `${originX}px ${originY}`;
+
   } else {
     menu.style.position = 'fixed';
     
@@ -191,13 +257,20 @@ export function positionMenu(menu, openerEl, pinned){
       }
     }
     
-    let left = openerRect.left + (openerRect.width - mRect.width) / 2;
-    if (left < canvasRect.left + 6) left = canvasRect.left + 6;
-    if (left + mRect.width > canvasRect.right - 6) left = Math.max(canvasRect.right - mRect.width - 6, canvasRect.left + 6);
+    const openerCenter = openerRect.left + openerRect.width / 2;
+    let left = openerCenter - mRect.width / 2;
+    const margin = 12;
+    if (left < canvasRect.left + margin) left = canvasRect.left + margin;
+    if (left + mRect.width > canvasRect.right - margin) left = Math.max(canvasRect.right - margin - mRect.width, canvasRect.left + margin);
     
     menu.style.left = left + 'px';
     menu.style.top = top + 'px';
     menu.dataset.placement = isAbove ? 'above' : 'below';
+
+    // Set transform origin
+    const originX = openerCenter - left;
+    const originY = isAbove ? 'bottom' : 'top';
+    menu.style.transformOrigin = `${originX}px ${originY}`;
   }
 
   menu.style.visibility = '';
@@ -212,12 +285,9 @@ export function positionMenu(menu, openerEl, pinned){
 export function showSubmenu(menu, openerEl){
   if (!menu || !openerEl) return;
   /** toggle：如果已打开则直接关闭 */
-  if (menu.classList.contains('open')){
+  if (menu.classList.contains('open') || (menu.dataset && menu.dataset.anim === 'opening')){
     const pinned = menu.dataset && menu.dataset.pinned === 'true';
-    cleanupMenuStyles(menu);
-    menu.classList.remove('open');
-    menu.setAttribute('aria-hidden','true');
-    openerEl.classList.remove('active');
+    _closeSubmenuAnimated(menu, openerEl);
     _menuDebug('submenu', 'toggle-close', menu.id, { pinned: !!pinned });
     try{ Message.emit(EVENTS.SUBMENU_CLOSE, { id: menu.id, pinned: !!pinned }); }catch(e){}
     return;
@@ -227,10 +297,17 @@ export function showSubmenu(menu, openerEl){
   closeAllSubmenus();
 
   const pinned = menu.dataset && menu.dataset.pinned === 'true';
+  _applySubmenuStagger(menu);
+  _clearSubmenuAnim(menu);
+  try{ menu.dataset.anim = 'opening'; }catch(e){}
   menu.classList.add('open');
   menu.setAttribute('aria-hidden','false');
   positionMenu(menu, openerEl, pinned);
   openerEl.classList.add('active');
+  menu._lsOpenRaf = requestAnimationFrame(()=>{
+    menu._lsOpenRaf = null;
+    try{ delete menu.dataset.anim; }catch(e){ try{ menu.dataset.anim = ''; }catch(e2){} }
+  });
   _menuDebug('submenu', 'open', menu.id, { pinned: !!pinned });
   /** 通知外部：子菜单已打开 */
   try{ Message.emit(EVENTS.SUBMENU_OPEN, { id: menu.id, pinned: !!pinned }); }catch(e){}
@@ -459,10 +536,11 @@ function smartRepositionMenu(menu, openerEl){
   if (!panelEl) return;
   
   const parentRect = panelEl.getBoundingClientRect();
+  const openerRect = openerEl.getBoundingClientRect();
   const panelHeight = panelEl.offsetHeight || 50;
   const mRect = menu.getBoundingClientRect();
   const menuHeight = mRect.height;
-  const GAP = 8;
+  const GAP = 12;
   
   const panelTopInCanvas = parentRect.top - canvasRect.top;
   const panelBottomInCanvas = canvasRect.bottom - parentRect.bottom;
@@ -492,10 +570,29 @@ function smartRepositionMenu(menu, openerEl){
     }
   }
   
+  // Horizontal logic (Center on Opener + Clamp)
+  const openerCenter = openerRect.left + openerRect.width / 2;
+  let leftInViewport = openerCenter - mRect.width / 2;
+  
+  const margin = 12;
+  if (leftInViewport < canvasRect.left + margin) leftInViewport = canvasRect.left + margin;
+  if (leftInViewport + mRect.width > canvasRect.right - margin) leftInViewport = canvasRect.right - margin - mRect.width;
+
+  let newLeft = leftInViewport - parentRect.left;
+  
   const currentTop = parseFloat(menu.style.top) || 0;
-  if (Math.abs(currentTop - newTop) > 0.5) {
+  const currentLeft = parseFloat(menu.style.left) || 0;
+
+  if (Math.abs(currentTop - newTop) > 0.5 || Math.abs(currentLeft - newLeft) > 0.5) {
     menu.style.top = newTop + 'px';
+    menu.style.left = newLeft + 'px';
     menu.dataset.placement = newPlacement;
+
+    // Update transform origin
+    const originX = openerCenter - leftInViewport;
+    const originY = newPlacement === 'above' ? 'bottom' : 'top';
+    menu.style.transformOrigin = `${originX}px ${originY}`;
+    menu.style.setProperty('--ls-origin-x', `${originX}px`);
   }
 }
 
@@ -503,10 +600,9 @@ function smartRepositionMenu(menu, openerEl){
  * 监听 TOOLBAR_MOVE：以 16ms 节流重排，降低 reflow 压力并保持跟手。
  */
 Message.on(EVENTS.TOOLBAR_MOVE, ()=>{
-  if (!smartRepositionOpenSubmenus._timeout) {
-    smartRepositionOpenSubmenus._timeout = setTimeout(()=>{
-      smartRepositionOpenSubmenus._timeout = null;
-      smartRepositionOpenSubmenus();
-    }, 16);
-  }
+  if (smartRepositionOpenSubmenus._raf) return;
+  smartRepositionOpenSubmenus._raf = requestAnimationFrame(()=>{
+    smartRepositionOpenSubmenus._raf = null;
+    smartRepositionOpenSubmenus();
+  });
 });
