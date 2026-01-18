@@ -26,6 +26,12 @@
         --ls-radius-lg: 18px;
         --accent: var(--ls-sys-color-primary);
 
+        /* Animation & Physics */
+        --ls-submenu-dur: 300ms;
+        --ls-submenu-stagger: 30ms;
+        --ls-hyper-ease: cubic-bezier(0.34, 1.56, 0.64, 1); /* Elastic / Spring-like */
+        --ls-smooth-ease: cubic-bezier(0.25, 0.1, 0.25, 1.0);
+
         --ls-mica-strength: 0.60;
         --ls-mica-blur: 14.40px;
         --ls-mica-feather: 8px;
@@ -300,17 +306,16 @@
         color:#e53935;
       }
       .submenu{
-        --ls-hyper-ease:cubic-bezier(0.2, 0, 0, 1);
-        --ls-submenu-dur:300ms;
-        --ls-submenu-stagger:18ms;
         --ls-submenu-gap: 12px;
         position:absolute;
         right:0;
         top:48px;
-        background:rgba(255,255,255,0.97);
+        background:rgba(255,255,255,0.92);
+        backdrop-filter: blur(20px);
+        -webkit-backdrop-filter: blur(20px);
         padding:12px;
         border-radius:min(var(--ls-radius-lg), calc(var(--ls-radius-sm) * 1.25));
-        box-shadow:0 8px 22px rgba(0,0,0,0.12);
+        box-shadow:0 12px 32px rgba(0,0,0,0.16), 0 4px 12px rgba(0,0,0,0.08);
         display:flex;
         z-index:2500;
         width:min(240px,calc(100vw - 40px));
@@ -323,9 +328,16 @@
         pointer-events:none;
         transform:translate3d(0,0,0) scale(0.96);
         transform-origin:center bottom;
-        will-change:transform,opacity,filter;
-        transition:opacity var(--ls-submenu-dur) var(--ls-hyper-ease),transform var(--ls-submenu-dur) var(--ls-hyper-ease),filter var(--ls-submenu-dur) var(--ls-hyper-ease);
+        will-change:transform,opacity,filter,top,left;
+        transition:opacity var(--ls-submenu-dur) var(--ls-hyper-ease),
+                   transform var(--ls-submenu-dur) var(--ls-hyper-ease),
+                   filter var(--ls-submenu-dur) var(--ls-hyper-ease),
+                   top 300ms var(--ls-hyper-ease),
+                   left 300ms var(--ls-hyper-ease);
         font-family: inherit;
+      }
+      .submenu.no-pos-transition {
+        transition-property: opacity, transform, filter !important;
       }
       /* Hot area extension & Visual guide line */
       .submenu::before {

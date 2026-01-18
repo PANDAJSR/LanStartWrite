@@ -166,6 +166,9 @@ export function closeAllSubmenus(){
  */
 export function positionMenu(menu, openerEl, pinned){
   if (!menu || !openerEl) return;
+  // Disable position transition during initial placement to avoid flying effect
+  menu.classList.add('no-pos-transition');
+
   const canvasRect = getCanvasRect();
   const openerRect = openerEl.getBoundingClientRect();
 
@@ -274,6 +277,9 @@ export function positionMenu(menu, openerEl, pinned){
   }
 
   menu.style.visibility = '';
+  // Force reflow and restore transition
+  menu.offsetHeight;
+  menu.classList.remove('no-pos-transition');
 }
 
 /**
@@ -341,6 +347,7 @@ export function initPinHandlers(){
       menu.dataset.pinned = wasPinned ? 'false' : 'true';
       btn.classList.toggle('pinned', !wasPinned);
       if (menu.classList.contains('open')){
+        menu.classList.add('no-pos-transition'); // Disable transition
         if (!wasPinned) {
           menu.style.position = 'fixed';
           menu.style.left = mRect.left + 'px';
@@ -358,6 +365,8 @@ export function initPinHandlers(){
           if (opener) positionMenu(menu, opener, false);
           try{ Message.emit(EVENTS.SUBMENU_PIN, { id: menu.id, pinned: false }); }catch(e){}
         }
+        menu.offsetHeight; // Force reflow
+        menu.classList.remove('no-pos-transition'); // Restore
       }
     };
 

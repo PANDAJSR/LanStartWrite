@@ -7,7 +7,7 @@
   "files": [
     "src/**/*",
     "mod/**/*",
-    "fluent_icon/**/*",
+    "flent_icon/**/*",
     "iconpack/**/*",
     "package.json"
   ],

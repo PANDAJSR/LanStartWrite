@@ -9,17 +9,20 @@
     "inkcanvas-with-electron-for-write": {
       "enabled": false
     },
-    "ink-enhancer": {
-      "enabled": false
-    },
-    "inkcanvas-comprehensive": {
-      "enabled": false
+    "developer-tools": {
+      "enabled": false,
+      "version": "1.0.0",
+      "installedAt": 1768714060982,
+      "signature": {
+        "verified": false,
+        "reason": "unsigned",
+        "at": 1768714060982
+      }
     }
   },
   "order": [
-    "ink-enhancer",
     "demo.plugin",
-    "inkcanvas-comprehensive",
-    "inkcanvas-with-electron-for-write"
+    "inkcanvas-with-electron-for-write",
+    "developer-tools"
   ]
 }

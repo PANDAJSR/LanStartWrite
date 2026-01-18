@@ -1,0 +1,44 @@
+{
+  "schemaVersion": 1,
+  "id": "developer-tools",
+  "name": "开发者工具",
+  "version": "1.0.0",
+  "author": "LanStart",
+  "type": "feature",
+  "description": "开发者工具：提供应用界面与控件调用功能，支持Fluent风格UI界面",
+  "permissions": [
+    "ui:toolbar",
+    "ui:mode",
+    "ui:overlay",
+    "bus:cross",
+    "app:control",
+    "window:manage"
+  ],
+  "dependencies": [],
+  "resources": [
+    {
+      "path": "control-api.js",
+      "size": 2338,
+      "sha256": "05068995dbc7f756fb0e4eba177be82b8509912d3f26fe6d4644470c42d97e9e"
+    },
+    {
+      "path": "main.js",
+      "size": 16615,
+      "sha256": "570601a30f9fa4df12b3002194d5ddd1520a7fb8e7666d5afa6c6613b8f14e49"
+    },
+    {
+      "path": "styles.css",
+      "size": 4801,
+      "sha256": "ffc0a1ce8c610a8a9d00a5625ffff56678a94b606625330e4edeee50db547674"
+    },
+    {
+      "path": "ui-renderer.js",
+      "size": 10246,
+      "sha256": "1af2289424b5c63267910b9a76cde421f5ddde7e868aa44790213a2f9144cabc"
+    }
+  ],
+  "entry": {
+    "kind": "worker",
+    "path": "main.js"
+  }
+}

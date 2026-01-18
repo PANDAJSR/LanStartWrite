@@ -1,6 +1,6 @@
 {
   "name": "LanStartWrite",
-  "version": "0.5.1",
+  "version": "0.4.0",
   "description": "Simple Electron starter",
   "main": "src/main.js",
   "scripts": {
@@ -17,7 +17,7 @@
     "yauzl": "^2.10.0"
   },
   "devDependencies": {
-    "electron": "^26.0.0",
-    "electron-builder": "^26.0.12"
+    "electron": "^34.0.0",
+    "electron-builder": "^25.1.8"
   }
 }
