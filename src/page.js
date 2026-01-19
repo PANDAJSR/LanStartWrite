@@ -36,54 +36,74 @@ function initPageToolbar(){
     }
   }
 
-  // ... 后面代码保持不变 ...
-  const toolbar = document.createElement('div');
-  toolbar.id = 'pageToolbar';
-  toolbar.setAttribute('role', 'toolbar');
+  let toolbar = document.getElementById('pageToolbar');
+  if (!toolbar) {
+    toolbar = document.createElement('div');
+    toolbar.id = 'pageToolbar';
+    toolbar.setAttribute('role', 'toolbar');
+    document.body.appendChild(toolbar);
+  }
 
-  // 创建预览侧边栏 DOM
-  const sidebar = document.createElement('div');
-  sidebar.id = 'pagePreviewSidebar';
-  sidebar.innerHTML = `
-    <div class="page-preview-header">页面预览</div>
-    <div class="page-preview-list"></div>
-  `;
-  document.body.appendChild(sidebar);
+  let sidebar = document.getElementById('pagePreviewSidebar');
+  if (!sidebar) {
+    sidebar = document.createElement('div');
+    sidebar.id = 'pagePreviewSidebar';
+    sidebar.innerHTML = `
+      <div class="page-preview-header">页面预览</div>
+      <div class="page-preview-list"></div>
+    `;
+    document.body.appendChild(sidebar);
+  }
 
-  const previewList = sidebar.querySelector('.page-preview-list');
+  let previewList = sidebar.querySelector('.page-preview-list');
+  if (!previewList) {
+    previewList = document.createElement('div');
+    previewList.className = 'page-preview-list';
+    sidebar.appendChild(previewList);
+  }
 
-  function makeBtn(text, title){
+  function makeBtn(text, title, id){
     const b = document.createElement('button');
     b.className = 'page-btn';
     b.textContent = text;
     b.title = title || '';
+    if (id) b.id = id;
     return b;
   }
 
-  const prevBtn = makeBtn('‹', '上一页');
-  const nextBtn = makeBtn('›', '下一页');
+  let prevBtn = document.getElementById('pagePrevBtn');
+  if (!prevBtn) {
+    prevBtn = makeBtn('‹', '上一页', 'pagePrevBtn');
+    toolbar.appendChild(prevBtn);
+  }
 
-  // 页码标签，放在上一页/下一页中间
-  const label = document.createElement('div');
-  label.className = 'page-label';
-  label.title = '点击查看页面预览';
+  let label = document.getElementById('pageLabel');
+  if (!label) {
+    label = document.createElement('div');
+    label.id = 'pageLabel';
+    label.className = 'page-label';
+    label.title = '点击查看页面预览';
+    toolbar.appendChild(label);
+  }
 
-  // 新建按钮放到单独的圆角矩形控件中
-  const newContainer = document.createElement('div');
-  newContainer.className = 'page-new';
-  const newBtn = document.createElement('button');
-  newBtn.className = 'page-new-btn';
-  newBtn.textContent = '+ 新建';
-  newBtn.title = '新建页面';
-  newContainer.appendChild(newBtn);
+  let nextBtn = document.getElementById('pageNextBtn');
+  if (!nextBtn) {
+    nextBtn = makeBtn('›', '下一页', 'pageNextBtn');
+    toolbar.appendChild(nextBtn);
+  }
 
-  // 按钮布局： prev | label | next
-  toolbar.appendChild(prevBtn);
-  toolbar.appendChild(label);
-  toolbar.appendChild(nextBtn);
-  // 新建控件独立放置在工具栏右侧（也可调整位置样式）
-  toolbar.appendChild(newContainer);
-  document.body.appendChild(toolbar);
+  let newBtn = document.getElementById('pageNewBtn');
+  if (!newBtn) {
+    const newContainer = document.createElement('div');
+    newContainer.className = 'page-new';
+    newBtn = document.createElement('button');
+    newBtn.id = 'pageNewBtn';
+    newBtn.className = 'page-new-btn';
+    newBtn.textContent = '+ 新建';
+    newBtn.title = '新建页面';
+    newContainer.appendChild(newBtn);
+    toolbar.appendChild(newContainer);
+  }
 
   function applyEnabled(nextEnabled){
     enabled = !!nextEnabled;

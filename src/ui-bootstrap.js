@@ -35,6 +35,16 @@ async function runUnitTests(){
           try{ head.dataset._lsBodyStylesMoved = '1'; }catch(e){}
         }
       }catch(e){}
+      try{
+        if (!document.getElementById('board')) {
+          const wrap = document.createElement('div');
+          wrap.className = 'canvas-wrap';
+          const board = document.createElement('canvas');
+          board.id = 'board';
+          wrap.appendChild(board);
+          document.body.appendChild(wrap);
+        }
+      }catch(e){}
       try{ localStorage.removeItem('appSettings'); }catch(e){}
       const SettingsMod = await import('./setting.js');
       const MessageMod = await import('./message.js');
@@ -627,9 +637,11 @@ async function runUnitTests(){
     }
 
     {
-      document.body.innerHTML = '<div class="canvas-wrap"><canvas id="board"></canvas></div>';
-      const whiteboardNodes = await loadFragment('./tool_bar/whiteboard.html');
+      document.body.innerHTML = '';
+      const whiteboardNodes = await loadFragment('./whiteboard/whiteboard.html');
       whiteboardNodes.forEach(n => document.body.appendChild(n));
+      const toolNodes = await loadFragment('./tool_bar/ui_tool.html');
+      toolNodes.forEach(n => document.body.appendChild(n));
       const settingsNodes = await loadFragment('./setting_ui.html');
       settingsNodes.forEach(n => document.body.appendChild(n));
 
@@ -1182,8 +1194,12 @@ window.addEventListener('DOMContentLoaded', async ()=>{
   }catch(e){}
 
   // load whiteboard UI components
-  const whiteboardNodes = await loadFragment('./tool_bar/whiteboard.html');
+  const whiteboardNodes = await loadFragment('./whiteboard/whiteboard.html');
   whiteboardNodes.forEach(n => document.body.appendChild(n));
+  
+  // load floating toolbar UI components
+  const toolNodes = await loadFragment('./tool_bar/ui_tool.html');
+  toolNodes.forEach(n => document.body.appendChild(n));
   
   // settings UI appended to body
   const settingsNodes = await loadFragment('./setting_ui.html');

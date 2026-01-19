@@ -599,7 +599,7 @@ function _createNoteManagerWindow() {
     }
   });
   win.once('ready-to-show', () => { win.show(); });
-  win.loadFile(path.join(__dirname, 'note_manager', 'index.html'));
+  win.loadFile(path.join(__dirname, 'note_manager', 'note_manager_ui.html'));
   return win;
 }
 
@@ -1002,7 +1002,7 @@ function _validateManifest(manifest) {
   if (overrides) {
     if (type !== 'control-replace') throw new Error('overrides require control-replace type');
     if (!permissions.includes('ui:override')) throw new Error('missing ui:override permission');
-    const allow = new Set(['./setting_ui.html', './whiteboard.html', './tool_bar/whiteboard.html']);
+    const allow = new Set(['./setting_ui.html', './whiteboard/whiteboard.html', './tool_bar/ui_tool.html', './whiteboard.html', './tool_bar/whiteboard.html']);
     for (const k of Object.keys(overrides)) {
       if (!allow.has(k)) throw new Error('invalid override key');
       const rel = String(overrides[k] || '').trim();
@@ -1306,9 +1306,15 @@ async function _readPluginAsset(id, relPath, as) {
 
 async function _getFragmentOverride(fragmentKey) {
   const key = String(fragmentKey || '').trim();
-  const allow = new Set(['./setting_ui.html', './whiteboard.html', './tool_bar/whiteboard.html']);
+  const allow = new Set(['./setting_ui.html', './whiteboard/whiteboard.html', './tool_bar/ui_tool.html', './whiteboard.html', './tool_bar/whiteboard.html']);
   if (!allow.has(key)) return null;
-  const keys = key === './tool_bar/whiteboard.html' ? [key, './whiteboard.html'] : [key];
+  const alias = new Map([
+    ['./tool_bar/ui_tool.html', ['./tool_bar/ui_tool.html', './tool_bar/whiteboard.html']],
+    ['./tool_bar/whiteboard.html', ['./tool_bar/whiteboard.html', './tool_bar/ui_tool.html']],
+    ['./whiteboard/whiteboard.html', ['./whiteboard/whiteboard.html', './whiteboard.html']],
+    ['./whiteboard.html', ['./whiteboard.html', './whiteboard/whiteboard.html']]
+  ]);
+  const keys = alias.get(key) || [key];
   const { installed } = await _listInstalled();
   for (const pl of installed) {
     if (!pl.enabled) continue;
