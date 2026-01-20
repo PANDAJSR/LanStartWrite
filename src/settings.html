@@ -75,6 +75,48 @@
             --sidebar-bg: #F7F8FA;
         }
 
+        /* Loading Mask */
+        .settings-loading-mask {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.4); /* 半透明黑色背景 */
+            backdrop-filter: blur(4px);
+            -webkit-backdrop-filter: blur(4px);
+            z-index: 100;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: inherit;
+            transition: opacity 0.2s;
+            color: #fff; /* 文字颜色白色 */
+        }
+        .settings-loading-content {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 12px;
+        }
+        .settings-loading-mask[hidden] {
+            display: none !important;
+        }
+        .settings-loading-spinner {
+            width: 32px;
+            height: 32px;
+            border: 3px solid rgba(255, 255, 255, 0.3);
+            border-top-color: #fff;
+            border-radius: 50%;
+            animation: settings-spin 1s linear infinite;
+        }
+        .settings-loading-text {
+            font-size: 14px;
+            font-weight: 500;
+            opacity: 0.9;
+        }
+        @keyframes settings-spin { to { transform: rotate(360deg); } }
+
         /* Dark Theme */
         [data-theme="dark"] {
             --ls-sys-color-surface: #000000;
@@ -1097,6 +1139,12 @@
                                     </div>
                                     <div id="settingsHistoryMeta" class="ls-history-meta" aria-live="polite"></div>
                                     <div id="settingsHistoryTimeline" class="ls-history-timeline" role="list"></div>
+                                    <div id="settingsHistoryLoading" class="settings-loading-mask" hidden>
+                                        <div class="settings-loading-content">
+                                            <div class="settings-loading-spinner"></div>
+                                            <div class="settings-loading-text">正在加载历史记录...</div>
+                                        </div>
+                                    </div>
                                     <div class="ls-history-footer">
                                         <button id="historyLoadMoreBtn" class="mode-btn" type="button">加载更多</button>
                                     </div>

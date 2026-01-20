@@ -14,7 +14,7 @@
  * 2. 主进程根据矩形决定窗口哪些区域接收鼠标，其他区域穿透到下层应用
  */
 import { clearAll, undo, redo, setBrushColor, setErasing, canUndo, canRedo, replaceStrokeColors, getToolState, setInputEnabled, setMultiTouchPenEnabled, setInkRecognitionEnabled, setViewTransform, setCanvasMode, getCubenoteState, applyCubenoteState, setViewRotation } from '../renderer.js';
-import Curous from '../curous.js';
+import Curous from '../whiteboard/curous.js';
 import Settings, { getPenColorFromSettings, normalizeHexColor } from '../setting.js';
 import { showSubmenu, cleanupMenuStyles, initPinHandlers, closeAllSubmenus } from './more_decide_windows.js';
 import Message, { EVENTS } from '../message.js';
@@ -27,6 +27,7 @@ import { initAppCase } from '../app_case.js';
 import { applyModeCanvasBackground } from '../mode_background.js';
 import { buildPenTailSegment, normalizePenTailSettings } from '../pen_tail.js';
 import { applyThemeMode, initThemeAutoSync, buildContrastReport, measureApplyCost, serializeLanTheme, parseLanTheme } from '../colors_features.js';
+import OperarPenetration from '../smart_screenik/Operar_Penetration.js';
 
 try{ installHyperOs3Controls(document); }catch(e){}
 
@@ -45,7 +46,84 @@ const redoBtn = document.getElementById('redoBtn');
 const collapseTool = document.getElementById('collapseTool');
 const exitTool = document.getElementById('exitTool');
 
+let _pointerSelectedInUse = false;
+let _penetrationMonitorTimer = 0;
+let _penetrationPrevStateJson = '';
+
+function setPointerSelectedInUse(on){
+  _pointerSelectedInUse = !!on;
+  try{
+    if (pointerTool) {
+      if (_pointerSelectedInUse) {
+        pointerTool.dataset.selectedInUse = '1';
+        pointerTool.classList.add('selected-in-use');
+      } else {
+        if (pointerTool.dataset) delete pointerTool.dataset.selectedInUse;
+        pointerTool.classList.remove('selected-in-use');
+      }
+    }
+  }catch(e){}
+}
+
 let _videoBoothInstance = null;
+
+function _getPointerBtn(){
+  try{
+    if (pointerTool && pointerTool instanceof HTMLElement) return pointerTool;
+    const el = document.getElementById('pointerTool');
+    return el || null;
+  }catch(e){
+    return null;
+  }
+}
+
+function _readPenetrationButtonState(){
+  const btn = _getPointerBtn();
+  const exists = !!btn;
+  const active = !!(btn && btn.classList && btn.classList.contains('active'));
+  const selectedInUse = !!(btn && btn.classList && btn.classList.contains('selected-in-use'));
+  let disabled = false;
+  let ariaDisabled = false;
+  let hover = false;
+  try{ disabled = !!(btn && (btn.disabled === true || btn.getAttribute('disabled') === 'true')); }catch(e){}
+  try{ ariaDisabled = !!(btn && String(btn.getAttribute('aria-disabled') || '') === 'true'); }catch(e){}
+  try{ hover = !!(btn && btn.matches && btn.matches(':hover')); }catch(e){}
+  return { exists, active, selectedInUse, disabled, ariaDisabled, hover, ts: Date.now() };
+}
+
+function _emitPenetrationStateChanged(state){
+  try{ Message.emit(EVENTS.PENETRATION_BUTTON_STATE_CHANGED, state); }catch(e){}
+}
+
+function _logPenetrationState(state){
+  try{
+    const payload = { ts: Number(state && state.ts) || Date.now(), state };
+    if (window && window.electronAPI && typeof window.electronAPI.sendToMain === 'function') {
+      window.electronAPI.sendToMain('monitor:penetration-button-state', payload);
+      return;
+    }
+  }catch(e){}
+  try{ console.debug('[penetration-monitor]', state); }catch(e){}
+}
+
+function startPenetrationButtonMonitor(){
+  if (_penetrationMonitorTimer) return;
+  const tick = ()=>{
+    let state = null;
+    try{
+      state = _readPenetrationButtonState();
+      const json = JSON.stringify(state);
+      if (json !== _penetrationPrevStateJson) {
+        _penetrationPrevStateJson = json;
+        _emitPenetrationStateChanged(state);
+        _logPenetrationState(state);
+      }
+    }catch(e){}
+  };
+  try{ tick(); }catch(e){}
+  _penetrationMonitorTimer = setInterval(()=>{ try{ tick(); }catch(e){} }, 1000);
+  try{ window.addEventListener('beforeunload', ()=>{ try{ if (_penetrationMonitorTimer) clearInterval(_penetrationMonitorTimer); }catch(e){} _penetrationMonitorTimer = 0; }); }catch(e){}
+}
 
 // initialize pen and eraser UI modules
 initPenUI();
@@ -166,13 +244,23 @@ const APP_MODES = { WHITEBOARD: 'whiteboard', ANNOTATION: 'annotation' };
 const ENTER_WHITEBOARD_ICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" aria-hidden="true"><g fill="currentColor"><path d="M2 6.75A2.75 2.75 0 0 1 4.75 4h14.5A2.75 2.75 0 0 1 22 6.75v5.786l-.8-.801a2.5 2.5 0 0 0-.7-.493V6.75c0-.69-.56-1.25-1.25-1.25H4.75c-.69 0-1.25.56-1.25 1.25v10.5c0 .69.56 1.25 1.25 1.25h7.265a2.5 2.5 0 0 0 .561 1.5H4.75A2.75 2.75 0 0 1 2 17.25z"/><path d="M20.492 12.442a1.5 1.5 0 0 0-2.121 0l-3.111 3.11l4.207 4.208l3.11-3.111a1.5 1.5 0 0 0 0-2.122zm-7.039 4.918l1.1-1.1l4.207 4.207l-1.1 1.1a1.5 1.5 0 0 1-2.121 0l-2.086-2.086a1.5 1.5 0 0 1 0-2.122"/></g></svg>`;
 
 let _appMode = APP_MODES.WHITEBOARD;
-let _interactiveRectsRaf = 0;
-let _lastTouchActionAt = 0;
-let _lastMouseMoveAt = 0;
 let applyCollapsed = ()=>{};
-let _lastIgnoreMouse = { ignore: false, forward: false, at: 0 };
-let _rectWatchdogTimer = 0;
 let _pdfMode = false;
+
+const _penetration = new OperarPenetration({
+  appModes: APP_MODES,
+  getAppMode: () => _appMode,
+  isPointerActive: () => !!(pointerTool && pointerTool.classList.contains('active')),
+  debug: (...args) => { try { _menuDebug(...args); } catch (e) {} },
+  sendToMain: (channel, payload) => {
+    try {
+      if (window && window.electronAPI && typeof window.electronAPI.sendToMain === 'function') {
+        window.electronAPI.sendToMain(channel, payload);
+      }
+    } catch (e) {}
+  }
+});
+try{ _penetration.bindGlobalListeners(); }catch(e){}
 
 function setPdfMode(on){
   _pdfMode = !!on;
@@ -230,6 +318,7 @@ function bindTouchTap(el, onTap, opts){
   const moveThreshold = (opts && typeof opts.moveThreshold === 'number') ? Math.max(0, opts.moveThreshold) : 8;
   let down = null;
   let moved = false;
+  const usePointerEvents = typeof window !== 'undefined' && !!window.PointerEvent;
 
   function clear(){
     down = null;
@@ -247,148 +336,130 @@ function bindTouchTap(el, onTap, opts){
     return null;
   };
 
-  el.addEventListener('touchstart', (e)=>{
-    const t = (e && e.changedTouches && e.changedTouches[0]) ? e.changedTouches[0] : null;
-    if (!t) return;
-    _lastTouchActionAt = Date.now();
-    down = { id: t.identifier, x: t.clientX, y: t.clientY, t: (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now() };
-    moved = false;
-  }, { passive: true });
+  if (usePointerEvents) {
+    el.addEventListener('pointerdown', (e)=>{
+      if (!e || (e.pointerType !== 'touch' && e.pointerType !== 'pen')) return;
+      _penetration.recordPointerInput(e.pointerType);
+      down = { id: e.pointerId, x: e.clientX, y: e.clientY, t: (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now() };
+      moved = false;
+      try{ if (el.setPointerCapture) el.setPointerCapture(e.pointerId); }catch(err){}
+    }, { passive: true });
 
-  el.addEventListener('touchmove', (e)=>{
-    if (!down) return;
-    const t = getTouchPoint(e);
-    if (!t) return;
-    const dx = (t.clientX - down.x);
-    const dy = (t.clientY - down.y);
-    if ((dx*dx + dy*dy) > (moveThreshold*moveThreshold)) moved = true;
-  }, { passive: true });
+    el.addEventListener('pointermove', (e)=>{
+      if (!down || !e || e.pointerId !== down.id) return;
+      const dx = (e.clientX - down.x);
+      const dy = (e.clientY - down.y);
+      if ((dx*dx + dy*dy) > (moveThreshold*moveThreshold)) moved = true;
+    }, { passive: true });
 
-  el.addEventListener('touchend', (e)=>{
-    if (!down) return;
-    const t = getTouchPoint(e);
-    if (!t) return;
-    const tUp = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
-    const elapsed = tUp - down.t;
-    const shouldFire = !moved;
-    const delay = Math.max(0, delayMs - elapsed);
-    const ev = e;
-    clear();
-    if (!shouldFire) return;
-    _lastTouchActionAt = Date.now();
-    try{ ev.preventDefault(); ev.stopImmediatePropagation(); ev.stopPropagation(); }catch(err){}
-    if (delay <= 0) {
-      try{ onTap(ev); }catch(err){}
-    } else {
-      setTimeout(()=>{ try{ onTap(ev); }catch(err){} }, delay);
-    }
-  }, { passive: false });
+    el.addEventListener('pointerup', (e)=>{
+      if (!down || !e || e.pointerId !== down.id) return;
+      const tUp = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+      const elapsed = tUp - down.t;
+      const shouldFire = !moved;
+      const delay = Math.max(0, delayMs - elapsed);
+      const ev = e;
+      clear();
+      try{ if (el.releasePointerCapture) el.releasePointerCapture(ev.pointerId); }catch(err){}
+      if (!shouldFire) return;
+      _penetration.markTouchAction();
+      try{ ev.preventDefault(); ev.stopImmediatePropagation(); ev.stopPropagation(); }catch(err){}
+      if (delay <= 0) {
+        try{ onTap(ev); }catch(err){}
+      } else {
+        setTimeout(()=>{ try{ onTap(ev); }catch(err){} }, delay);
+      }
+    });
 
-  el.addEventListener('touchcancel', (e)=>{
-    if (!down) return;
-    const t = getTouchPoint(e);
-    if (!t) return;
-    clear();
-  });
+    el.addEventListener('pointercancel', (e)=>{
+      if (!down || !e || e.pointerId !== down.id) return;
+      clear();
+      try{ if (el.releasePointerCapture) el.releasePointerCapture(e.pointerId); }catch(err){}
+    });
+  } else {
+    el.addEventListener('touchstart', (e)=>{
+      const t = (e && e.changedTouches && e.changedTouches[0]) ? e.changedTouches[0] : null;
+      if (!t) return;
+      _penetration.recordPointerInput('touch');
+      down = { id: t.identifier, x: t.clientX, y: t.clientY, t: (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now() };
+      moved = false;
+    }, { passive: true });
+
+    el.addEventListener('touchmove', (e)=>{
+      if (!down) return;
+      const t = getTouchPoint(e);
+      if (!t) return;
+      const dx = (t.clientX - down.x);
+      const dy = (t.clientY - down.y);
+      if ((dx*dx + dy*dy) > (moveThreshold*moveThreshold)) moved = true;
+    }, { passive: true });
+
+    el.addEventListener('touchend', (e)=>{
+      if (!down) return;
+      const t = getTouchPoint(e);
+      if (!t) return;
+      const tUp = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+      const elapsed = tUp - down.t;
+      const shouldFire = !moved;
+      const delay = Math.max(0, delayMs - elapsed);
+      const ev = e;
+      clear();
+      if (!shouldFire) return;
+      _penetration.markTouchAction();
+      try{ ev.preventDefault(); ev.stopImmediatePropagation(); ev.stopPropagation(); }catch(err){}
+      if (delay <= 0) {
+        try{ onTap(ev); }catch(err){}
+      } else {
+        setTimeout(()=>{ try{ onTap(ev); }catch(err){} }, delay);
+      }
+    }, { passive: false });
+
+    el.addEventListener('touchcancel', (e)=>{
+      if (!down) return;
+      const t = getTouchPoint(e);
+      if (!t) return;
+      clear();
+    });
+  }
 
   el.addEventListener('click', (e)=>{
-    if (Date.now() - _lastTouchActionAt < 400) {
+    if (_penetration.shouldSuppressClick()) {
       try{ e.preventDefault(); e.stopImmediatePropagation(); e.stopPropagation(); }catch(err){}
     }
   }, true);
 }
 
-let _activeInputType = 'mouse';
-let _touchShield = null;
-let _touchBlockIds = new Set();
-let _touchBlockActive = false;
-let _touchBlockRestoreT = 0;
-
-function _ensureTouchShield(){
-  if (_touchShield) return _touchShield;
-  const el = document.createElement('div');
-  el.id = 'touchShield';
-  el.style.position = 'fixed';
-  el.style.left = '0';
-  el.style.top = '0';
-  el.style.right = '0';
-  el.style.bottom = '0';
-  el.style.zIndex = '2000';
-  el.style.background = 'transparent';
-  el.style.display = 'none';
-  el.style.touchAction = 'none';
-  try{ document.body.appendChild(el); }catch(e){}
-  _touchShield = el;
-  return el;
+function _forceReleaseTouchUiBlock(){
+  try{ _penetration.forceReleaseTouchUiBlock(); }catch(e){}
 }
 
-function _setTouchShieldActive(on){
-  const el = _ensureTouchShield();
-  if (!el) return;
-  el.style.display = on ? 'block' : 'none';
+function sendIgnoreMouse(ignore, forward){
+  try{ _penetration.sendIgnoreMouse(ignore, forward); }catch(e){}
 }
 
-function _touchIdsFromEvent(e){
-  const ids = [];
-  const list = (e && e.changedTouches) ? e.changedTouches : null;
-  if (!list || typeof list.length !== 'number') return ids;
-  for (let i = 0; i < list.length; i++) {
-    const t = list[i];
-    if (!t) continue;
-    ids.push(t.identifier);
-  }
-  return ids;
+function sendInteractiveRects(rects){
+  try{ _penetration.sendInteractiveRects(rects); }catch(e){}
 }
 
-function _beginTouchUiBlock(e){
-  _activeInputType = 'touch';
-  _lastTouchActionAt = Date.now();
-  const ids = _touchIdsFromEvent(e);
-  for (const id of ids) _touchBlockIds.add(id);
-  if (_touchBlockRestoreT) { try{ clearTimeout(_touchBlockRestoreT); }catch(err){} _touchBlockRestoreT = 0; }
-  if (_touchBlockActive) return;
-  _touchBlockActive = true;
-  try{ sendIgnoreMouse(false, false); }catch(err){}
-  _setTouchShieldActive(true);
-  try{ scheduleInteractiveRectsUpdate(); }catch(err){}
+function collectInteractiveRects(force = false){
+  try{ return _penetration.collectInteractiveRects(force); }catch(e){}
+  return [];
 }
 
-function _endTouchUiBlock(e){
-  const ids = _touchIdsFromEvent(e);
-  for (const id of ids) _touchBlockIds.delete(id);
-  if (_touchBlockIds.size > 0) return;
-  if (!_touchBlockActive) return;
-  _touchBlockActive = false;
-  _touchBlockRestoreT = setTimeout(()=>{
-    _touchBlockRestoreT = 0;
-    _setTouchShieldActive(false);
-    try{ applyWindowInteractivity(); }catch(err){}
-    try{ scheduleInteractiveRectsUpdate(); }catch(err){}
-  }, 120);
+function scheduleInteractiveRectsUpdate(){
+  try{ _penetration.scheduleInteractiveRectsUpdate(); }catch(e){}
 }
 
-try{
-  document.addEventListener('touchstart', (e)=>{
-    try{
-      const t = e && e.target && e.target.closest ? e.target.closest('.floating-panel, .submenu.open') : null;
-      if (!t) return;
-      _beginTouchUiBlock(e);
-    }catch(err){}
-  }, { capture: true, passive: true });
-  document.addEventListener('touchend', (e)=>{ try{ _endTouchUiBlock(e); }catch(err){} }, { capture: true });
-  document.addEventListener('touchcancel', (e)=>{ try{ _endTouchUiBlock(e); }catch(err){} }, { capture: true });
-  document.addEventListener('mousedown', ()=>{ _activeInputType = 'mouse'; }, { capture: true });
-}catch(e){}
+function flushInteractiveRects(){
+  try{ _penetration.flushInteractiveRects(); }catch(e){}
+}
 
-function _isTouchEnvironment(){
-  try{
-    const n = navigator;
-    if (n && typeof n.maxTouchPoints === 'number' && n.maxTouchPoints > 0) return true;
-  }catch(e){}
-  try{
-    if (typeof window !== 'undefined' && window.matchMedia && window.matchMedia('(pointer: coarse)').matches) return true;
-  }catch(e){}
-  return false;
+function applyWindowInteractivity(forceIgnore){
+  try{ _penetration.applyWindowInteractivity(forceIgnore); }catch(e){}
+}
+
+function applyWindowInteractivityNow(forceIgnore){
+  try{ _penetration.applyWindowInteractivityNow(forceIgnore); }catch(e){}
 }
 
 function _menuDebug(){
@@ -437,113 +508,6 @@ function openNoteManagerWindow(){
   return false;
 }
 
-let _lastSentIgnore = null;
-/**
- * 通知主进程切换批注窗口的“鼠标穿透/转发”策略。
- * @param {boolean} ignore - 是否忽略鼠标（穿透到下层窗口）
- * @param {boolean} forward - 是否转发（由主进程实现的转发策略）
- * @returns {void}
- */
-function sendIgnoreMouse(ignore, forward){
-  try{
-    if (!window.electronAPI || typeof window.electronAPI.sendToMain !== 'function') return;
-    const key = `${ignore ? 1 : 0}:${forward ? 1 : 0}`;
-    if (_lastSentIgnore === key) return;
-    _lastSentIgnore = key;
-
-    _lastIgnoreMouse = { ignore: !!ignore, forward: !!forward, at: Date.now() };
-    _menuDebug('overlay', 'ignore-mouse', { ignore: !!ignore, forward: !!forward, mode: _appMode });
-    window.electronAPI.sendToMain('overlay:set-ignore-mouse', { ignore: !!ignore, forward: !!forward });
-  }catch(e){}
-}
-
-/**
- * 向主进程同步“可交互区域矩形列表”，用于批注窗口的点击命中与穿透裁剪。
- * @param {Array<{left:number,top:number,width:number,height:number}>} rects - 可交互矩形
- * @returns {void}
- */
-let _lastSentRectsJson = '';
-function sendInteractiveRects(rects){
-  try{
-    if (!window.electronAPI || typeof window.electronAPI.sendToMain !== 'function') return;
-    const json = JSON.stringify(rects);
-    if (json === _lastSentRectsJson) return; // Skip if no change
-    _lastSentRectsJson = json;
-    
-    _menuDebug('overlay', 'interactive-rects', { count: Array.isArray(rects) ? rects.length : 0 });
-    window.electronAPI.sendToMain('overlay:set-interactive-rects', { rects: Array.isArray(rects) ? rects : [] });
-  }catch(e){}
-}
-
-let _cachedRects = null;
-let _cachedRectsAt = 0;
-
-/**
- * 收集当前界面中需要“接收鼠标事件”的元素矩形。
- * @returns {Array<{left:number,top:number,width:number,height:number}>}
- */
-function collectInteractiveRects(force = false){
-  const now = Date.now();
-  if (!force && _cachedRects && (now - _cachedRectsAt < 100)) return _cachedRects;
-
-  const rects = [];
-  const pushEl = (el)=>{
-    if (!el || !el.getBoundingClientRect) return;
-    const r = el.getBoundingClientRect();
-    const w = Math.max(0, r.width || 0);
-    const h = Math.max(0, r.height || 0);
-    if (w <= 0 || h <= 0) return;
-    rects.push({ left: r.left, top: r.top, width: w, height: h });
-  };
-
-  pushEl(document.querySelector('.floating-panel'));
-  document.querySelectorAll('.submenu.open').forEach(pushEl);
-  document.querySelectorAll('.recognition-ui.open').forEach(pushEl);
-  document.querySelectorAll('.settings-modal.open').forEach(pushEl);
-  pushEl(document.getElementById('pageToolbar'));
-  
-  _cachedRects = rects;
-  _cachedRectsAt = now;
-  return rects;
-}
-
-/**
- * 在批注模式下，按帧合并一次“交互矩形同步”，避免频繁 reflow 与 IPC 泛洪。
- * @returns {void}
- */
-function scheduleInteractiveRectsUpdate(){
-  if (_appMode !== APP_MODES.ANNOTATION) return;
-  if (_interactiveRectsRaf) return;
-  _interactiveRectsRaf = requestAnimationFrame(()=>{
-    _interactiveRectsRaf = 0;
-    sendInteractiveRects(collectInteractiveRects());
-  });
-}
-
-function flushInteractiveRects(){
-  if (_appMode !== APP_MODES.ANNOTATION) return;
-  try{ sendInteractiveRects(collectInteractiveRects()); }catch(e){}
-}
-
-function _setRectWatchdog(on){
-  const next = !!on;
-  if (next) {
-    if (_rectWatchdogTimer) return;
-    _rectWatchdogTimer = setInterval(() => {
-      try{
-        if (_appMode !== APP_MODES.ANNOTATION) return;
-        const pointerActive = !!(pointerTool && pointerTool.classList.contains('active'));
-        if (!pointerActive) return;
-        sendInteractiveRects(collectInteractiveRects());
-      }catch(e){}
-    }, 200);
-    return;
-  }
-  if (_rectWatchdogTimer) {
-    try{ clearInterval(_rectWatchdogTimer); }catch(e){}
-    _rectWatchdogTimer = 0;
-  }
-}
 
 function updateExitToolUI(){
   if (!exitTool) return;
@@ -556,62 +520,6 @@ function updateExitToolUI(){
   }
 }
 
-let _interactivityTimer = 0;
-function applyWindowInteractivity(){
-  if (_interactivityTimer) return;
-  _interactivityTimer = setTimeout(() => {
-    _interactivityTimer = 0;
-    _applyWindowInteractivityNow();
-  }, 16);
-}
-
-function _applyWindowInteractivityNow(){
-  const hasOpenUi = !!document.querySelector('.settings-modal.open, .recognition-ui.open, .submenu.open, .mod-overlay.open');
-  if (hasOpenUi) {
-    _menuDebug('interactivity', 'open-ui');
-    sendIgnoreMouse(false, false);
-    try{ sendInteractiveRects(collectInteractiveRects()); }catch(e){}
-    _setRectWatchdog(false);
-    return;
-  }
-  if (_appMode === APP_MODES.WHITEBOARD) {
-    _menuDebug('interactivity', 'whiteboard');
-    sendIgnoreMouse(false, false);
-    _setRectWatchdog(false);
-    return;
-  }
-  const pointerActive = !!(pointerTool && pointerTool.classList.contains('active'));
-  if (!pointerActive) {
-    _menuDebug('interactivity', 'no-pointer');
-    sendIgnoreMouse(false, false);
-    _setRectWatchdog(false);
-    return;
-  }
-  const recentTouch = (Date.now() - _lastTouchActionAt) < 1500;
-  if (recentTouch){
-    _menuDebug('interactivity', 'recent-touch-force-interactive');
-    sendIgnoreMouse(false, false);
-    try{ sendInteractiveRects(collectInteractiveRects()); }catch(e){}
-    _setRectWatchdog(false);
-    scheduleInteractiveRectsUpdate();
-    return;
-  }
-  const touchCapable = _isTouchEnvironment();
-  const recentMouse = (Date.now() - _lastMouseMoveAt) < 1200;
-  if (touchCapable && !recentMouse) {
-    _menuDebug('interactivity', 'touch-capable-no-mouse-force-interactive');
-    sendIgnoreMouse(false, false);
-    try{ sendInteractiveRects(collectInteractiveRects()); }catch(e){}
-    _setRectWatchdog(false);
-    scheduleInteractiveRectsUpdate();
-    return;
-  }
-  try{ sendInteractiveRects(collectInteractiveRects()); }catch(e){}
-  _menuDebug('interactivity', 'pointer-ignore');
-  sendIgnoreMouse(true, true);
-  _setRectWatchdog(true);
-  scheduleInteractiveRectsUpdate();
-}
 
 function setAppMode(nextMode, opts){
   const m = nextMode === APP_MODES.ANNOTATION ? APP_MODES.ANNOTATION : APP_MODES.WHITEBOARD;
@@ -656,6 +564,7 @@ class SmartAnnotationController {
     if (eraserTool) eraserTool.classList.remove('active');
     if (colorTool) colorTool.classList.remove('active');
     if (pointerTool) pointerTool.classList.add('active');
+    setPointerSelectedInUse(true);
     try{ setViewTransform(1, 0, 0); }catch(e){}
     try{ setInputEnabled(false); }catch(e){}
     try{ Curous.setTransformEnabled(false); }catch(e){}
@@ -667,7 +576,7 @@ class SmartAnnotationController {
     updateEraserModeLabel();
     updatePenModeLabel();
     syncToolbarIcons();
-    applyWindowInteractivity();
+    applyWindowInteractivityNow();
     try{ sendInteractiveRects(collectInteractiveRects()); }catch(e){}
     scheduleInteractiveRectsUpdate();
     try{ setTimeout(()=>{ try{ flushInteractiveRects(); }catch(e){} }, 0); }catch(e){}
@@ -686,6 +595,7 @@ class WhiteboardController {
     closeAllSubmenus();
     try{ setCanvasMode('whiteboard'); }catch(e){}
     if (pointerTool) pointerTool.classList.remove('active');
+    setPointerSelectedInUse(false);
     try{ Curous.setTransformEnabled(true); }catch(e){}
     try{ Curous.enableSelectionMode(false); setInputEnabled(true); }catch(e){}
     try{
@@ -740,7 +650,6 @@ try{
   mo.observe(document.body, { subtree: true, attributes: true, attributeFilter: ['class', 'style', 'aria-hidden'] });
 }catch(e){}
 try{ window.addEventListener('resize', ()=>{ scheduleInteractiveRectsUpdate(); }, { passive: true }); }catch(e){}
-try{ window.addEventListener('mousemove', ()=>{ _lastMouseMoveAt = Date.now(); }, { passive: true }); }catch(e){}
 
 try{ window.addEventListener('toolbar:sync', syncToolbarIcons); }catch(e){}
 
@@ -771,7 +680,8 @@ if (colorTool) {
     setErasing(false);
     // when using pen, disable selection mode and enable canvas input
     try{ Curous.enableSelectionMode(false); setInputEnabled(true); }catch(e){}
-    if (pointerTool) pointerTool.classList.remove('active');
+      if (pointerTool) pointerTool.classList.remove('active');
+      setPointerSelectedInUse(false);
     if (eraserTool) eraserTool.classList.remove('active');
     applyWindowInteractivity();
     flushInteractiveRects();
@@ -785,7 +695,7 @@ if (colorTool) {
             appMode: _appMode,
             pinned,
             pointerWasActive,
-            ignoreMouse: _lastIgnoreMouse,
+            ignoreMouse: _penetration.getLastIgnoreMouse(),
             rectCount: Array.isArray(rects) ? rects.length : 0,
             ariaHidden: colorMenu.getAttribute('aria-hidden'),
             evType: ev && ev.type ? String(ev.type) : ''
@@ -818,7 +728,8 @@ if (eraserTool) {
     }
     setErasing(true);
     try{ Curous.enableSelectionMode(false); setInputEnabled(true); }catch(e){}
-    if (pointerTool) pointerTool.classList.remove('active');
+      if (pointerTool) pointerTool.classList.remove('active');
+      setPointerSelectedInUse(false);
     if (colorTool) colorTool.classList.remove('active');
     showSubmenu(eraserMenu, eraserTool);
     updateEraserModeLabel();
@@ -875,17 +786,21 @@ if (pointerTool) {
     if (next) {
       // enable selection mode
       pointerTool.classList.add('active');
+      setPointerSelectedInUse(true);
       // disable drawing/erasing
       setErasing(false);
       try{ setInputEnabled(false); }catch(e){}
       Curous.enableSelectionMode(true);
     } else {
       pointerTool.classList.remove('active');
+      setPointerSelectedInUse(false);
       Curous.enableSelectionMode(false);
       try{ setInputEnabled(true); }catch(e){}
     }
     syncToolbarIcons();
-    applyWindowInteractivity();
+    _forceReleaseTouchUiBlock();
+    applyWindowInteractivityNow(true);
+    try{ flushInteractiveRects(); }catch(e){}
     scheduleInteractiveRectsUpdate();
   };
   pointerTool.addEventListener('click', togglePointer);
@@ -915,6 +830,7 @@ if (moreTool) {
   const onNoteExport = async ()=>{
     closeAllSubmenus();
     syncToolbarIcons();
+    _forceReleaseTouchUiBlock();
     applyWindowInteractivity();
     scheduleInteractiveRectsUpdate();
     try{ await startNoteExportFlow(); }catch(e){ try{ showToast('导出失败', 'error'); }catch(err){} }
@@ -922,6 +838,7 @@ if (moreTool) {
   const onNoteImport = async ()=>{
     closeAllSubmenus();
     syncToolbarIcons();
+    _forceReleaseTouchUiBlock();
     applyWindowInteractivity();
     scheduleInteractiveRectsUpdate();
     try{ await startNoteImportFlow(); }catch(e){ try{ showToast('导入失败', 'error'); }catch(err){} }
@@ -929,16 +846,18 @@ if (moreTool) {
   const onOpenNoteManager = ()=>{
     closeAllSubmenus();
     syncToolbarIcons();
-    applyWindowInteractivity();
+    _forceReleaseTouchUiBlock();
+    applyWindowInteractivity(true);
     scheduleInteractiveRectsUpdate();
     openNoteManagerWindow();
   };
-  const onSettings = ()=>{ closeAllSubmenus(); syncToolbarIcons(); applyWindowInteractivity(); scheduleInteractiveRectsUpdate(); if (!openSettingsWindow()) Message.emit(EVENTS.OPEN_SETTINGS, {}); };
-  const onPluginManager = ()=>{ closeAllSubmenus(); syncToolbarIcons(); applyWindowInteractivity(); scheduleInteractiveRectsUpdate(); try{ openPluginModal(); }catch(e){} };
-  const onAbout = ()=>{ closeAllSubmenus(); syncToolbarIcons(); applyWindowInteractivity(); scheduleInteractiveRectsUpdate(); if (!openAboutWindow()) Message.emit(EVENTS.OPEN_ABOUT, {}); };
+  const onSettings = ()=>{ closeAllSubmenus(); syncToolbarIcons(); _forceReleaseTouchUiBlock(); applyWindowInteractivity(true); scheduleInteractiveRectsUpdate(); if (!openSettingsWindow()) Message.emit(EVENTS.OPEN_SETTINGS, {}); };
+  const onPluginManager = ()=>{ closeAllSubmenus(); syncToolbarIcons(); _forceReleaseTouchUiBlock(); applyWindowInteractivity(); scheduleInteractiveRectsUpdate(); try{ openPluginModal(); }catch(e){} };
+  const onAbout = ()=>{ closeAllSubmenus(); syncToolbarIcons(); _forceReleaseTouchUiBlock(); applyWindowInteractivity(true); scheduleInteractiveRectsUpdate(); if (!openAboutWindow()) Message.emit(EVENTS.OPEN_ABOUT, {}); };
   const onRestartWhiteboard = ()=>{
     closeAllSubmenus();
     syncToolbarIcons();
+    _forceReleaseTouchUiBlock();
     applyWindowInteractivity();
     scheduleInteractiveRectsUpdate();
     try{
@@ -951,6 +870,7 @@ if (moreTool) {
   const onCloseWhiteboard = ()=>{
     closeAllSubmenus();
     syncToolbarIcons();
+    _forceReleaseTouchUiBlock();
     applyWindowInteractivity();
     scheduleInteractiveRectsUpdate();
     try{
@@ -1001,6 +921,8 @@ if (exitTool) {
   exitTool.addEventListener('click', toggleMode);
   bindTouchTap(exitTool, toggleMode, { delayMs: 0 });
 }
+
+startPenetrationButtonMonitor();
 
 // submenu logic moved to more_decide_windows.js
 
@@ -1879,6 +1801,18 @@ function _renderToolbarLayoutEditor(){
       const nextHidden = Array.from(nextHiddenSet);
       _settingsUiStore.dispatch({ type: 'UPDATE_FIELD', key: 'toolbarButtonHidden', value: nextHidden });
       _renderToolbarLayoutEditor();
+      try{
+        const patch = {
+          toolbarButtonOrder: order.slice(),
+          toolbarButtonHidden: nextHidden.slice()
+        };
+        const merged = updateAppSettings(patch, { history: { source: 'settings_toolbar_toggle' } });
+        if (merged && merged.__lsPersistOk === false) showToast('工具栏设置保存失败', 'error', 2600);
+        else showToast('已更新工具栏显示', 'success', 1400);
+      }catch(e){
+        console.error('Failed to persist toolbar hidden state:', e);
+        try{ showToast('工具栏设置保存失败', 'error', 2600); }catch(err){}
+      }
     });
 
     frag.appendChild(item);
@@ -1911,7 +1845,9 @@ function _persistToolbarLayoutOrderFromDom(){
         toolbarButtonOrder: nextOrder.slice(),
         toolbarButtonHidden: Array.from(hiddenSet)
       };
-      updateAppSettings(patch);
+      const merged = updateAppSettings(patch, { history: { source: 'settings_toolbar_sort' } });
+      if (merged && merged.__lsPersistOk === false) showToast('工具栏排序保存失败', 'error', 2600);
+      else showToast('已更新工具栏排序', 'success', 1400);
     }catch(e){
       console.error('Failed to update app settings from toolbar custom:', e);
     }
@@ -2065,6 +2001,15 @@ function _wireSettingsUi(){
     _settingsUiStore.dispatch({ type: 'UPDATE_FIELD', key: 'toolbarButtonOrder', value: order });
     _settingsUiStore.dispatch({ type: 'UPDATE_FIELD', key: 'toolbarButtonHidden', value: [] });
     _renderToolbarLayoutEditor();
+    try{
+      const patch = { toolbarButtonOrder: order.slice(), toolbarButtonHidden: [] };
+      const merged = updateAppSettings(patch, { history: { source: 'settings_toolbar_reset' } });
+      if (merged && merged.__lsPersistOk === false) showToast('工具栏布局保存失败', 'error', 2600);
+      else showToast('已恢复默认布局', 'success', 1600);
+    }catch(e){
+      console.error('Failed to reset toolbar layout:', e);
+      try{ showToast('工具栏布局保存失败', 'error', 2600); }catch(err){}
+    }
   });
 
   if (optDesignLanguage) optDesignLanguage.addEventListener('change', ()=>{

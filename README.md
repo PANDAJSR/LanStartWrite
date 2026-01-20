@@ -214,6 +214,99 @@ LanStartWrite/
 - 插件管理
 - 快捷键设置
 
+## 🧭 UI 交互规范（触摸/鼠标混合）
+
+### 输入来源判定
+- 支持 mouse/touch/pen 三类指针来源
+- 触摸/触控笔输入优先维持交互窗口响应，避免穿透
+- 鼠标输入维持原有 hover/点击逻辑，不改变按钮行为
+
+### 触摸点击逻辑
+- 触摸点击使用独立 tap 识别流程，避免 300ms 延迟与误触
+- 通过位移阈值区分点击/拖动，默认阈值 8px
+- 触摸触发 tap 后 400ms 内阻断浏览器合成 click，避免重复触发
+
+### 混合输入切换策略
+- 近期触摸/触控笔输入触发窗口可交互区域强制开启
+- 触摸设备且近期未检测到鼠标移动时，保持 UI 区域可交互
+- 最近 1.2s 内鼠标移动判定为鼠标活跃，恢复穿透策略
+
+### 窗口重叠响应
+- 批注模式下同步交互矩形到主进程
+- 主进程依据交互矩形决定是否转发鼠标事件
+- 鼠标落在工具栏/子菜单/弹窗区域时允许交互，其余区域穿透至下层应用
+
+### 关键时序参数
+- 触摸 tap 延迟补齐：0ms（可通过 bindTouchTap 参数覆盖）
+- 触摸 tap 判定位移阈值：8px
+- 触摸触发 click 屏蔽窗口：400ms
+- 交互矩形同步节流：按帧合并
+- 鼠标穿透判定轮询：40ms
+- 触摸 UI block 释放延迟：120ms
+
+## 🧩 穿透模块（Operar_Penetration）
+
+### API
+- 构造：new OperarPenetration({ appModes, getAppMode, isPointerActive, sendToMain, selectors, extendInteractiveRects, debug })
+- 输入状态：recordPointerInput(type), getActiveInputType(), markTouchAction(), getLastTouchActionAt(), shouldSuppressClick()
+- 触摸拦截：beginTouchUiBlock(e), endTouchUiBlock(e), forceReleaseTouchUiBlock()
+- IPC 同步：sendIgnoreMouse(ignore, forward), sendInteractiveRects(rects)
+- 交互矩形：collectInteractiveRects(force), scheduleInteractiveRectsUpdate(), flushInteractiveRects()
+- 穿透策略：applyWindowInteractivity(forceIgnore), applyWindowInteractivityNow(forceIgnore)
+- 事件绑定：bindGlobalListeners()
+
+### 使用说明
+- 渲染进程引入 Operar_Penetration.js 并创建单例
+- 初始化后调用 bindGlobalListeners 绑定全局输入监听
+- 菜单/弹窗/工具栏状态变化时调用 applyWindowInteractivity 与 scheduleInteractiveRectsUpdate
+- 触摸 tap 触发后调用 markTouchAction，并在 click 捕获阶段用 shouldSuppressClick 抑制合成 click
+- 通过 selectors 和 extendInteractiveRects 扩展可交互区域
+
+### 迁移指南
+- 将分散的 sendIgnoreMouse、collectInteractiveRects、applyWindowInteractivity 调用收敛到模块
+- 用 markTouchAction 替代对 _lastTouchActionAt 的直接写入
+- 维持 IPC 通道名 overlay:set-ignore-mouse 与 overlay:set-interactive-rects 不变
+- 将输入类型识别统一交由 recordPointerInput 与 bindGlobalListeners
+
+## 🧪 测试报告与性能指标（浮动工具栏输入）
+
+### 自动化测试结果
+- 测试命令：npm test
+- 结果：运行结束后记录（见下方“执行结果”）
+
+### 手动场景覆盖
+- 纯触摸：未在当前环境执行（需具备触摸屏设备）
+- 纯鼠标：已覆盖（点击、拖拽、菜单打开/关闭）
+- 混合输入：未在当前环境执行（需同时连接触摸屏与鼠标）
+- 窗口重叠：已覆盖（工具栏上层交互可用，下层窗口可穿透）
+
+### 性能指标数据
+- UI 交互矩形同步：按帧合并（最大 1 次/帧）
+- 鼠标穿透轮询间隔：40ms
+- 触摸事件到交互恢复：120ms
+- 指针输入判定窗口：1.2s（鼠标活跃判定）
+
+### 执行结果
+- npm test：通过（2026-01-20）
+
+## 📘 用户操作手册更新内容
+
+### 触摸操作
+- 轻触按钮触发点击，避免大幅拖动以防误判为拖拽
+- 触摸后 400ms 内若误触鼠标点击，会被系统忽略以防重复触发
+
+### 鼠标操作
+- 鼠标点击维持原有交互逻辑
+- 拖动工具栏请使用拖拽手柄区域
+
+### 混合输入建议
+- 触摸后若立即使用鼠标，请稍等 0.4s 再点击以确保事件不被抑制
+- 在触摸屏设备上，建议先完成触摸操作，再切换鼠标精细调整
+
+### 窗口重叠场景
+- 工具栏、子菜单、设置弹窗区域始终可交互
+- 其余区域将穿透至下层应用，避免遮挡正常操作
+
 ## 🔧 配置说明
 
 ### 默认设置

@@ -26,3 +26,5 @@
 {"ts":1768714061349,"type":"plugin:load_failed","pluginId":"developer-tools","reason":"unsigned","error":"require is not defined"}
 {"ts":1768714101035,"type":"plugin:load:unsigned","pluginId":"developer-tools","reason":"unsigned"}
 {"ts":1768714101096,"type":"plugin:load_failed","pluginId":"developer-tools","reason":"unsigned","error":"require is not defined"}
+{"ts":1768873175641,"type":"plugin:load:unsigned","pluginId":"developer-tools","reason":"unsigned"}
+{"ts":1768873175849,"type":"plugin:load_failed","pluginId":"developer-tools","reason":"unsigned","error":"require is not defined"}

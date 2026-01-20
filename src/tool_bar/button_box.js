@@ -211,6 +211,17 @@ export function createButtonElement(input, options) {
   return el;
 }
 
+export function createRegisteredButton(defLike, options) {
+  const def = ensureButton(defLike);
+  if (!def) return null;
+  const opts = options && typeof options === "object" ? options : {};
+  const btn = createButtonElement(def, opts);
+  if (!btn) return null;
+  const loc = opts.location ? String(opts.location || "") : "";
+  if (loc) registerInstance(def.id, btn, loc);
+  return btn;
+}
+
 export function createToolbarButtonForFeature(featureId, defLike, options) {
   const fid = String(featureId || "");
   if (!fid) return null;
@@ -281,6 +292,7 @@ export default {
   getButton,
   ensureButton,
   createButtonElement,
+  createRegisteredButton,
   registerInstance,
   getInstance,
   listButtons,

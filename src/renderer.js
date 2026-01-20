@@ -277,6 +277,13 @@ function finalizeMultiTouchStroke(e){
 
 function pointerDown(e){
   if (!inputEnabled) return;
+  // Prevent event bubbling to ensure isolation
+  if (e && e.stopPropagation) e.stopPropagation();
+  // We don't preventDefault() here because it might block pointer capture or touch behaviors,
+  // but for pure drawing we often want to prevent default to stop scrolling/selection.
+  // In annotation mode, we usually want to block everything else.
+  if (e && e.cancelable && !shouldUseMultiTouchStroke(e)) e.preventDefault();
+
   _inkSeq += 1;
   _inkLastScheduleAt = 0;
   _cancelInkTimers();
@@ -392,6 +399,14 @@ function pointerMove(e){
 }
 
 function pointerUp(evt){
+  // Independent event isolation
+  if (drawing && inputEnabled) {
+    if (evt && evt.stopPropagation) evt.stopPropagation();
+    // Do not prevent default on pointerUp usually, as it might block click generation if needed,
+    // but for drawing isolation it is safer to prevent default if we were drawing.
+    if (evt && evt.cancelable) evt.preventDefault();
+  }
+
   if (!inputEnabled) { drawing = false; return; }
   drawing = false;
   // flush any buffered stroke

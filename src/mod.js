@@ -21,6 +21,10 @@ function _toolLogicalId(pluginId, toolId) {
   return `${pluginId}:tool:${toolId}`;
 }
 
+function _modeLogicalId(pluginId, modeId) {
+  return `${pluginId}:mode:${modeId}`;
+}
+
 function _menuLogicalId(pluginId, buttonId) {
   return `${pluginId}:menu:${buttonId}`;
 }
@@ -157,13 +161,12 @@ function _buildIconButton(def) {
     pluginId: def.pluginId,
     toolId: def.toolId || def.buttonId || ''
   };
-  const reg = ButtonBox.registerButton(base) || base;
-  const btn = ButtonBox.createButtonElement(reg, {
+  const btn = ButtonBox.createRegisteredButton(base, {
     domId: def.domId,
-    variant: 'toolbar'
+    variant: 'toolbar',
+    location: 'toolbar'
   });
   if (!btn) return null;
-  ButtonBox.registerInstance(reg.id, btn, 'toolbar');
   return btn;
 }
 
@@ -214,10 +217,22 @@ function _createToolButton(def) {
 function _createModeButton(def) {
   const body = _moreMenuBody();
   if (!body) return null;
-  const btn = document.createElement('button');
-  btn.className = 'mode-btn';
-  btn.id = def.domId;
-  btn.textContent = def.title || def.modeId;
+  const logicalId = def.buttonBoxId || _modeLogicalId(def.pluginId, def.modeId || def.domId || '');
+  const base = {
+    id: logicalId,
+    title: def.title || '',
+    label: def.title || def.modeId || '',
+    kind: 'mode',
+    source: 'plugin',
+    pluginId: def.pluginId,
+    modeId: def.modeId || ''
+  };
+  const btn = ButtonBox.createRegisteredButton(base, {
+    domId: def.domId,
+    variant: 'mode',
+    location: 'plugin-mode'
+  });
+  if (!btn) return null;
   btn.addEventListener('click', async () => {
     await Mod.activateMode(def.pluginId, def.modeId);
   });
@@ -241,16 +256,15 @@ function _createMenuButton(def) {
     pluginId: def.pluginId,
     buttonId: def.buttonId || ''
   };
-  const reg = ButtonBox.registerButton(base) || base;
-  const btn = ButtonBox.createButtonElement(reg, {
+  const btn = ButtonBox.createRegisteredButton(base, {
     domId: def.domId,
-    variant: 'menu'
+    variant: 'menu',
+    location: 'plugin-menu'
   });
   if (!btn) return null;
   btn.addEventListener('click', () => {
     _sendToPlugin(def.pluginId, { type: 'menu-click', data: { buttonId: def.buttonId } });
   });
-  ButtonBox.registerInstance(reg.id, btn, 'plugin-menu');
   grid.appendChild(btn);
   return btn;
 }

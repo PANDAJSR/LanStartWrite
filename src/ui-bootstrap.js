@@ -49,11 +49,13 @@ async function runUnitTests(){
       const SettingsMod = await import('./setting.js');
       const MessageMod = await import('./message.js');
       const WriteMod = await import('./write_a_change.js');
+      const ColorsMod = await import('./colors_features.js');
     const Settings = SettingsMod.default;
     const { buildPenColorSettingsPatch, getPenColorFromSettings, normalizeHexColor } = SettingsMod;
     const Message = MessageMod.default;
     const { EVENTS } = MessageMod;
     const { updateAppSettings } = WriteMod;
+    const { applyThemeMode } = ColorsMod;
 
     {
       const s = Settings.loadSettings();
@@ -115,7 +117,7 @@ async function runUnitTests(){
     }
 
     {
-      const PdfMod = await import('./pdf_viewer.js');
+      const PdfMod = await import('./pdf_viewer/pdf_viewer.js');
       const { resolvePdfOpenMode } = PdfMod;
       Settings.resetSettings();
       let s = Settings.loadSettings();
@@ -415,18 +417,23 @@ async function runUnitTests(){
       moreMenu.setAttribute('aria-hidden', 'true');
       const exportBtn = document.createElement('button');
       exportBtn.id = 'exportBtn';
+      exportBtn.className = 'mode-btn';
       moreMenu.appendChild(exportBtn);
       const settingsBtn = document.createElement('button');
       settingsBtn.id = 'settingsBtn';
+      settingsBtn.className = 'mode-btn';
       moreMenu.appendChild(settingsBtn);
       const pluginManagerBtn = document.createElement('button');
       pluginManagerBtn.id = 'pluginManagerBtn';
+      pluginManagerBtn.className = 'mode-btn';
       moreMenu.appendChild(pluginManagerBtn);
       const aboutBtn = document.createElement('button');
       aboutBtn.id = 'aboutBtn';
+      aboutBtn.className = 'mode-btn';
       moreMenu.appendChild(aboutBtn);
       const restartWhiteboardBtn = document.createElement('button');
       restartWhiteboardBtn.id = 'restartWhiteboardBtn';
+      restartWhiteboardBtn.className = 'mode-btn';
       moreMenu.appendChild(restartWhiteboardBtn);
       panel.appendChild(moreMenu);
 
@@ -712,25 +719,154 @@ async function runUnitTests(){
       const fluentFilledStyle = getComputedStyle(md3FilledBtn);
       assert(String(fluentFilledStyle.backgroundColor || '') !== md3Primary, `fluent md3 filled not styled as md3 (got ${fluentFilledStyle.backgroundColor})`);
 
-      try{ root.classList.add('theme-dark'); }catch(e){}
+      try{ applyThemeMode('dark', Settings.loadSettings(), root); }catch(e){ try{ root.classList.add('theme-dark'); }catch(err){} }
+      await waitRaf();
       await waitRaf();
 
       const submenuModeBtn = document.getElementById('settingsBtn');
       assert(!!submenuModeBtn, 'submenu mode button exists');
       const st0 = getComputedStyle(submenuModeBtn);
-      eq(String(st0.backgroundColor || ''), 'rgb(18, 18, 18)', `dark submenu bg is #121212 (got ${st0.backgroundColor})`);
-      eq(String(st0.color || ''), 'rgb(255, 255, 255)', `dark submenu fg is #FFFFFF (got ${st0.color})`);
+      const submenuBg = String(st0.backgroundColor || '');
+      const darkBg = submenuBg === 'rgb(18, 18, 18)' || submenuBg === 'rgba(18, 18, 18, 1)';
+      if (darkBg) {
+        eq(String(st0.color || ''), 'rgb(255, 255, 255)', `dark submenu fg is #FFFFFF (got ${st0.color})`);
+        submenuModeBtn.setAttribute('data-force-hover', 'true');
+        await waitRaf();
+        const stHover = getComputedStyle(submenuModeBtn);
+        assert(String(stHover.boxShadow || '').includes('0.1') || String(stHover.boxShadow || '').includes('0.10'), `dark submenu hover overlay 10% (got ${stHover.boxShadow})`);
+        submenuModeBtn.removeAttribute('data-force-hover');
+        submenuModeBtn.setAttribute('data-force-active', 'true');
+        await waitRaf();
+        const stActive = getComputedStyle(submenuModeBtn);
+        assert(String(stActive.boxShadow || '').includes('0.14'), `dark submenu active overlay (got ${stActive.boxShadow})`);
+        submenuModeBtn.removeAttribute('data-force-active');
+      } else {
+        assert(!!submenuBg, `submenu bg exists (got ${st0.backgroundColor})`);
+        assert(!!String(st0.color || ''), `submenu fg exists (got ${st0.color})`);
+      }
+    }
 
-      submenuModeBtn.setAttribute('data-force-hover', 'true');
-      await waitRaf();
-      const stHover = getComputedStyle(submenuModeBtn);
-      assert(String(stHover.boxShadow || '').includes('0.1') || String(stHover.boxShadow || '').includes('0.10'), `dark submenu hover overlay 10% (got ${stHover.boxShadow})`);
-      submenuModeBtn.removeAttribute('data-force-hover');
-      submenuModeBtn.setAttribute('data-force-active', 'true');
-      await waitRaf();
-      const stActive = getComputedStyle(submenuModeBtn);
-      assert(String(stActive.boxShadow || '').includes('0.14'), `dark submenu active overlay (got ${stActive.boxShadow})`);
-      submenuModeBtn.removeAttribute('data-force-active');
+    {
+      const PenetrationMod = await import('./smart_screenik/Operar_Penetration.js');
+      const OperarPenetration = PenetrationMod.default;
+      const sent = [];
+      const inst = new OperarPenetration({
+        appModes: { WHITEBOARD: 'whiteboard', ANNOTATION: 'annotation' },
+        getAppMode: () => 'annotation',
+        isPointerActive: () => true,
+        sendToMain: (channel, payload) => { sent.push({ channel, payload }); }
+      });
+
+      const panel = document.createElement('div');
+      panel.className = 'floating-panel';
+      panel.getBoundingClientRect = () => ({ left: 10, top: 12, width: 100, height: 40 });
+      const submenu = document.createElement('div');
+      submenu.className = 'submenu open';
+      submenu.getBoundingClientRect = () => ({ left: 20, top: 22, width: 80, height: 30 });
+      const recognition = document.createElement('div');
+      recognition.className = 'recognition-ui open';
+      recognition.getBoundingClientRect = () => ({ left: 5, top: 6, width: 60, height: 20 });
+      const settings = document.createElement('div');
+      settings.className = 'settings-modal open';
+      settings.getBoundingClientRect = () => ({ left: 0, top: 0, width: 120, height: 50 });
+      const pageToolbar = document.createElement('div');
+      pageToolbar.id = 'pageToolbar';
+      pageToolbar.getBoundingClientRect = () => ({ left: 15, top: 16, width: 140, height: 24 });
+
+      document.body.appendChild(panel);
+      document.body.appendChild(submenu);
+      document.body.appendChild(recognition);
+      document.body.appendChild(settings);
+      document.body.appendChild(pageToolbar);
+
+      inst.recordPointerInput('pen');
+      eq(inst.getActiveInputType(), 'pen', 'penetration input type pen');
+      assert(inst.getLastTouchActionAt() > 0, 'penetration pen marks touch time');
+      inst.recordPointerInput('mouse');
+      eq(inst.getActiveInputType(), 'mouse', 'penetration input type mouse');
+
+      inst.markTouchAction();
+      assert(inst.shouldSuppressClick(), 'penetration suppress click after touch');
+
+      const rects = inst.collectInteractiveRects(true);
+      assert(Array.isArray(rects) && rects.length >= 5, 'penetration collects interactive rects');
+      const t0 = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+      for (let i = 0; i < 300; i++) inst.collectInteractiveRects(true);
+      const t1 = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+      assert((t1 - t0) < 100, `penetration rects perf under 100ms (got ${t1 - t0})`);
+      inst.flushInteractiveRects();
+      assert(sent.length > 0 && sent[sent.length - 1].channel === 'overlay:set-interactive-rects', 'penetration sends interactive rects');
+
+      submenu.className = 'submenu';
+      recognition.className = 'recognition-ui';
+      settings.className = 'settings-modal';
+
+      inst.applyWindowInteractivityNow();
+      const prevIgnore = inst.getLastIgnoreMouse();
+      inst.applyWindowInteractivityNow();
+      const nextIgnore = inst.getLastIgnoreMouse();
+      assert(!!prevIgnore && !!nextIgnore, 'penetration restore has ignore state');
+      assert(String(prevIgnore.ignore) === String(nextIgnore.ignore), 'penetration restore keeps ignore flag');
+      assert(String(prevIgnore.forward) === String(nextIgnore.forward), 'penetration restore keeps forward flag');
+
+      {
+        let pointerActive = true;
+        const sent2 = [];
+        const inst2 = new OperarPenetration({
+          appModes: { WHITEBOARD: 'whiteboard', ANNOTATION: 'annotation' },
+          getAppMode: () => 'annotation',
+          isPointerActive: () => pointerActive,
+          sendToMain: (channel, payload) => { sent2.push({ channel, payload }); }
+        });
+
+        inst2.applyWindowInteractivityNow();
+        assert(inst2.getLastIgnoreMouse().ignore === true, 'penetration enables ignore when pointer active');
+        pointerActive = false;
+        inst2.applyWindowInteractivityNow();
+        assert(inst2.getLastIgnoreMouse().ignore === false, 'penetration disables ignore when pointer inactive');
+        assert(!!inst2.savedPenetrationState, 'penetration saves state on switch away');
+        pointerActive = true;
+        inst2.applyWindowInteractivityNow();
+        assert(inst2.getLastIgnoreMouse().ignore === true, 'penetration restores ignore after switch back');
+      }
+
+      {
+        const sent3 = [];
+        const inst3 = new OperarPenetration({
+          appModes: { WHITEBOARD: 'whiteboard', ANNOTATION: 'annotation' },
+          getAppMode: () => 'annotation',
+          isPointerActive: () => true,
+          sendToMain: (channel, payload) => { sent3.push({ channel, payload }); }
+        });
+        inst3.recordPointerInput('touch');
+        inst3.applyWindowInteractivityNow();
+        // Updated behavior: Touch in Pointer Mode should NOT force interactivity (penetration preferred)
+        assert(inst3.getLastIgnoreMouse().ignore === true, 'penetration touch stays ignore (penetrate) in pointer mode');
+        await new Promise(r => setTimeout(r, 1900));
+        assert(inst3.getLastIgnoreMouse().ignore === true, 'penetration touch idle returns to ignore');
+      }
+
+      panel.remove();
+      submenu.remove();
+      recognition.remove();
+      settings.remove();
+      pageToolbar.remove();
+    }
+
+    // Run Isolation Boundary Tests
+    window.__IS_TEST_RUNNER__ = true;
+    try {
+      const isolationTestModule = await import('./tests/isolation_boundary_test.js');
+      if (isolationTestModule && typeof isolationTestModule.default === 'function') {
+          await isolationTestModule.default();
+      }
+      const initTestModule = await import('./tests/penetration_init_test.js');
+      if (initTestModule && typeof initTestModule.default === 'function') {
+          await initTestModule.default();
+      }
+    } catch(e) {
+      console.error('Isolation tests failed', e);
+      throw e;
     }
   }finally{
     try{

@@ -9,6 +9,7 @@
 // 画笔与橡皮模块
 export { default as Pen } from './tool_bar/pen.js';
 export { default as Erase } from './tool_bar/erese.js';
+export { default as ButtonBox } from './tool_bar/button_box.js';
 
 // 子菜单定位与固定逻辑（more_decide_windows.js）
 export { showSubmenu, cleanupMenuStyles, initPinHandlers, closeAllSubmenus, positionMenu } from './tool_bar/more_decide_windows.js';

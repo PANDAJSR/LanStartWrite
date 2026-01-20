@@ -53,6 +53,8 @@ export const EVENTS = {
   /** 应用准备退出/重启（主进程 → 渲染进程） */
   APP_PREPARE_EXIT: 'app:prepare-exit',
   
+  PENETRATION_BUTTON_STATE_CHANGED: 'toolbar:penetration-button-state-changed',
+  
   /** 主进程 → 渲染进程（保留字段，当前主要使用 electronAPI 通道） */
   MAIN_PROCESS_MSG: 'main:message',
   /** 渲染进程 → 主进程（保留字段，当前主要使用 electronAPI 通道） */

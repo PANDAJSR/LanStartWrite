@@ -8,7 +8,7 @@ export function applyModeCanvasBackground(mode, canvasColor, deps){
     const map = {
       white: { bg: isDarkUi ? '#121212' : '#ffffff', pen: isDarkUi ? '#ffffff' : '#000000' },
       black: { bg: '#000000', pen: '#ffffff' },
-      chalkboard: { bg: '#041604ff', pen: '#ffffff' }
+      chalkboard: { bg: '#172A25', pen: '#ffffff' }
     };
     const cfg = map[canvasColor] || { bg: '#ffffff', pen: '#000000' };
 
@@ -32,10 +32,11 @@ export function applyModeCanvasBackground(mode, canvasColor, deps){
       const n = normalize(c);
       return n === '#000000' || n === '#ffffff';
     };
-    const preferredPen = (typeof getPreferredPenColor === 'function') ? getPreferredPenColor(mode) : null;
-    const preferredNorm = normalize(preferredPen);
-    const defaultPreferred = (mode === 'annotation') ? '#ff0000' : '#000000';
-    const allowAutoSwitch = (mode !== 'annotation') && (preferredNorm === defaultPreferred);
+    let preferredPen = '';
+    try{
+      if (typeof getPreferredPenColor === 'function') preferredPen = getPreferredPenColor(mode);
+    }catch(e){}
+    const allowAutoSwitch = (mode !== 'annotation') && (!preferredPen || isAutoPen(preferredPen));
 
     try{
       if (allowAutoSwitch && typeof getToolState === 'function' && typeof replaceStrokeColors === 'function') {

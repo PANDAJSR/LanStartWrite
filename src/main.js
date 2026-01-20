@@ -148,7 +148,7 @@ function _ensureAuditReportTimer() {
 }
 
 function _applyIgnoreMouse(ignore, forward) {
-  if (!mainWindow) return;
+  if (!mainWindow || mainWindow.isDestroyed()) return;
   const key = `${ignore ? 1 : 0}:${forward ? 1 : 0}`;
   if (_overlayLastApplied === key) return;
   _overlayLastApplied = key;
@@ -1404,6 +1404,10 @@ ipcMain.on('tests:result', (event, payload) => {
   try{ app.exit(ok ? 0 : 1); }catch(e){ process.exit(ok ? 0 : 1); }
 });
 
+ipcMain.on('tests:log', (event, msg) => {
+  console.log('[TEST]', msg);
+});
+
 ipcMain.on('overlay:set-ignore-mouse', (event, payload) => {
   try{
     if (!mainWindow) return;
@@ -1710,7 +1714,7 @@ ipcMain.handle('message', async (event, channel, data) => {
         const mode = payload.mode === 'fullscreen' ? 'fullscreen' : 'window';
         
         // Load our custom UI instead of the raw PDF
-        const uiPath = path.join(__dirname, 'pdf_viewer_ui.html');
+        const uiPath = path.join(__dirname, 'pdf_viewer', 'pdf_viewer_ui.html');
         const fileUrl = pathToFileURL(uiPath).toString() + `?path=${encodeURIComponent(rawPath)}&mode=${mode}`;
         
         const win = new BrowserWindow({
@@ -1786,7 +1790,7 @@ ipcMain.handle('message', async (event, channel, data) => {
 
     case 'video-booth:open-window': {
       try {
-        const uiPath = path.join(__dirname, 'video_booth.html');
+        const uiPath = path.join(__dirname, 'video_booth', 'video_booth.html');
         const fileUrl = pathToFileURL(uiPath).toString();
         
         const win = new BrowserWindow({

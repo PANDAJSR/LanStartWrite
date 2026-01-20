@@ -485,6 +485,29 @@ function _appendSettingsHistoryRecord(record){
   return true;
 }
 
+const _SETTINGS_CHANGE_LOG_KEY = 'ls_settings_change_log_v1';
+const _SETTINGS_CHANGE_LOG_LIMIT = 200;
+
+function _readSettingsChangeLog(){
+  try{
+    const raw = localStorage.getItem(_SETTINGS_CHANGE_LOG_KEY);
+    if (!raw) return [];
+    const arr = JSON.parse(raw);
+    return Array.isArray(arr) ? arr : [];
+  }catch(e){
+    return [];
+  }
+}
+
+function _appendSettingsChangeLog(entry){
+  if (!entry || typeof entry !== 'object') return false;
+  const list = _readSettingsChangeLog();
+  list.unshift(entry);
+  if (list.length > _SETTINGS_CHANGE_LOG_LIMIT) list.length = _SETTINGS_CHANGE_LOG_LIMIT;
+  try{ localStorage.setItem(_SETTINGS_CHANGE_LOG_KEY, JSON.stringify(list)); }catch(e){}
+  return true;
+}
+
 function _markHistoryUndone(ids){
   const set = new Set((Array.isArray(ids) ? ids : []).map(v => String(v || '')).filter(Boolean));
   if (!set.size) return 0;
@@ -576,6 +599,19 @@ export function updateAppSettings(partial, opts){
       const rec = buildSettingsHistoryRecord(before, merged, partial, { source: String(hist.source || 'settings') });
       if (rec) _appendSettingsHistoryRecord(rec);
     }
+  }catch(e){}
+  try{
+    const o = (opts && typeof opts === 'object') ? opts : {};
+    const hist = (o.history && typeof o.history === 'object') ? o.history : {};
+    const p = partial && typeof partial === 'object' ? partial : {};
+    const entry = {
+      ts: Date.now(),
+      source: String(hist.source || 'settings'),
+      keys: Object.keys(p || {}),
+      ok: !(merged && merged.__lsPersistOk === false),
+      error: merged && merged.__lsPersistOk === false ? String(merged.__lsPersistError || '') : ''
+    };
+    _appendSettingsChangeLog(entry);
   }catch(e){}
   return merged;
 }

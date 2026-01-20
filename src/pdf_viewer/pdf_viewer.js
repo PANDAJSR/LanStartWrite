@@ -1,5 +1,5 @@
-import Message, { EVENTS } from './message.js';
-import Settings from './setting.js';
+import Message, { EVENTS } from '../message.js';
+import Settings from '../setting.js';
 
 function _invokeMainMessage(channel, data) {
   try {

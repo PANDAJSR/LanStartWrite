@@ -615,6 +615,26 @@ function initToolbarLogic() {
     let currentOrder = [];
     let hiddenIds = new Set();
 
+    const persistLayout = (opts) => {
+        const patch = {
+            toolbarButtonOrder: currentOrder.slice(),
+            toolbarButtonHidden: Array.from(hiddenIds)
+        };
+        try {
+            const merged = updateAppSettings(patch, { history: { source: String(opts && opts.source || 'settings_window_toolbar') } });
+            _requestSettingsChangedToMain(merged);
+            try { _lastPersistedJSON = JSON.stringify(getSettingsFromUI()); } catch (e) { }
+            if (merged && merged.__lsPersistOk === false) {
+                if (typeof showToast === 'function') showToast('工具栏设置保存失败', 'error');
+            } else if (opts && opts.toast && typeof showToast === 'function') {
+                showToast(String(opts.toast), 'success');
+            }
+        } catch (e) {
+            try { console.warn('[settings] toolbar persist failed', e); } catch (err) { }
+            if (typeof showToast === 'function') showToast('工具栏设置保存失败', 'error');
+        }
+    };
+
     const updateFromSettings = () => {
         const s = loadSettings();
         const defaultOrder = [
@@ -667,6 +687,7 @@ function initToolbarLogic() {
                     hiddenIds.add(id);
                 }
                 render();
+                persistLayout({ source: 'settings_window_toolbar_toggle', toast: '已更新工具栏显示' });
             });
         });
     };
@@ -703,6 +724,7 @@ function initToolbarLogic() {
             .map(el => el.dataset.id);
         currentOrder = newOrder;
         render();
+        persistLayout({ source: 'settings_window_toolbar_sort', toast: '已更新工具栏排序' });
     });
 
     if (resetBtn) {
@@ -715,6 +737,7 @@ function initToolbarLogic() {
             currentOrder = [...defaultOrder];
             hiddenIds = new Set();
             render();
+            persistLayout({ source: 'settings_window_toolbar_reset', toast: '已恢复默认布局' });
         });
     }
 
@@ -725,6 +748,13 @@ function initToolbarLogic() {
     });
 
     updateFromSettings();
+    try { Message.on(EVENTS.SETTINGS_CHANGED, updateFromSettings); } catch (e) { }
+    try {
+        window.addEventListener('storage', (e) => {
+            if (!e) return;
+            if (e.key === 'appSettings') updateFromSettings();
+        });
+    } catch (e) { }
 }
 
 async function loadPlugins() {
@@ -943,13 +973,28 @@ function _jumpToSettingPath(path) {
 
 function _historyRenderMeta() {
     if (!_historyUi.metaEl) return;
-    const total = _historyUi.all.length;
-    const undone = _historyUi.all.filter(r => r && r.undone).length;
+    // Show total from cache if available, else current list
+    const source = _historyFullCache.length > 0 ? _historyFullCache : _historyUi.all;
+    const total = source.length;
+    const undone = source.filter(r => r && r.undone).length;
     _historyUi.metaEl.textContent = `记录: ${total}  已撤回: ${undone}  已选择: ${_historyUi.selected.size}`;
 }
 
 // Optimized History Renderer with Virtualization (Chunking)
 const _HISTORY_CHUNK_SIZE = 20;
+
+function _throttle(func, limit) {
+    let inThrottle;
+    return function() {
+        const args = arguments;
+        const context = this;
+        if (!inThrottle) {
+            func.apply(context, args);
+            inThrottle = true;
+            setTimeout(() => inThrottle = false, limit);
+        }
+    }
+}
 
 class HistoryChunkManager {
     constructor(container) {
@@ -962,6 +1007,49 @@ class HistoryChunkManager {
     setData(data) {
         this.data = data || [];
         this.renderPlaceholders();
+    }
+
+    appendData(newData) {
+        if (!Array.isArray(newData) || newData.length === 0) return;
+        const oldChunkCount = this.chunks.size;
+        this.data = this.data.concat(newData);
+        
+        const newTotalChunkCount = Math.ceil(this.data.length / _HISTORY_CHUNK_SIZE);
+        
+        // If the last chunk was partial and is rendered, re-render it to include new data
+        if (oldChunkCount > 0) {
+            const lastIdx = oldChunkCount - 1;
+            const chunk = this.chunks.get(lastIdx);
+            if (chunk && chunk.isRendered) {
+                this.renderChunk(lastIdx);
+            }
+        }
+
+        // Add new chunks
+        for (let i = oldChunkCount; i < newTotalChunkCount; i++) {
+            const el = document.createElement('div');
+            el.className = 'ls-history-chunk';
+            el.dataset.index = i;
+            el.style.minHeight = '1px';
+            this.container.appendChild(el);
+            this.observer.observe(el);
+            this.chunks.set(i, { el, height: 0, isRendered: false });
+        }
+        
+        // Ensure footer is at the end
+        this.ensureFooter();
+    }
+
+    ensureFooter() {
+        let footer = this.container.querySelector('.ls-history-footer-pad');
+        if (!footer) {
+            footer = document.createElement('div');
+            footer.className = 'ls-history-footer-pad';
+            footer.style.height = '20px';
+            this.container.appendChild(footer);
+        } else {
+            this.container.appendChild(footer); // Move to end
+        }
     }
 
     renderPlaceholders() {
@@ -982,10 +1070,7 @@ class HistoryChunkManager {
             this.chunks.set(i, { el, height: 0, isRendered: false });
         }
         
-        // Add footer padding to ensure scrolling
-        const footer = document.createElement('div');
-        footer.style.height = '20px';
-        this.container.appendChild(footer);
+        this.ensureFooter();
     }
 
     onIntersect(entries) {
@@ -1042,8 +1127,11 @@ class HistoryChunkManager {
 }
 
 let _historyChunkManager = null;
+let _historyFullCache = [];
+let _historyLoadedCount = 0;
+let _historyIsLoading = false;
 
-function _historyRender(reset) {
+function _historyRender(reset, append) {
     if (!_historyUi.timelineEl) return;
     
     // Initialize manager if needed
@@ -1053,118 +1141,81 @@ function _historyRender(reset) {
     
     if (reset) {
         _historyChunkManager.setData(_historyUi.all);
+    } else if (append) {
+        // We assume _historyUi.all has been updated with new items at the end
+        // But ChunkManager needs the *new* items only?
+        // No, my appendData implementation expects the NEW items.
+        // So I should pass them.
+        // Wait, _historyUi.all is usually the source of truth.
+        // If I update _historyUi.all outside, I should pass the diff.
+        // Refactored flow: see _loadMoreHistory
     }
     
     _historyRenderMeta();
 }
 
+function _escapeHtml(str) {
+    if (!str) return '';
+    return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+}
+
 function _buildHistoryItem(rec) {
+    const recId = String(rec && rec.id || '');
+    const isUndone = rec && rec.undone;
+    const changes = Array.isArray(rec && rec.changes) ? rec.changes : [];
+    const ts = _formatTs(rec && rec.ts);
+    const source = String(rec && rec.source || 'settings');
+    const mainText = changes.length === 1 ? String(changes[0].path || '设置变更') : `${changes.length || 0} 项设置变更`;
+    const isSelected = _historyUi.selected.has(recId);
+
+    const changesHtml = changes.map(c => {
+        const path = _escapeHtml(String(c && c.path || ''));
+        const before = _escapeHtml(String(c && c.beforeText || ''));
+        const after = _escapeHtml(String(c && c.afterText || ''));
+        return `
+            <div class="ls-history-diff-row">
+                <button type="button" data-action="jump" data-path="${path}">
+                    <div class="ls-history-diff-path">${path}</div>
+                </button>
+                <div class="ls-history-diff-values">${before} → ${after}</div>
+            </div>
+        `;
+    }).join('');
+
     const item = document.createElement('div');
     item.className = 'ls-history-item';
     item.setAttribute('role', 'listitem');
-
-    const card = document.createElement('div');
-    card.className = `ls-history-card${rec && rec.undone ? ' is-undone' : ''}`;
-    const recId = String(rec && rec.id || '');
-    card.dataset.id = recId;
-    item.appendChild(card);
-
-    // Header
-    const header = document.createElement('div');
-    header.className = 'ls-history-card-header';
-    card.appendChild(header);
-
-    const titleWrap = document.createElement('div');
-    titleWrap.className = 'ls-history-card-title';
-    header.appendChild(titleWrap);
-
-    const timeEl = document.createElement('div');
-    timeEl.className = 'ls-history-time';
-    timeEl.textContent = _formatTs(rec && rec.ts);
-    titleWrap.appendChild(timeEl);
-
-    const mainEl = document.createElement('div');
-    mainEl.className = 'ls-history-main';
-    const changes = Array.isArray(rec && rec.changes) ? rec.changes : [];
-    mainEl.textContent = changes.length === 1 ? String(changes[0].path || '设置变更') : `${changes.length || 0} 项设置变更`;
-    titleWrap.appendChild(mainEl);
-
-    const badges = document.createElement('div');
-    badges.className = 'ls-history-badges';
-    header.appendChild(badges);
-
-    const sourceBadge = document.createElement('div');
-    sourceBadge.className = 'ls-history-badge';
-    sourceBadge.textContent = String(rec && rec.source || 'settings');
-    badges.appendChild(sourceBadge);
-
-    if (rec && rec.undone) {
-        const undoneBadge = document.createElement('div');
-        undoneBadge.className = 'ls-history-badge ls-history-badge-undone';
-        undoneBadge.textContent = '已撤回';
-        badges.appendChild(undoneBadge);
-    }
-
-    // Body
-    const body = document.createElement('div');
-    body.className = 'ls-history-card-body';
-    card.appendChild(body);
-
-    const diffs = document.createElement('div');
-    diffs.className = 'ls-history-diff';
-    body.appendChild(diffs);
-
-    for (const c of changes) {
-        const row = document.createElement('div');
-        row.className = 'ls-history-diff-row';
-        diffs.appendChild(row);
-
-        const btn = document.createElement('button');
-        btn.type = 'button';
-        btn.dataset.action = 'jump';
-        btn.dataset.path = String(c && c.path || '');
-        row.appendChild(btn);
-
-        const p = document.createElement('div');
-        p.className = 'ls-history-diff-path';
-        p.textContent = String(c && c.path || '');
-        btn.appendChild(p);
-
-        const v = document.createElement('div');
-        v.className = 'ls-history-diff-values';
-        v.textContent = `${String(c && c.beforeText || '')} → ${String(c && c.afterText || '')}`;
-        row.appendChild(v);
-    }
-
-    // Actions
-    const actions = document.createElement('div');
-    actions.className = 'ls-history-actions';
-    body.appendChild(actions);
-
-    const select = document.createElement('input');
-    select.type = 'checkbox';
-    select.className = 'ls-history-select';
-    select.dataset.id = recId; // Add ID to checkbox for easier delegation
-    select.checked = _historyUi.selected.has(recId);
-    if (rec && rec.undone) select.disabled = true;
-    actions.appendChild(select);
-
-    const jumpBtn = document.createElement('button');
-    jumpBtn.type = 'button';
-    jumpBtn.className = 'mode-btn';
-    jumpBtn.textContent = '跳转';
-    jumpBtn.dataset.action = 'jump';
-    jumpBtn.dataset.path = changes[0] ? String(changes[0].path || '') : '';
-    actions.appendChild(jumpBtn);
-
-    const undoBtn = document.createElement('button');
-    undoBtn.type = 'button';
-    undoBtn.className = 'mode-btn';
-    undoBtn.textContent = '撤回';
-    undoBtn.dataset.action = 'undo';
-    undoBtn.dataset.id = recId;
-    if (rec && rec.undone) undoBtn.disabled = true;
-    actions.appendChild(undoBtn);
+    
+    // Use innerHTML for faster rendering of complex structure
+    item.innerHTML = `
+        <div class="ls-history-card${isUndone ? ' is-undone' : ''}" data-id="${_escapeHtml(recId)}">
+            <div class="ls-history-card-header">
+                <div class="ls-history-card-title">
+                    <div class="ls-history-time">${_escapeHtml(ts)}</div>
+                    <div class="ls-history-main">${_escapeHtml(mainText)}</div>
+                </div>
+                <div class="ls-history-badges">
+                    <div class="ls-history-badge">${_escapeHtml(source)}</div>
+                    ${isUndone ? '<div class="ls-history-badge ls-history-badge-undone">已撤回</div>' : ''}
+                </div>
+            </div>
+            <div class="ls-history-card-body">
+                <div class="ls-history-diff">
+                    ${changesHtml}
+                </div>
+                <div class="ls-history-actions">
+                    <input type="checkbox" class="ls-history-select" data-id="${_escapeHtml(recId)}" ${isSelected ? 'checked' : ''} ${isUndone ? 'disabled' : ''}>
+                    <button type="button" class="mode-btn" data-action="jump" data-path="${changes[0] ? _escapeHtml(String(changes[0].path || '')) : ''}">跳转</button>
+                    <button type="button" class="mode-btn" data-action="undo" data-id="${_escapeHtml(recId)}" ${isUndone ? 'disabled' : ''}>撤回</button>
+                </div>
+            </div>
+        </div>
+    `;
 
     return item;
 }
@@ -1174,23 +1225,55 @@ function _historyRefresh(opts) {
     const o = (opts && typeof opts === 'object') ? opts : {};
     if (_historyRefreshTimer) clearTimeout(_historyRefreshTimer);
     _historyRefreshTimer = setTimeout(() => {
-        // Use requestIdleCallback for loading heavy history if available
-        const run = () => {
-            _historyUi.all = loadSettingsHistory(2000);
+        const loadingEl = document.getElementById('settingsHistoryLoading');
+        if (loadingEl) loadingEl.hidden = false;
+        
+        // Use setTimeout to allow UI to render mask
+        setTimeout(() => {
+            // Load full history
+            _historyFullCache = loadSettingsHistory(5000);
+            
+            // Initial batch
+            _historyLoadedCount = 100;
+            _historyUi.all = _historyFullCache.slice(0, _historyLoadedCount);
+            
             if (o.reset) _historyUi.selected.clear();
             _historyRenderMeta();
+            
             const page = document.getElementById('page-history');
             const isActive = page && page.classList.contains('active');
             if (isActive) _historyRender(true);
+            
             if (o.reloadSettings) loadCurrentSettings();
-        };
-        
-        if (window.requestIdleCallback) {
-            window.requestIdleCallback(run);
-        } else {
-            setTimeout(run, 10);
+            
+            if (loadingEl) loadingEl.hidden = true;
+        }, 50);
+    }, 50);
+}
+
+function _loadMoreHistory() {
+    if (_historyIsLoading) return;
+    if (_historyLoadedCount >= _historyFullCache.length) return;
+    
+    _historyIsLoading = true;
+    const loadingEl = document.getElementById('settingsHistoryLoading');
+    if (loadingEl) loadingEl.hidden = false;
+    
+    setTimeout(() => {
+        const nextBatch = _historyFullCache.slice(_historyLoadedCount, _historyLoadedCount + 100);
+        if (nextBatch.length > 0) {
+            _historyLoadedCount += nextBatch.length;
+            _historyUi.all = _historyUi.all.concat(nextBatch);
+            
+            if (_historyChunkManager) {
+                _historyChunkManager.appendData(nextBatch);
+            }
+            _historyRenderMeta();
         }
-    }, 50); // Increased debounce slightly
+        
+        if (loadingEl) loadingEl.hidden = true;
+        _historyIsLoading = false;
+    }, 50); // Simulate network/processing delay if needed, or just yield to UI
 }
 
 function initSettingsHistory() {
@@ -1201,9 +1284,19 @@ function initSettingsHistory() {
     _historyUi.selectAllBtn = document.getElementById('historySelectAllBtn');
     _historyUi.undoSelectedBtn = document.getElementById('historyUndoSelectedBtn');
     _historyUi.clearBtn = document.getElementById('historyClearBtn');
+    _historyUi.loadingEl = document.getElementById('settingsHistoryLoading');
     
-    // Hide Load More button as we use virtual scrolling
+    // Hide Load More button as we use infinite scrolling
     if (_historyUi.loadMoreBtn) _historyUi.loadMoreBtn.style.display = 'none';
+
+    // Infinite Scroll Listener
+    _historyUi.timelineEl.addEventListener('scroll', _throttle(() => {
+        const el = _historyUi.timelineEl;
+        // Load more when user scrolls to bottom (threshold 200px)
+        if (el.scrollHeight - el.scrollTop - el.clientHeight < 200) {
+            _loadMoreHistory();
+        }
+    }, 200));
 
     // Event Delegation for Timeline
     _historyUi.timelineEl.addEventListener('click', (e) => {
@@ -1250,7 +1343,10 @@ function initSettingsHistory() {
 
     if (_historyUi.selectAllBtn) {
         _historyUi.selectAllBtn.addEventListener('click', () => {
-            const selectable = _historyUi.all.filter(r => r && !r.undone).map(r => String(r.id || '')).filter(Boolean);
+            // Use full cache for selection if available, otherwise fallback to loaded items
+            const source = _historyFullCache.length > 0 ? _historyFullCache : _historyUi.all;
+            const selectable = source.filter(r => r && !r.undone).map(r => String(r.id || '')).filter(Boolean);
+            
             const allSelected = selectable.length && selectable.every(id => _historyUi.selected.has(id));
             if (allSelected) _historyUi.selected.clear();
             else for (const id of selectable) _historyUi.selected.add(id);

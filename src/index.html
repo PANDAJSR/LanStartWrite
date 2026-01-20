@@ -627,9 +627,9 @@
       }
       .theme-dark body, .theme-dark html { background: transparent; color: var(--text-high); }
       .theme-dark body[data-app-mode="whiteboard"] .canvas-wrap { background: var(--bg-1); }
-      .theme-dark .floating-panel{background: var(--ls-dark-surface); box-shadow:none; border:1px solid rgba(255,255,255,0.06);}
+      .theme-dark .floating-panel{background: rgba(0,0,0,0.8); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); box-shadow:none; border:1px solid rgba(255,255,255,0.06);}
       .theme-dark .tool-btn{background: var(--ls-dark-surface); color: var(--ls-dark-on-surface);}
-      .theme-dark .submenu{background: rgba(12,12,12,0.9); border: 1px solid rgba(255,255,255,0.04); color: var(--text)}
+      .theme-dark .submenu{background: rgba(0,0,0,0.8); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); border: 1px solid rgba(255,255,255,0.04); color: var(--text)}
       .theme-dark .submenu .submenu-quick{background:rgba(255,255,255,0.03);border-right-color:rgba(255,255,255,0.06)}
       .theme-dark .settings-panel{background:#0f1011;color:var(--text);box-shadow:0 14px 48px rgba(0,0,0,0.7);border:1px solid rgba(255,255,255,0.04)}
       .theme-dark .settings-tab{background:rgba(255,255,255,0.02);border-color:rgba(255,255,255,0.06);color:var(--text)}
@@ -915,8 +915,8 @@
       .theme-dark.visual-solid #pageToolbar{background:rgba(18,18,18,1)}
       .theme-dark.visual-solid .drag-handle{background:linear-gradient(180deg,#2a2a2a,#1b1b1b);border:1px solid rgba(255,255,255,0.04)}
 
-      .theme-dark.visual-blur .floating-panel{background:rgba(24,24,24,0.6);backdrop-filter:blur(8px)}
-      .theme-dark.visual-blur .submenu{background:rgba(12,12,12,0.9);backdrop-filter:blur(4px)}
+      .theme-dark.visual-blur .floating-panel{background:rgba(0,0,0,0.8);backdrop-filter:blur(20px)}
+      .theme-dark.visual-blur .submenu{background:rgba(0,0,0,0.8);backdrop-filter:blur(20px)}
       .theme-dark.visual-blur #pageToolbar{background:rgba(24,24,24,0.6)}
       .theme-dark.visual-blur .drag-handle{background:linear-gradient(180deg,#2a2a2a,#171717);border:1px solid rgba(255,255,255,0.04);box-shadow:0 4px 12px rgba(0,0,0,0.6);color:var(--text)}
 

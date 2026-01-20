@@ -1,7 +1,7 @@
 // curous.js
 // Simple selection/pan/zoom module for the whiteboard
 
-import * as R from './renderer.js';
+import * as R from '../renderer.js';
 
 const MIN_SCALE = 0.1;
 const MAX_SCALE = 3.0;
@@ -116,14 +116,7 @@ function canvasClientToCanvasInternal(clientX, clientY){
 }
 
 function _isUiEventTarget(target){
-  try{
-    if (!target || !target.closest) return false;
-    // 允许通过触控操作视频展台的控制按钮
-    if (target.closest('.video-booth-window')) return false;
-    return !!target.closest('.floating-panel, .submenu, .recognition-ui, #settingsModal, .settings-modal, #pageToolbar');
-  }catch(e){
-    return false;
-  }
+  return OperarPenetration.isUiTarget(target);
 }
 
 function onPointerDown(e){

@@ -248,6 +248,10 @@ export function saveSettings(settings){
   return merged;
 }
 
+export function getPersistStatus(){
+  return { ok: !_lastPersistError, error: _lastPersistError || '' };
+}
+
 /**
  * 重置设置为 DEFAULTS。
  * @returns {Object} DEFAULTS 引用
@@ -571,4 +575,10 @@ export function pushRecentColor(color, limit){
   return next;
 }
 
-export default { loadSettings, saveSettings, resetSettings, loadRecentColors, pushRecentColor, buildSettingsHistoryRecord, formatSettingValue };
+import { loadSettingsHistory } from './write_a_change.js';
+
+export function loadSettingsHistoryWrapper(limit){
+  return loadSettingsHistory(limit);
+}
+
+export default { loadSettings, saveSettings, resetSettings, loadRecentColors, pushRecentColor, buildSettingsHistoryRecord, formatSettingValue, getPersistStatus, loadSettingsHistory: loadSettingsHistoryWrapper };

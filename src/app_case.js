@@ -2,7 +2,7 @@ import Settings from './setting.js';
 import { updateAppSettings } from './write_a_change.js';
 import Message, { EVENTS } from './message.js';
 import ButtonBox from './tool_bar/button_box.js';
-import { openPdfFile } from './pdf_viewer.js';
+import { openPdfFile } from './pdf_viewer/pdf_viewer.js';
 
 /**
  * 功能库统一功能管理模块（Feature Hub）
