@@ -1329,25 +1329,38 @@ window.addEventListener('DOMContentLoaded', async ()=>{
     }
   }catch(e){}
 
-  // load whiteboard UI components
-  const whiteboardNodes = await loadFragment('./whiteboard/whiteboard.html');
-  whiteboardNodes.forEach(n => document.body.appendChild(n));
-  
-  // load floating toolbar UI components
-  const toolNodes = await loadFragment('./tool_bar/ui_tool.html');
-  toolNodes.forEach(n => document.body.appendChild(n));
-  
-  // settings UI appended to body
-  const settingsNodes = await loadFragment('./setting_ui.html');
-  settingsNodes.forEach(n => document.body.appendChild(n));
+  let isToolbarWindow = false;
+  try{
+    const params = new URLSearchParams(location.search || '');
+    isToolbarWindow = params.get('toolbarWindow') === '1';
+  }catch(e){}
 
-  // now import main modules (renderer first, then ui-tools and page)
-  try{ await import('./renderer.js'); }catch(e){ console.warn('import renderer failed', e); }
-  // small IPC bridge to forward Message-based file write requests to main process
-  try{ await import('./ipc_bridge.js'); }catch(e){ console.warn('import ipc_bridge failed', e); }
-  try{ await import('./tool_bar/ui-tools.js'); }catch(e){ console.warn('import ui-tools failed', e); }
-  try{ await import('./page.js'); }catch(e){ console.warn('import page failed', e); }
-  try{ await import('./mod.js'); }catch(e){ console.warn('import mod failed', e); }
+  if (isToolbarWindow) {
+    const toolNodes = await loadFragment('./tool_bar/ui_tool.html');
+    toolNodes.forEach(n => document.body.appendChild(n));
+
+    const settingsNodes = await loadFragment('./setting_ui.html');
+    settingsNodes.forEach(n => document.body.appendChild(n));
+
+    try{ await import('./ipc_bridge.js'); }catch(e){ console.warn('import ipc_bridge failed', e); }
+    try{ await import('./tool_bar/ui-tools.js'); }catch(e){ console.warn('import ui-tools failed', e); }
+    try{ await import('./mod.js'); }catch(e){ console.warn('import mod failed', e); }
+  } else {
+    const whiteboardNodes = await loadFragment('./whiteboard/whiteboard.html');
+    whiteboardNodes.forEach(n => document.body.appendChild(n));
+
+    const toolNodes = await loadFragment('./tool_bar/ui_tool.html');
+    toolNodes.forEach(n => document.body.appendChild(n));
+
+    const settingsNodes = await loadFragment('./setting_ui.html');
+    settingsNodes.forEach(n => document.body.appendChild(n));
+
+    try{ await import('./renderer.js'); }catch(e){ console.warn('import renderer failed', e); }
+    try{ await import('./ipc_bridge.js'); }catch(e){ console.warn('import ipc_bridge failed', e); }
+    try{ await import('./tool_bar/ui-tools.js'); }catch(e){ console.warn('import ui-tools failed', e); }
+    try{ await import('./page.js'); }catch(e){ console.warn('import page failed', e); }
+    try{ await import('./mod.js'); }catch(e){ console.warn('import mod failed', e); }
+  }
 
   // Auto-install DevTools plugin for development
   (async () => {

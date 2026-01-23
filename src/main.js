@@ -14,6 +14,7 @@ const _ALLOW_UNSIGNED_PLUGINS = true;
 let _testsTimeout = null;
 
 let mainWindow;
+let toolbarWindow = null;
 let tray = null;
 let _overlayInteractiveRects = [];
 let _overlayIgnoreConfig = { ignore: false, forward: false };
@@ -235,6 +236,78 @@ function _stopOverlayPoll() {
   _overlayAllowDesired = null;
   _overlayAllowDesiredAt = 0;
   _overlayAllowLastSwitchAt = 0;
+}
+
+function _createToolbarWindow() {
+  if (_RUN_TESTS) return null;
+  try {
+    if (toolbarWindow && !toolbarWindow.isDestroyed()) {
+      try { toolbarWindow.show(); } catch (e) {}
+      try { toolbarWindow.focus(); } catch (e) {}
+      return toolbarWindow;
+    }
+  } catch (e) {}
+
+  const defaultWidth = 420;
+  const defaultHeight = 320;
+  let x = undefined;
+  let y = undefined;
+
+  try {
+    const primary = screen.getPrimaryDisplay();
+    const workArea = primary && primary.workArea ? primary.workArea : null;
+    if (workArea) {
+      x = Math.round(workArea.x + workArea.width - defaultWidth - 24);
+      y = Math.round(workArea.y + 80);
+    }
+  } catch (e) {}
+
+  toolbarWindow = new BrowserWindow({
+    width: defaultWidth,
+    height: defaultHeight,
+    x,
+    y,
+    useContentSize: true,
+    transparent: true,
+    backgroundColor: '#00000000',
+    frame: false,
+    hasShadow: true,
+    skipTaskbar: true,
+    resizable: false,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    alwaysOnTop: true,
+    show: false,
+    icon: _appIconPath(),
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false
+    }
+  });
+
+  try {
+    toolbarWindow.setAlwaysOnTop(true, 'screen-saver');
+  } catch (e) {
+    try { toolbarWindow.setAlwaysOnTop(true); } catch (err) {}
+  }
+
+  toolbarWindow.once('ready-to-show', () => {
+    try { toolbarWindow.show(); } catch (e) {}
+  });
+
+  try {
+    toolbarWindow.loadFile(path.join(__dirname, 'index.html'), {
+      query: { toolbarWindow: '1' }
+    });
+  } catch (e) {}
+
+  toolbarWindow.on('closed', () => {
+    toolbarWindow = null;
+  });
+
+  return toolbarWindow;
 }
 
 function createWindow(opts) {
