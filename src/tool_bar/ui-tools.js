@@ -29,6 +29,14 @@ import { buildPenTailSegment, normalizePenTailSettings } from '../pen_tail.js';
 import { applyThemeMode, initThemeAutoSync, buildContrastReport, measureApplyCost, serializeLanTheme, parseLanTheme } from '../colors_features.js';
 import OperarPenetration from '../smart_screenik/Operar_Penetration.js';
 
+let _isToolbarWindow = false;
+let _submenuWindowKind = '';
+try{
+  const params = new URLSearchParams(location.search || '');
+  _isToolbarWindow = params.get('toolbarWindow') === '1';
+  _submenuWindowKind = params.get('submenuWindow') || '';
+}catch(e){}
+
 try{ installHyperOs3Controls(document); }catch(e){}
 
 const colorTool = document.getElementById('colorTool');
@@ -664,13 +672,9 @@ try{
 if (colorTool) {
   let _lastOpenPenAt = 0;
   const openPen = (ev)=>{
-    if (!colorMenu) return;
     const now = Date.now();
     if (now - _lastOpenPenAt < 120) return;
     _lastOpenPenAt = now;
-    const wasOpen = !!colorMenu.classList.contains('open');
-    const pinned = String(colorMenu.dataset && colorMenu.dataset.pinned) === 'true';
-    const pointerWasActive = !!(pointerTool && pointerTool.classList.contains('active'));
     try{
       const s = getToolState();
       setBrushColor((s && s.brushColor) || '#000000');
@@ -678,7 +682,6 @@ if (colorTool) {
       setBrushColor('#000000');
     }
     setErasing(false);
-    // when using pen, disable selection mode and enable canvas input
     try{ Curous.enableSelectionMode(false); setInputEnabled(true); }catch(e){}
     if (pointerTool) pointerTool.classList.remove('active');
     setPointerSelectedInUse(false);
@@ -686,23 +689,35 @@ if (colorTool) {
     _forceReleaseTouchUiBlock();
     applyWindowInteractivityNow(true);
     try{ flushInteractiveRects(); }catch(e){}
-    showSubmenu(colorMenu, colorTool);
-    const wantOpen = !wasOpen;
-    if (wantOpen && !colorMenu.classList.contains('open')) {
+    if (_isToolbarWindow) {
       try{
-        if (localStorage && localStorage.getItem('debugMenus') === '1') {
-          const rects = collectInteractiveRects();
-          console.debug('[menu]', 'pen-menu-open-failed', {
-            appMode: _appMode,
-            pinned,
-            pointerWasActive,
-            ignoreMouse: _penetration.getLastIgnoreMouse(),
-            rectCount: Array.isArray(rects) ? rects.length : 0,
-            ariaHidden: colorMenu.getAttribute('aria-hidden'),
-            evType: ev && ev.type ? String(ev.type) : ''
-          });
-        }
+        const rect = colorTool && colorTool.getBoundingClientRect ? colorTool.getBoundingClientRect() : null;
+        const anchor = rect ? { left: rect.left, top: rect.top, width: rect.width, height: rect.height } : null;
+        _invokeMainMessage('ui:open-submenu-window', { kind: 'color', anchor }).then(()=>{}).catch(()=>{});
       }catch(e){}
+    } else {
+      if (!colorMenu) return;
+      const wasOpen = !!colorMenu.classList.contains('open');
+      const pinned = String(colorMenu.dataset && colorMenu.dataset.pinned) === 'true';
+      const pointerWasActive = !!(pointerTool && pointerTool.classList.contains('active'));
+      showSubmenu(colorMenu, colorTool);
+      const wantOpen = !wasOpen;
+      if (wantOpen && !colorMenu.classList.contains('open')) {
+        try{
+          if (localStorage && localStorage.getItem('debugMenus') === '1') {
+            const rects = collectInteractiveRects();
+            console.debug('[menu]', 'pen-menu-open-failed', {
+              appMode: _appMode,
+              pinned,
+              pointerWasActive,
+              ignoreMouse: _penetration.getLastIgnoreMouse(),
+              rectCount: Array.isArray(rects) ? rects.length : 0,
+              ariaHidden: colorMenu.getAttribute('aria-hidden'),
+              evType: ev && ev.type ? String(ev.type) : ''
+            });
+          }
+        }catch(e){}
+      }
     }
     updatePenModeLabel();
     syncToolbarIcons();
@@ -717,10 +732,14 @@ if (colorTool) {
 
 if (eraserTool) {
   const openEraser = ()=>{
-    if (!eraserMenu) return;
-    const closing = eraserMenu.classList.contains('open');
+    if (!_isToolbarWindow && !eraserMenu) return;
+    const closing = !_isToolbarWindow && eraserMenu && eraserMenu.classList.contains('open');
     if (closing) {
-      showSubmenu(eraserMenu, eraserTool);
+      if (_isToolbarWindow) {
+        try{ _invokeMainMessage('ui:close-submenu-window', { kind: 'eraser' }).then(()=>{}).catch(()=>{}); }catch(e){}
+      } else {
+        showSubmenu(eraserMenu, eraserTool);
+      }
       setErasing(false);
       updateEraserModeLabel();
       syncToolbarIcons();
@@ -734,7 +753,15 @@ if (eraserTool) {
     if (pointerTool) pointerTool.classList.remove('active');
     setPointerSelectedInUse(false);
     if (colorTool) colorTool.classList.remove('active');
-    showSubmenu(eraserMenu, eraserTool);
+    if (_isToolbarWindow) {
+      try{
+        const rect = eraserTool && eraserTool.getBoundingClientRect ? eraserTool.getBoundingClientRect() : null;
+        const anchor = rect ? { left: rect.left, top: rect.top, width: rect.width, height: rect.height } : null;
+        _invokeMainMessage('ui:open-submenu-window', { kind: 'eraser', anchor }).then(()=>{}).catch(()=>{});
+      }catch(e){}
+    } else {
+      showSubmenu(eraserMenu, eraserTool);
+    }
     updateEraserModeLabel();
     syncToolbarIcons();
     _forceReleaseTouchUiBlock();
@@ -813,11 +840,19 @@ if (pointerTool) {
 
 if (moreTool) {
   const openMore = ()=>{
-    if (!moreMenu) return;
-    // 更多菜单不改变画笔/橡皮状态，仅切换子菜单显示
+    if (!_isToolbarWindow && !moreMenu) return;
     if (colorTool) colorTool.classList.remove('active');
     if (eraserTool) eraserTool.classList.remove('active');
-    showSubmenu(moreMenu, moreTool);
+    if (_isToolbarWindow) {
+      try{
+        const rect = moreTool && moreTool.getBoundingClientRect ? moreTool.getBoundingClientRect() : null;
+        const anchor = rect ? { left: rect.left, top: rect.top, width: rect.width, height: rect.height } : null;
+        _invokeMainMessage('ui:open-submenu-window', { kind: 'more', anchor }).then(()=>{}).catch(()=>{});
+      }catch(e){}
+    } else {
+      if (!moreMenu) return;
+      showSubmenu(moreMenu, moreTool);
+    }
     syncToolbarIcons();
     _forceReleaseTouchUiBlock();
     applyWindowInteractivityNow(true);
@@ -931,8 +966,29 @@ startPenetrationButtonMonitor();
 
 // submenu logic moved to more_decide_windows.js
 
-document.addEventListener('click', (e)=>{ if (e.target.closest && (e.target.closest('.tool') || e.target.closest('.drag-handle'))) return; closeAllSubmenus(); syncToolbarIcons(); applyWindowInteractivity(); scheduleInteractiveRectsUpdate(); });
-document.addEventListener('keydown', (e)=>{ if (e.key==='Escape') { closeAllSubmenus(); syncToolbarIcons(); applyWindowInteractivity(); scheduleInteractiveRectsUpdate(); } });
+document.addEventListener('click', (e)=>{
+  if (e.target.closest && (e.target.closest('.tool') || e.target.closest('.drag-handle'))) return;
+  if (_isToolbarWindow) {
+    try{ _invokeMainMessage('ui:close-submenu-window', {}).then(()=>{}).catch(()=>{}); }catch(err){}
+  } else {
+    closeAllSubmenus();
+  }
+  syncToolbarIcons();
+  applyWindowInteractivity();
+  scheduleInteractiveRectsUpdate();
+});
+document.addEventListener('keydown', (e)=>{
+  if (e.key==='Escape') {
+    if (_isToolbarWindow) {
+      try{ _invokeMainMessage('ui:close-submenu-window', {}).then(()=>{}).catch(()=>{}); }catch(err){}
+    } else {
+      closeAllSubmenus();
+    }
+    syncToolbarIcons();
+    applyWindowInteractivity();
+    scheduleInteractiveRectsUpdate();
+  }
+});
 try{
   Message.on(EVENTS.SUBMENU_OPEN, ()=>{ applyWindowInteractivity(); scheduleInteractiveRectsUpdate(); });
   Message.on(EVENTS.SUBMENU_CLOSE, ()=>{ applyWindowInteractivity(); scheduleInteractiveRectsUpdate(); });
@@ -1279,6 +1335,7 @@ const optTooltips = document.getElementById('optTooltips');
 const optVideoBoothEnabled = document.getElementById('optVideoBoothEnabled');
 const optPdfDefaultMode = document.getElementById('optPdfDefaultMode');
 const optMultiTouchPen = document.getElementById('optMultiTouchPen');
+const optPageSwitchDraggable = document.getElementById('optPageSwitchDraggable');
 const optAnnotationPenColor = document.getElementById('optAnnotationPenColor');
 const optPenTailEnabled = document.getElementById('optPenTailEnabled');
 const optPenTailProfile = document.getElementById('optPenTailProfile');
@@ -1989,6 +2046,7 @@ function _wireSettingsUi(){
   bindField(optTooltips, 'showTooltips');
   bindField(optVideoBoothEnabled, 'videoBoothEnabled');
   bindField(optMultiTouchPen, 'multiTouchPen');
+  bindField(optPageSwitchDraggable, 'pageSwitchDraggable');
   bindField(optAnnotationPenColor, 'annotationPenColor', 'input');
   bindField(optPenTailEnabled, 'penTail.enabled');
   bindField(optPenTailProfile, 'penTail.profile');

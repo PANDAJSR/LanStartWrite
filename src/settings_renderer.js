@@ -1,4 +1,4 @@
-import Settings, { loadSettings, saveSettings, installHyperOsButtonInteractions, normalizeHexColor, hexToRgb, rgbToHex, hexToHsl, hslToHex, loadRecentColors, pushRecentColor } from './setting.js';
+import Settings, { loadSettings, saveSettings, installHyperOsButtonInteractions, normalizeHexColor, rgbToHex, hexToRgb, loadRecentColors, pushRecentColor } from './setting.js';
 import Message, { EVENTS } from './message.js';
 import { buildPenTailSegment, normalizePenTailSettings } from './pen_tail.js';
 import { applyThemeMode, buildContrastReport } from './colors_features.js';
@@ -25,6 +25,79 @@ let initialSettingsJSON = '';
 let isChangeListenersInitialized = false;
 let _lastPersistedJSON = '';
 let _autoSaveTimer = 0;
+
+let _lsColorModalBackdrop = null;
+let _lsColorModal = null;
+let _lsColorModalHeader = null;
+let _lsColorModalClose = null;
+let _lsColorSpectrum = null;
+let _lsColorSpectrumCtx = null;
+let _lsColorPreview = null;
+let _lsColorDragState = null;
+let _lsColorModalDrag = null;
+let _lsColorActive = null;
+let _lsColorHexInput = null;
+let _lsColorRgbR = null;
+let _lsColorRgbG = null;
+let _lsColorRgbB = null;
+let _lsColorRecent = null;
+let _lsColorModalUpdating = false;
+
+function hideColorModal(){
+    if (_lsColorSpectrum && _lsColorDragState) {
+        try{ _lsColorSpectrum.releasePointerCapture(_lsColorDragState.id); }catch(e){}
+    }
+    _lsColorDragState = null;
+    _lsColorActive = null;
+    if (_lsColorModalBackdrop) {
+        try{ _lsColorModalBackdrop.style.display = 'none'; }catch(e){}
+    }
+}
+
+function _lsRenderRecentColors(list){
+    if (!_lsColorRecent) return;
+    let arr = Array.isArray(list) ? list.slice() : [];
+    if (!arr.length) {
+        try{ arr = loadRecentColors(12); }catch(e){ arr = []; }
+    }
+    _lsColorRecent.innerHTML = '';
+    for (const c of arr) {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'ls-recent-chip';
+        btn.title = c;
+        btn.setAttribute('aria-label', c);
+        btn.dataset.hex = c;
+        try{ btn.style.background = c; }catch(e){}
+        btn.addEventListener('click', ()=>{
+            if (_lsColorActive && _lsColorActive.applyHex) {
+                _lsColorActive.applyHex(c);
+            }
+        });
+        _lsColorRecent.appendChild(btn);
+    }
+}
+
+function _lsUpdateModalControls(hex, opts){
+    if (!_lsColorHexInput || !_lsColorRgbR || !_lsColorRgbG || !_lsColorRgbB) return;
+    const rgb = hexToRgb(hex);
+    if (!rgb) return;
+    const o = (opts && typeof opts === 'object') ? opts : {};
+    _lsColorModalUpdating = true;
+    try{
+        _lsColorHexInput.value = hex;
+        _lsColorRgbR.value = String(rgb.r);
+        _lsColorRgbG.value = String(rgb.g);
+        _lsColorRgbB.value = String(rgb.b);
+    }catch(e){}
+    _lsColorModalUpdating = false;
+    if (o.push) {
+        try{
+            const list = pushRecentColor(hex, 12);
+            _lsRenderRecentColors(list);
+        }catch(e){}
+    }
+}
 
 // Simple Toast Implementation for Settings Window
 function showToast(msg, type='success', ms=1800){
@@ -66,121 +139,33 @@ function enhanceColorInput(native){
     swatch.type = 'button';
     swatch.className = 'ls-color-swatch';
     swatch.setAttribute('aria-label', '打开颜色选择器');
-
-    const hexInput = document.createElement('input');
-    hexInput.type = 'text';
-    hexInput.className = 'ls-color-hex';
-    hexInput.setAttribute('inputmode', 'text');
-    hexInput.setAttribute('aria-label', 'HEX');
-
-    const rgbGroup = document.createElement('div');
-    rgbGroup.className = 'ls-color-triplet';
-    const rgbTag = document.createElement('span');
-    rgbTag.textContent = 'RGB';
-    const rInput = document.createElement('input');
-    const gInput = document.createElement('input');
-    const bInput = document.createElement('input');
-    for (const it of [rInput, gInput, bInput]) {
-        it.type = 'number';
-        it.min = '0';
-        it.max = '255';
-        it.step = '1';
-    }
-    rInput.placeholder = 'R';
-    gInput.placeholder = 'G';
-    bInput.placeholder = 'B';
-    rgbGroup.appendChild(rgbTag);
-    rgbGroup.appendChild(rInput);
-    rgbGroup.appendChild(gInput);
-    rgbGroup.appendChild(bInput);
-
-    const hslGroup = document.createElement('div');
-    hslGroup.className = 'ls-color-triplet';
-    const hslTag = document.createElement('span');
-    hslTag.textContent = 'HSL';
-    const hInput = document.createElement('input');
-    const sInput = document.createElement('input');
-    const lInput = document.createElement('input');
-    hInput.type = 'number';
-    hInput.min = '0';
-    hInput.max = '360';
-    hInput.step = '1';
-    sInput.type = 'number';
-    sInput.min = '0';
-    sInput.max = '100';
-    sInput.step = '1';
-    lInput.type = 'number';
-    lInput.min = '0';
-    lInput.max = '100';
-    lInput.step = '1';
-    hInput.placeholder = 'H';
-    sInput.placeholder = 'S';
-    lInput.placeholder = 'L';
-    hslGroup.appendChild(hslTag);
-    hslGroup.appendChild(hInput);
-    hslGroup.appendChild(sInput);
-    hslGroup.appendChild(lInput);
-
-    const recent = document.createElement('div');
-    recent.className = 'ls-recent-colors';
-    recent.setAttribute('aria-label', '最近颜色');
+    const swatchInner = document.createElement('div');
+    swatchInner.className = 'ls-color-swatch-inner';
+    swatch.appendChild(swatchInner);
 
     const parent = native.parentElement;
     if (!parent) return;
 
     parent.insertBefore(wrap, native);
     wrap.appendChild(swatch);
-    wrap.appendChild(hexInput);
-    wrap.appendChild(rgbGroup);
-    wrap.appendChild(hslGroup);
-    wrap.appendChild(recent);
     wrap.appendChild(native);
     try{ native.style.display = 'none'; }catch(e){}
 
     let updating = false;
 
-    const renderRecent = ()=>{
-        const list = loadRecentColors(12);
-        recent.innerHTML = '';
-        for (const c of list) {
-            const btn = document.createElement('button');
-            btn.type = 'button';
-            btn.className = 'ls-recent-chip';
-            btn.title = c;
-            btn.setAttribute('aria-label', c);
-            btn.dataset.hex = c;
-            try{ btn.style.background = c; }catch(e){}
-            btn.addEventListener('click', ()=>{
-                applyHex(c, { push: true, fire: true });
-            });
-            recent.appendChild(btn);
-        }
-    };
-
     const applyHex = (hex, opts)=>{
         const o = (opts && typeof opts === 'object') ? opts : {};
         const fallback = normalizeHexColor(native.value, '#000000');
         const next = normalizeHexColor(hex, fallback);
-        const rgb = hexToRgb(next);
-        const hsl = hexToHsl(next);
-        if (!rgb || !hsl) return;
+        if (!next) return;
 
         updating = true;
         try{ native.value = next; }catch(e){}
-        try{ swatch.style.background = next; }catch(e){}
-        try{ hexInput.value = next; }catch(e){}
-        try{ rInput.value = String(rgb.r); gInput.value = String(rgb.g); bInput.value = String(rgb.b); }catch(e){}
-        try{
-            hInput.value = String(Math.round(hsl.h));
-            sInput.value = String(Math.round(hsl.s * 100));
-            lInput.value = String(Math.round(hsl.l * 100));
-        }catch(e){}
+        try{ swatchInner.style.background = next; }catch(e){}
         updating = false;
 
-        if (o.push) {
-            try{ pushRecentColor(next, 12); }catch(e){}
-            renderRecent();
-        }
+        try{ _lsUpdateModalControls(next, { push: !!o.push }); }catch(e){}
+
         if (o.fire) {
             try{
                 native.dispatchEvent(new Event('input', { bubbles: true }));
@@ -189,8 +174,165 @@ function enhanceColorInput(native){
         }
     };
 
+    const openModal = ()=>{
+        if (!_lsColorModalBackdrop) {
+            _lsColorModalBackdrop = document.getElementById('lsColorModalBackdrop');
+            _lsColorModal = document.getElementById('lsColorModal');
+            _lsColorModalHeader = document.getElementById('lsColorModalHeader');
+            _lsColorModalClose = document.getElementById('lsColorModalClose');
+            _lsColorSpectrum = document.getElementById('lsColorSpectrum');
+            _lsColorPreview = document.getElementById('lsColorPreview');
+            _lsColorHexInput = document.getElementById('lsColorHex');
+            _lsColorRgbR = document.getElementById('lsColorR');
+            _lsColorRgbG = document.getElementById('lsColorG');
+            _lsColorRgbB = document.getElementById('lsColorB');
+            _lsColorRecent = document.getElementById('lsRecentColors');
+            if (_lsColorSpectrum && !_lsColorSpectrumCtx) {
+                _lsColorSpectrumCtx = _lsColorSpectrum.getContext('2d');
+            }
+            if (_lsColorHexInput) {
+                _lsColorHexInput.addEventListener('input', ()=>{
+                    if (_lsColorModalUpdating) return;
+                    const v = String(_lsColorHexInput.value || '').trim();
+                    const next = normalizeHexColor(v, '');
+                    if (!next) return;
+                    if (_lsColorActive && _lsColorActive.applyHex) {
+                        _lsColorActive.applyHex(next);
+                    }
+                });
+            }
+            if (_lsColorRgbR && _lsColorRgbG && _lsColorRgbB) {
+                const onRgbChange = ()=>{
+                    if (_lsColorModalUpdating) return;
+                    const r = Number(_lsColorRgbR.value);
+                    const g = Number(_lsColorRgbG.value);
+                    const b = Number(_lsColorRgbB.value);
+                    if (!Number.isFinite(r) || !Number.isFinite(g) || !Number.isFinite(b)) return;
+                    const hex = rgbToHex({ r, g, b });
+                    if (_lsColorActive && _lsColorActive.applyHex) {
+                        _lsColorActive.applyHex(hex);
+                    }
+                };
+                _lsColorRgbR.addEventListener('input', onRgbChange);
+                _lsColorRgbG.addEventListener('input', onRgbChange);
+                _lsColorRgbB.addEventListener('input', onRgbChange);
+            }
+            if (_lsColorModalBackdrop && _lsColorModal) {
+                _lsColorModalBackdrop.addEventListener('click', (e)=>{
+                    if (e.target === _lsColorModalBackdrop) {
+                        hideColorModal();
+                    }
+                });
+            }
+            if (_lsColorModalClose) {
+                _lsColorModalClose.addEventListener('click', ()=>{
+                    hideColorModal();
+                });
+            }
+            if (_lsColorModalHeader && _lsColorModal) {
+                _lsColorModalHeader.addEventListener('pointerdown', (ev)=>{
+                    if (!_lsColorModal) return;
+                    const rect = _lsColorModal.getBoundingClientRect();
+                    _lsColorModalDrag = {
+                        id: ev.pointerId,
+                        startX: ev.clientX,
+                        startY: ev.clientY,
+                        originLeft: rect.left,
+                        originTop: rect.top
+                    };
+                    try{ _lsColorModalHeader.setPointerCapture(ev.pointerId); }catch(e){}
+                });
+                _lsColorModalHeader.addEventListener('pointermove', (ev)=>{
+                    if (!_lsColorModalDrag || !_lsColorModal) return;
+                    if (ev.pointerId !== _lsColorModalDrag.id) return;
+                    const dx = ev.clientX - _lsColorModalDrag.startX;
+                    const dy = ev.clientY - _lsColorModalDrag.startY;
+                    const left = _lsColorModalDrag.originLeft + dx;
+                    const top = _lsColorModalDrag.originTop + dy;
+                    _lsColorModal.style.left = left + 'px';
+                    _lsColorModal.style.top = top + 'px';
+                    _lsColorModal.style.transform = 'translate(0, 0)';
+                });
+                _lsColorModalHeader.addEventListener('pointerup', (ev)=>{
+                    if (!_lsColorModalDrag) return;
+                    if (ev.pointerId !== _lsColorModalDrag.id) return;
+                    try{ _lsColorModalHeader.releasePointerCapture(ev.pointerId); }catch(e){}
+                    _lsColorModalDrag = null;
+                });
+            }
+            if (_lsColorSpectrum && _lsColorSpectrumCtx) {
+                const handlePick = (ev)=>{
+                    if (!_lsColorSpectrum || !_lsColorSpectrumCtx || !_lsColorActive) return;
+                    const rect = _lsColorSpectrum.getBoundingClientRect();
+                    const x = Math.max(0, Math.min(rect.width - 1, ev.clientX - rect.left));
+                    const y = Math.max(0, Math.min(rect.height - 1, ev.clientY - rect.top));
+                    const data = _lsColorSpectrumCtx.getImageData(Math.floor(x), Math.floor(y), 1, 1).data;
+                    const hex = rgbToHex({ r: data[0], g: data[1], b: data[2] });
+                    if (_lsColorPreview) {
+                        try{ _lsColorPreview.style.background = hex; }catch(e){}
+                    }
+                    if (_lsColorActive.applyHex) {
+                        _lsColorActive.applyHex(hex);
+                    }
+                };
+                _lsColorSpectrum.addEventListener('pointerdown', (ev)=>{
+                    if (!_lsColorSpectrum) return;
+                    _lsColorDragState = { id: ev.pointerId };
+                    try{ _lsColorSpectrum.setPointerCapture(ev.pointerId); }catch(e){}
+                    handlePick(ev);
+                });
+                _lsColorSpectrum.addEventListener('pointermove', (ev)=>{
+                    if (!_lsColorDragState) return;
+                    if (ev.pointerId !== _lsColorDragState.id) return;
+                    handlePick(ev);
+                });
+                _lsColorSpectrum.addEventListener('pointerup', (ev)=>{
+                    if (!_lsColorDragState) return;
+                    if (ev.pointerId !== _lsColorDragState.id) return;
+                    try{ _lsColorSpectrum.releasePointerCapture(ev.pointerId); }catch(e){}
+                    _lsColorDragState = null;
+                });
+            }
+        }
+        if (!_lsColorModalBackdrop || !_lsColorModal || !_lsColorSpectrumCtx || !_lsColorSpectrum) return;
+        _lsColorActive = {
+            native,
+            applyHex: (hex)=>applyHex(hex, { push: true, fire: true })
+        };
+        const base = normalizeHexColor(native.value, '#000000');
+        if (_lsColorPreview) {
+            try{ _lsColorPreview.style.background = base; }catch(e){}
+        }
+        try{
+            _lsUpdateModalControls(base, { push: false });
+            _lsRenderRecentColors();
+        }catch(e){}
+        const w = _lsColorSpectrum.width || 260;
+        const h = _lsColorSpectrum.height || 160;
+        const g1 = _lsColorSpectrumCtx.createLinearGradient(0, 0, w, 0);
+        g1.addColorStop(0, '#ff0000');
+        g1.addColorStop(1 / 6, '#ffff00');
+        g1.addColorStop(2 / 6, '#00ff00');
+        g1.addColorStop(3 / 6, '#00ffff');
+        g1.addColorStop(4 / 6, '#0000ff');
+        g1.addColorStop(5 / 6, '#ff00ff');
+        g1.addColorStop(1, '#ff0000');
+        _lsColorSpectrumCtx.fillStyle = g1;
+        _lsColorSpectrumCtx.fillRect(0, 0, w, h);
+        const g2 = _lsColorSpectrumCtx.createLinearGradient(0, 0, 0, h);
+        g2.addColorStop(0, 'rgba(255,255,255,1)');
+        g2.addColorStop(0.5, 'rgba(255,255,255,0)');
+        g2.addColorStop(1, 'rgba(0,0,0,1)');
+        _lsColorSpectrumCtx.fillStyle = g2;
+        _lsColorSpectrumCtx.fillRect(0, 0, w, h);
+        _lsColorModalBackdrop.style.display = 'flex';
+        _lsColorModal.style.left = '50%';
+        _lsColorModal.style.top = '50%';
+        _lsColorModal.style.transform = 'translate(-50%, -50%)';
+    };
+
     swatch.addEventListener('click', ()=>{
-        try{ native.click(); }catch(e){}
+        openModal();
     });
 
     native.addEventListener('input', ()=>{
@@ -198,42 +340,7 @@ function enhanceColorInput(native){
         applyHex(native.value, { push: true, fire: false });
     });
 
-    hexInput.addEventListener('input', ()=>{
-        if (updating) return;
-        const v = String(hexInput.value || '').trim();
-        const next = normalizeHexColor(v, '');
-        if (!next) return;
-        applyHex(next, { push: false, fire: true });
-    });
-
-    const onRgb = ()=>{
-        if (updating) return;
-        const r = Number(rInput.value);
-        const g = Number(gInput.value);
-        const b = Number(bInput.value);
-        if (!Number.isFinite(r) || !Number.isFinite(g) || !Number.isFinite(b)) return;
-        const hex = rgbToHex({ r, g, b });
-        applyHex(hex, { push: false, fire: true });
-    };
-    rInput.addEventListener('input', onRgb);
-    gInput.addEventListener('input', onRgb);
-    bInput.addEventListener('input', onRgb);
-
-    const onHsl = ()=>{
-        if (updating) return;
-        const h = Number(hInput.value);
-        const s = Number(sInput.value);
-        const l = Number(lInput.value);
-        if (!Number.isFinite(h) || !Number.isFinite(s) || !Number.isFinite(l)) return;
-        const hex = hslToHex({ h, s: s / 100, l: l / 100 });
-        applyHex(hex, { push: false, fire: true });
-    };
-    hInput.addEventListener('input', onHsl);
-    sInput.addEventListener('input', onHsl);
-    lInput.addEventListener('input', onHsl);
-
     applyHex(native.value, { push: false, fire: false });
-    renderRecent();
 }
 
 // Core Toolbar Items Definition
@@ -928,6 +1035,7 @@ function _pathToJumpTarget(path) {
     }
 
     if (root === 'multiTouchPen') return { tab: 'input', id: 'optMultiTouchPen' };
+    if (root === 'pageSwitchDraggable') return { tab: 'input', id: 'optPageSwitchDraggable' };
     if (root === 'annotationPenColor') return { tab: 'input', id: 'optAnnotationPenColor' };
     if (root === 'whiteboardPenColor') return { tab: 'input', id: 'optWhiteboardPenColor' };
     if (root === 'smartInkRecognition') return { tab: 'input', id: 'optSmartInk' };
@@ -1478,6 +1586,7 @@ function loadCurrentSettings() {
 
     // Input
     setCheckbox('optMultiTouchPen', s.multiTouchPen);
+    setCheckbox('optPageSwitchDraggable', s.pageSwitchDraggable);
     setValue('optAnnotationPenColor', s.annotationPenColor);
     setCheckbox('optPenTailEnabled', s.penTail.enabled);
     setValue('optPenTailProfile', s.penTail.profile);
@@ -1671,6 +1780,7 @@ function getSettingsFromUI() {
         canvasColor: getValue('optCanvasColor'),
         pdfDefaultMode: getValue('optPdfDefaultMode'),
         multiTouchPen: getCheckbox('optMultiTouchPen'),
+        pageSwitchDraggable: getCheckbox('optPageSwitchDraggable'),
         annotationPenColor: getValue('optAnnotationPenColor'),
         penTail: {
             enabled: getCheckbox('optPenTailEnabled'),

@@ -1,11 +1,14 @@
 // page.js — 分页管理与底部左侧翻页工具栏
 import { getSnapshot, loadSnapshot, getCanvasImage } from './renderer.js';
 import Message, { EVENTS } from './message.js';
+import Settings, { loadSettings } from './setting.js';
 
 function initPageToolbar(){
   let pages = [];
   let current = 0;
   let enabled = true;
+  const POSITION_KEY = 'whiteboard_page_toolbar_position';
+  let allowDrag = false;
 
   // 尝试恢复上一次 Session（用于重启等场景）
   try {
@@ -116,7 +119,6 @@ function initPageToolbar(){
     label.textContent = `${current+1} / ${pages.length}`;
     prevBtn.disabled = current <= 0;
     prevBtn.style.opacity = prevBtn.disabled ? '0.5' : '1';
-    // 下一页始终可点击（若在末页则会创建新页面）
     nextBtn.style.opacity = '1';
   }
 
@@ -174,6 +176,130 @@ function initPageToolbar(){
 
   function hideSidebar() {
     sidebar.classList.remove('open');
+  }
+
+  function loadSavedPosition(){
+    try{
+      const raw = localStorage.getItem(POSITION_KEY);
+      if (!raw) return null;
+      const obj = JSON.parse(raw);
+      if (!obj || typeof obj !== 'object') return null;
+      const left = Number(obj.left);
+      const top = Number(obj.top);
+      if (!Number.isFinite(left) || !Number.isFinite(top)) return null;
+      return { left, top };
+    }catch(e){
+      return null;
+    }
+  }
+
+  function savePosition(pos){
+    if (!pos || typeof pos.left !== 'number' || typeof pos.top !== 'number') return;
+    try{
+      localStorage.setItem(POSITION_KEY, JSON.stringify({ left: Math.round(pos.left), top: Math.round(pos.top) }));
+    }catch(e){}
+  }
+
+  function clampPosition(left, top, rect){
+    const vw = window.innerWidth || (document.documentElement ? document.documentElement.clientWidth : 0) || rect.width;
+    const vh = window.innerHeight || (document.documentElement ? document.documentElement.clientHeight : 0) || rect.height;
+    const maxLeft = Math.max(0, vw - rect.width);
+    const maxTop = Math.max(0, vh - rect.height);
+    let l = left;
+    let t = top;
+    if (!Number.isFinite(l)) l = rect.left;
+    if (!Number.isFinite(t)) t = rect.top;
+    l = Math.min(Math.max(0, l), maxLeft);
+    t = Math.min(Math.max(0, t), maxTop);
+    return { left: l, top: t };
+  }
+
+  function applyFixedBottomLeft(){
+    if (!toolbar) return;
+    const rect = toolbar.getBoundingClientRect();
+    const vw = window.innerWidth || (document.documentElement ? document.documentElement.clientWidth : 0) || rect.width;
+    const left = 20;
+    const bottom = 20;
+    const clamped = clampPosition(left, (window.innerHeight || rect.height) - bottom - rect.height, rect);
+    toolbar.style.position = 'fixed';
+    toolbar.style.left = Math.round(clamped.left) + 'px';
+    toolbar.style.bottom = bottom + 'px';
+    toolbar.style.top = 'auto';
+  }
+
+  function applyInitialPosition(){
+    if (!toolbar) return;
+    const rect = toolbar.getBoundingClientRect();
+    try{
+      const s = loadSettings();
+      allowDrag = !!(s && s.pageSwitchDraggable);
+    }catch(e){}
+
+    if (!allowDrag) {
+      applyFixedBottomLeft();
+      return;
+    }
+
+    const saved = loadSavedPosition();
+    if (saved) {
+      const clamped = clampPosition(saved.left, saved.top, rect);
+      toolbar.style.position = 'fixed';
+      toolbar.style.left = Math.round(clamped.left) + 'px';
+      toolbar.style.top = Math.round(clamped.top) + 'px';
+      toolbar.style.bottom = 'auto';
+      return;
+    }
+    const vw = window.innerWidth || (document.documentElement ? document.documentElement.clientWidth : 0) || rect.width;
+    const left = Math.round((vw - rect.width) / 2);
+    const top = 24;
+    const clamped = clampPosition(left, top, rect);
+    toolbar.style.position = 'fixed';
+    toolbar.style.left = Math.round(clamped.left) + 'px';
+    toolbar.style.top = Math.round(clamped.top) + 'px';
+    toolbar.style.bottom = 'auto';
+    savePosition(clamped);
+  }
+
+  let dragState = null;
+
+  function onDragStart(e){
+    if (!allowDrag) return;
+    if (!toolbar) return;
+    if (e.button !== 0 && e.pointerType !== 'touch') return;
+    const target = e.target;
+    if (!target || target.closest('#pagePrevBtn') || target.closest('#pageNextBtn') || target.closest('#pageNewBtn') || target.closest('#pageLabel') || target.closest('#pagePreviewSidebar')) return;
+    const rect = toolbar.getBoundingClientRect();
+    dragState = {
+      startX: e.clientX,
+      startY: e.clientY,
+      originLeft: rect.left,
+      originTop: rect.top
+    };
+    try{ toolbar.setPointerCapture(e.pointerId); }catch(err){}
+    window.addEventListener('pointermove', onDragMove);
+    window.addEventListener('pointerup', onDragEnd, { once: true });
+    e.preventDefault();
+  }
+
+  function onDragMove(e){
+    if (!dragState || !toolbar || !allowDrag) return;
+    const dx = e.clientX - dragState.startX;
+    const dy = e.clientY - dragState.startY;
+    const rect = toolbar.getBoundingClientRect();
+    const next = clampPosition(dragState.originLeft + dx, dragState.originTop + dy, rect);
+    toolbar.style.position = 'fixed';
+    toolbar.style.left = Math.round(next.left) + 'px';
+    toolbar.style.top = Math.round(next.top) + 'px';
+    toolbar.style.bottom = 'auto';
+  }
+
+  function onDragEnd(e){
+    if (!dragState || !toolbar) return;
+    window.removeEventListener('pointermove', onDragMove);
+    try{ toolbar.releasePointerCapture(e.pointerId); }catch(err){}
+    const rect = toolbar.getBoundingClientRect();
+    savePosition({ left: rect.left, top: rect.top });
+    dragState = null;
   }
 
   // 同步缩略图机制
@@ -243,6 +369,40 @@ function initPageToolbar(){
   });
 
   updateUI();
+
+  applyInitialPosition();
+
+  try{
+    toolbar.addEventListener('pointerdown', onDragStart);
+  }catch(e){}
+
+  try{
+    window.addEventListener('resize', ()=>{
+      if (!toolbar) return;
+      if (!allowDrag) {
+        applyFixedBottomLeft();
+        return;
+      }
+      const rect = toolbar.getBoundingClientRect();
+      const clamped = clampPosition(rect.left, rect.top, rect);
+      toolbar.style.position = 'fixed';
+      toolbar.style.left = Math.round(clamped.left) + 'px';
+      toolbar.style.top = Math.round(clamped.top) + 'px';
+      toolbar.style.bottom = 'auto';
+      savePosition(clamped);
+    });
+  }catch(e){}
+
+  try{
+    Message.on(EVENTS.SETTINGS_UPDATED, (payload)=>{
+      const s = payload && typeof payload === 'object' ? payload : {};
+      if (typeof s.pageSwitchDraggable === 'undefined') return;
+      allowDrag = !!s.pageSwitchDraggable;
+      if (!allowDrag) {
+        applyFixedBottomLeft();
+      }
+    });
+  }catch(e){}
 
   try{
     const bootMode = document && document.body && document.body.dataset ? document.body.dataset.appMode : '';

@@ -6,7 +6,7 @@ const yauzl = require('yauzl');
 const semver = require('semver');
 const zlib = require('zlib');
 const { pathToFileURL } = require('url');
-const { exec, fork } = require('child_process');
+const { exec, fork, spawn } = require('child_process');
 
 const _RUN_TESTS = process.argv.includes('--run-tests');
 const _ALLOW_UNSIGNED_PLUGINS = true;
@@ -15,6 +15,7 @@ let _testsTimeout = null;
 
 let mainWindow;
 let toolbarWindow = null;
+let submenuWindow = null;
 let tray = null;
 let _overlayInteractiveRects = [];
 let _overlayIgnoreConfig = { ignore: false, forward: false };
@@ -29,6 +30,12 @@ let _pdfWindowCount = 0;
 let _mainWindowBounds = null;
 let _screenListenersInstalled = false;
 let _lastFullscreenEnforceAt = 0;
+
+let _taskWatchProcess = null;
+let _taskWatchState = null;
+let _taskWatchBuffer = '';
+let _taskWatchReqSeq = 0;
+let _taskWatchWindow = null;
 
 process.on('uncaughtException', (err) => {
   try { console.error('uncaughtException', err); } catch (e) {}
@@ -308,6 +315,106 @@ function _createToolbarWindow() {
   });
 
   return toolbarWindow;
+}
+
+function _createOrUpdateSubmenuWindow(kind, opts) {
+  if (_RUN_TESTS) return null;
+  const menuKind = (kind === 'color' || kind === 'eraser' || kind === 'more') ? kind : 'color';
+  let win = submenuWindow;
+  try {
+    if (win && win.isDestroyed && win.isDestroyed()) win = null;
+  } catch (e) {
+    win = null;
+  }
+  const anchor = opts && typeof opts === 'object' && opts.anchor && typeof opts.anchor === 'object' ? opts.anchor : null;
+  const senderWindow = opts && typeof opts === 'object' && opts.senderWindow ? opts.senderWindow : mainWindow;
+  if (!win) {
+    win = new BrowserWindow({
+      width: 320,
+      height: 260,
+      useContentSize: true,
+      transparent: true,
+      backgroundColor: '#00000000',
+      frame: false,
+      hasShadow: true,
+      skipTaskbar: true,
+      resizable: false,
+      minimizable: false,
+      maximizable: false,
+      fullscreenable: false,
+      alwaysOnTop: true,
+      show: false,
+      parent: toolbarWindow || senderWindow || null,
+      modal: false,
+      icon: _appIconPath(),
+      webPreferences: {
+        preload: path.join(__dirname, 'preload.js'),
+        contextIsolation: true,
+        nodeIntegration: false
+      }
+    });
+    try {
+      win.setAlwaysOnTop(true, 'screen-saver');
+    } catch (e) {
+      try { win.setAlwaysOnTop(true); } catch (err) {}
+    }
+    win.on('closed', () => {
+      if (submenuWindow === win) submenuWindow = null;
+    });
+    win.once('ready-to-show', () => {
+      try { win.show(); } catch (e) {}
+    });
+    submenuWindow = win;
+  }
+  let targetWidth = 320;
+  let targetHeight = 260;
+  if (anchor && typeof anchor.width === 'number' && typeof anchor.height === 'number') {
+    const w = Math.round(anchor.width * 2.6);
+    const h = Math.round(anchor.height * 6.0);
+    if (w > 120 && w < 520) targetWidth = w;
+    if (h > 120 && h < 640) targetHeight = h;
+  }
+  let x;
+  let y;
+  try {
+    const baseWin = senderWindow && !senderWindow.isDestroyed() ? senderWindow : mainWindow;
+    const baseBounds = baseWin && baseWin.getBounds ? baseWin.getBounds() : null;
+    if (baseBounds && anchor) {
+      const left = Math.round(baseBounds.x + Number(anchor.left) || 0);
+      const topBase = Math.round(baseBounds.y + Number(anchor.top) || 0);
+      const below = topBase + Number(anchor.height || 0) + 8;
+      x = left;
+      y = below;
+    }
+  } catch (e) {}
+  try {
+    const bounds = {};
+    if (typeof x === 'number' && typeof y === 'number') {
+      bounds.x = x;
+      bounds.y = y;
+    }
+    bounds.width = targetWidth;
+    bounds.height = targetHeight;
+    win.setBounds(bounds);
+  } catch (e) {}
+  try {
+    win.loadFile(path.join(__dirname, 'index.html'), {
+      query: { submenuWindow: menuKind }
+    });
+  } catch (e) {}
+  try {
+    if (!win.isVisible()) win.show();
+    win.focus();
+  } catch (e) {}
+  return win;
+}
+
+function _closeSubmenuWindow() {
+  try {
+    if (submenuWindow && !submenuWindow.isDestroyed()) {
+      submenuWindow.hide();
+    }
+  } catch (e) {}
 }
 
 function createWindow(opts) {
@@ -601,6 +708,157 @@ function _broadcastAll(channel, data) {
   } catch (e) {}
 }
 
+function _ensureTaskWatchRunning() {
+  if (_RUN_TESTS) return;
+  if (_taskWatchProcess && !_taskWatchProcess.killed) return;
+  _startTaskWatchProcess();
+}
+
+function _startTaskWatchProcess() {
+  try {
+    const entry = path.join(__dirname, 'task_watch_os', 'src', 'index.js');
+    const child = spawn(process.execPath, [entry], {
+      stdio: ['pipe', 'pipe', 'inherit']
+    });
+    _taskWatchProcess = child;
+    _taskWatchState = {
+      ready: false,
+      pid: null,
+      config: null,
+      lastMetrics: null,
+      lastForegroundChange: null,
+      lastResourceWarning: null,
+      lastError: null,
+      running: false
+    };
+    _taskWatchBuffer = '';
+    if (child && child.stdout) {
+      child.stdout.on('data', (buf) => {
+        _onTaskWatchStdout(buf);
+      });
+    }
+    if (child && child.stdin) {
+      child.stdin.on('error', () => {});
+    }
+    child.on('exit', () => {
+      _taskWatchProcess = null;
+      if (_taskWatchState) _taskWatchState.ready = false;
+      if (_taskWatchState) _taskWatchState.running = false;
+      setTimeout(() => {
+        try { _ensureTaskWatchRunning(); } catch (e) {}
+      }, 2000);
+    });
+    return child;
+  } catch (e) {
+    return null;
+  }
+}
+
+function _onTaskWatchStdout(buf) {
+  try {
+    const chunk = buf.toString('utf8');
+    _taskWatchBuffer = (_taskWatchBuffer || '') + chunk;
+    const parts = _taskWatchBuffer.split(/\r?\n/);
+    _taskWatchBuffer = parts.pop() || '';
+    for (const line of parts) {
+      const t = String(line || '').trim();
+      if (!t) continue;
+      let msg = null;
+      try {
+        msg = JSON.parse(t);
+      } catch (e) {
+        continue;
+      }
+      _handleTaskWatchMessage(msg);
+    }
+  } catch (e) {}
+}
+
+function _handleTaskWatchMessage(msg) {
+  if (!msg || typeof msg !== 'object') return;
+  if (msg.type === 'event') {
+    const ev = String(msg.event || '');
+    const payload = msg.payload && typeof msg.payload === 'object' ? msg.payload : {};
+    if (!_taskWatchState) {
+      _taskWatchState = {
+        ready: false,
+        pid: null,
+        config: null,
+        lastMetrics: null,
+        lastForegroundChange: null,
+        lastResourceWarning: null,
+        lastError: null,
+        running: false
+      };
+    }
+    if (ev === 'monitor:ready') {
+      _taskWatchState.ready = true;
+      _taskWatchState.pid = payload.pid || null;
+      _taskWatchState.config = payload.config || null;
+      _taskWatchState.running = true;
+      _taskWatchSendRequest('process.watch', { kind: 'pid', target: process.pid });
+    } else if (ev === 'monitor:started') {
+      _taskWatchState.running = true;
+    } else if (ev === 'monitor:stopped') {
+      _taskWatchState.running = false;
+    } else if (ev === 'monitor:config-updated') {
+      if (payload.after && typeof payload.after === 'object') {
+        _taskWatchState.config = payload.after;
+      }
+    } else if (ev === 'metrics:update') {
+      _taskWatchState.lastMetrics = payload || null;
+    } else if (ev === 'foreground:changed') {
+      _taskWatchState.lastForegroundChange = payload || null;
+    } else if (ev === 'monitor:resource-warning') {
+      _taskWatchState.lastResourceWarning = payload || null;
+    } else if (ev === 'monitor:error' || ev === 'monitor:fatal-error') {
+      _taskWatchState.lastError = payload || null;
+    }
+    _broadcastAll('taskwatch:update', _getTaskWatchState());
+  }
+}
+
+function _taskWatchSendRaw(obj) {
+  if (!_taskWatchProcess || !_taskWatchProcess.stdin || _taskWatchProcess.killed) return;
+  try {
+    _taskWatchProcess.stdin.write(JSON.stringify(obj) + '\n');
+  } catch (e) {}
+}
+
+function _taskWatchSendRequest(command, payload) {
+  const id = `req_${Date.now()}_${++_taskWatchReqSeq}`;
+  const msg = {
+    type: 'request',
+    id,
+    command: String(command || ''),
+    payload: payload && typeof payload === 'object' ? payload : {}
+  };
+  _taskWatchSendRaw(msg);
+}
+
+function _getTaskWatchState() {
+  const s = _taskWatchState || {
+    ready: false,
+    pid: null,
+    config: null,
+    lastMetrics: null,
+    lastForegroundChange: null,
+    lastResourceWarning: null,
+    lastError: null,
+    running: false
+  };
+  return {
+    ready: !!s.ready,
+    pid: s.pid || null,
+    config: s.config || null,
+    lastMetrics: s.lastMetrics || null,
+    lastForegroundChange: s.lastForegroundChange || null,
+    lastResourceWarning: s.lastResourceWarning || null,
+    lastError: s.lastError || null,
+    running: !!s.running
+  };
+}
+
 function _createSettingsWindow() {
   const win = new BrowserWindow({
     width: 980,
@@ -651,6 +909,33 @@ function _createAboutWindow() {
   });
 
   win.loadFile(path.join(__dirname, 'about.html'));
+  return win;
+}
+
+function _createTaskWatchWindow() {
+  const win = new BrowserWindow({
+    width: 720,
+    height: 520,
+    minWidth: 640,
+    minHeight: 420,
+    backgroundColor: '#ffffff',
+    frame: false,
+    alwaysOnTop: false,
+    show: false,
+    icon: _appIconPath(),
+    title: '系统任务监视器 - LanStartWrite',
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false
+    }
+  });
+  win.once('ready-to-show', () => { win.show(); });
+  win.loadFile(path.join(__dirname, 'task_watch_os', 'task_watch_ui.html'));
+  _taskWatchWindow = win;
+  win.on('closed', () => {
+    if (_taskWatchWindow === win) _taskWatchWindow = null;
+  });
   return win;
 }
 
@@ -1452,6 +1737,7 @@ app.whenReady().then(async () => {
   }
   try { await _ensureModDirs(); } catch (e) {}
   try { _startModWatchers(); } catch (e) {}
+  try { _ensureTaskWatchRunning(); } catch (e) {}
 });
 
 app.on('window-all-closed', () => {
@@ -1575,6 +1861,85 @@ ipcMain.handle('message', async (event, channel, data) => {
     case 'ui:open-note-manager-window': {
       try {
         _createNoteManagerWindow();
+        return { success: true };
+      } catch (e) {
+        return { success: false, error: String(e && e.message || e) };
+      }
+    }
+    case 'ui:open-task-watch-window': {
+      try {
+        _ensureTaskWatchRunning();
+        _createTaskWatchWindow();
+        return { success: true };
+      } catch (e) {
+        return { success: false, error: String(e && e.message || e) };
+      }
+    }
+    case 'taskwatch:get-state': {
+      try {
+        _ensureTaskWatchRunning();
+        return { success: true, state: _getTaskWatchState() };
+      } catch (e) {
+        return { success: false, error: String(e && e.message || e) };
+      }
+    }
+    case 'taskwatch:configure': {
+      try {
+        _ensureTaskWatchRunning();
+        const payload = data && typeof data === 'object' ? data : {};
+        const patch = payload.patch && typeof payload.patch === 'object' ? payload.patch : {};
+        _taskWatchSendRequest('monitor.configure', { patch });
+        return { success: true };
+      } catch (e) {
+        return { success: false, error: String(e && e.message || e) };
+      }
+    }
+    case 'taskwatch:start': {
+      try {
+        _ensureTaskWatchRunning();
+        _taskWatchSendRequest('monitor.start', {});
+        return { success: true };
+      } catch (e) {
+        return { success: false, error: String(e && e.message || e) };
+      }
+    }
+    case 'taskwatch:stop': {
+      try {
+        _ensureTaskWatchRunning();
+        _taskWatchSendRequest('monitor.stop', {});
+        return { success: true };
+      } catch (e) {
+        return { success: false, error: String(e && e.message || e) };
+      }
+    }
+    case 'taskwatch:set-always-on-top': {
+      try {
+        const enabled = !!(data && typeof data === 'object' && data.enabled);
+        const win = BrowserWindow.fromWebContents(event.sender) || _taskWatchWindow;
+        if (win && !win.isDestroyed()) {
+          win.setAlwaysOnTop(enabled, 'screen-saver');
+          return { success: true, enabled: win.isAlwaysOnTop() };
+        }
+        return { success: false, error: 'no_window' };
+      } catch (e) {
+        return { success: false, error: String(e && e.message || e) };
+      }
+    }
+    case 'ui:open-submenu-window': {
+      try {
+        const payload = data && typeof data === 'object' ? data : {};
+        const kind = payload.kind ? String(payload.kind) : '';
+        const anchor = payload.anchor && typeof payload.anchor === 'object' ? payload.anchor : null;
+        const senderWin = BrowserWindow.fromWebContents(event.sender) || toolbarWindow || mainWindow;
+        _createOrUpdateSubmenuWindow(kind, { anchor, senderWindow: senderWin });
+        return { success: true };
+      } catch (e) {
+        return { success: false, error: String(e && e.message || e) };
+      }
+    }
+    case 'ui:close-submenu-window': {
+      try {
+        _closeSubmenuWindow();
         return { success: true };
       } catch (e) {
         return { success: false, error: String(e && e.message || e) };

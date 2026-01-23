@@ -75,7 +75,8 @@ const IDS = {
   btnResource: 'appCaseResourceBtn',
   btnTheme: 'appCaseThemeBtn',
   btnPdf: 'appCasePdfBtn',
-  btnVideoBooth: 'appCaseVideoBoothBtn'
+  btnVideoBooth: 'appCaseVideoBoothBtn',
+  btnTaskWatch: 'appCaseTaskWatchBtn'
 };
 
 const DB = {
@@ -537,7 +538,8 @@ const ICONS = {
   sun: `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" aria-hidden="true"><g fill="currentColor"><path d="M12 18.5a6.5 6.5 0 1 0 0-13a6.5 6.5 0 0 0 0 13m0-11.5a5 5 0 1 1 0 10a5 5 0 0 1 0-10"/><path d="M12 2.75c.41 0 .75.34.75.75v1.25a.75.75 0 0 1-1.5 0V3.5c0-.41.34-.75.75-.75m0 16.5c.41 0 .75.34.75.75v1.25a.75.75 0 0 1-1.5 0V20c0-.41.34-.75.75-.75M3.5 11.25h1.25a.75.75 0 0 1 0 1.5H3.5a.75.75 0 0 1 0-1.5m15.75 0h1.25a.75.75 0 0 1 0 1.5h-1.25a.75.75 0 0 1 0-1.5M5.22 5.22c.3-.3.77-.3 1.06 0l.88.88a.75.75 0 0 1-1.06 1.06l-.88-.88a.75.75 0 0 1 0-1.06m11.62 11.62c.3-.3.77-.3 1.06 0l.88.88a.75.75 0 1 1-1.06 1.06l-.88-.88a.75.75 0 0 1 0-1.06M18.78 5.22c.3.3.3.77 0 1.06l-.88.88a.75.75 0 1 1-1.06-1.06l.88-.88c.3-.3.77-.3 1.06 0M7.16 16.84c.3.3.3.77 0 1.06l-.88.88a.75.75 0 1 1-1.06-1.06l.88-.88c.3-.3.77-.3 1.06 0"/></g></svg>`,
   moon: `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M13.93 2.5a.75.75 0 0 1 .69.98a8.75 8.75 0 0 0 10.9 11.1a.75.75 0 0 1 .96.88A10.25 10.25 0 1 1 13.93 2.5m-.98 2.38A8.75 8.75 0 1 0 24.1 16.97A10.26 10.26 0 0 1 12.95 4.88"/></svg>`,
   pdf: `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" aria-hidden="true"><g fill="currentColor"><path d="M6.75 3A2.75 2.75 0 0 0 4 5.75v12.5A2.75 2.75 0 0 0 6.75 21h10.5A2.75 2.75 0 0 0 20 18.25V9.414a2.75 2.75 0 0 0-.805-1.945l-3.664-3.664A2.75 2.75 0 0 0 13.586 3zM5.5 5.75C5.5 4.784 6.284 4 7.25 4h6.086c.464 0 .909.184 1.237.513l3.664 3.664c.329.328.513.773.513 1.237v8.836c0 .966-.784 1.75-1.75 1.75H6.75A1.75 1.75 0 0 1 5.5 18.25z"/><path d="M8.25 11h1.25a1.75 1.75 0 0 1 0 3.5H9v1.25a.75.75 0 0 1-1.5 0v-4.5a.75.75 0 0 1 .75-.75m.75 2a.25.25 0 0 0 0-.5H9v.5zM12 11a.75.75 0 0 1 .75.75v1.25h.75a1.75 1.75 0 0 1 0 3.5H12a.75.75 0 0 1-.75-.75v-4.5A.75.75 0 0 1 12 11m.75 4h.75a.25.25 0 0 0 0-.5h-.75zM16.25 11a.75.75 0 0 1 .75.75v4.5a.75.75 0 0 1-1.5 0V15h-.25a.75.75 0 0 1 0-1.5h.25v-.75a.75.75 0 0 1 .75-.75"/></g></svg>`,
-  videoBooth: `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24"><path fill="currentColor" d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11zM10 15l-2.25-3l-1.75 2.26V10h8v4.5z"/></svg>`
+  videoBooth: `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24"><path fill="currentColor" d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11zM10 15l-2.25-3l-1.75 2.26V10h8v4.5z"/></svg>`,
+  taskWatch: `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" aria-hidden="true"><g fill="currentColor"><rect x="3" y="5" width="18" height="12" rx="2"/><path d="M8 16.5a.75.75 0 0 1-.7-1.02l2-5a.75.75 0 0 1 1.36-.08l1.66 3.32l1.02-2.04A.75.75 0 0 1 14.98 11h2.27a.75.75 0 0 1 0 1.5h-1.78l-1.56 3.11a.75.75 0 0 1-1.34.02l-1.72-3.43l-1.32 3.29a.75.75 0 0 1-.7.51"/><path d="M9 19.5h6a.75.75 0 0 1 0 1.5H9a.75.75 0 0 1 0-1.5"/></g></svg>`
 };
 
 function _ensureAppButtons(){
@@ -580,12 +582,22 @@ function _ensureAppButtons(){
     g.insertBefore(videoBoothBtn, pdfBtn.nextSibling);
   }
 
+  let taskWatchBtn = document.getElementById(IDS.btnTaskWatch);
+  if (!taskWatchBtn) {
+    taskWatchBtn = _buildToolBtn(IDS.btnTaskWatch, '系统任务监视器', ICONS.taskWatch);
+    taskWatchBtn.dataset.appCaseSeq = '4';
+    taskWatchBtn.dataset.featureId = 'core:task-watch';
+    taskWatchBtn.dataset.featureCategory = 'utility';
+    g.insertBefore(taskWatchBtn, videoBoothBtn.nextSibling);
+  }
+
   _ensureSeq(resourceBtn);
   _ensureSeq(themeBtn);
   _ensureSeq(pdfBtn);
   _ensureSeq(videoBoothBtn);
+   _ensureSeq(taskWatchBtn);
 
-  return { g, resourceBtn, themeBtn, pdfBtn, videoBoothBtn };
+  return { g, resourceBtn, themeBtn, pdfBtn, videoBoothBtn, taskWatchBtn };
 }
 
 function _modalEls(){
@@ -847,6 +859,14 @@ function _closeResourceEditor(){
   _setModalOpen(false);
 }
 
+function _openTaskWatchWindow(){
+  try{
+    if (window && window.electronAPI && typeof window.electronAPI.invokeMain === 'function') {
+      window.electronAPI.invokeMain('message', 'ui:open-task-watch-window', {});
+    }
+  }catch(e){}
+}
+
 function _toggleTheme(){
   const s = Settings.loadSettings();
   const curMode = _resolveRequestedThemeToMode(s && s.theme);
@@ -905,7 +925,7 @@ function _wireAppCase(){
   const created = _ensureAppButtons();
   if (!created) return;
 
-  const { resourceBtn, themeBtn, pdfBtn, videoBoothBtn } = created;
+  const { resourceBtn, themeBtn, pdfBtn, videoBoothBtn, taskWatchBtn } = created;
 
   if (!resourceBtn.dataset.wired) {
     resourceBtn.dataset.wired = '1';
@@ -931,11 +951,19 @@ function _wireAppCase(){
     });
   }
 
+  if (taskWatchBtn && !taskWatchBtn.dataset.wired) {
+    taskWatchBtn.dataset.wired = '1';
+    taskWatchBtn.addEventListener('click', () => {
+      _openTaskWatchWindow();
+    });
+  }
+
   try{
     featureHub.register({ featureId: 'core:resource-library', title: '编辑资源库', version: '1.0.0', weight: 1000, domButton: resourceBtn, invoke: ()=>_openResourceEditor() });
     featureHub.register({ featureId: 'core:theme-toggle', title: '日夜模式', version: '1.0.0', weight: 900, domButton: themeBtn, invoke: ()=>_toggleTheme() });
     if (pdfBtn) featureHub.register({ featureId: 'core:open-pdf', title: '打开PDF文件', version: '1.0.0', weight: 800, domButton: pdfBtn, invoke: (params)=>openPdfFile(params) });
     if (videoBoothBtn) featureHub.register({ featureId: 'core:video-booth', title: '视频展台', version: '1.0.0', weight: 700, domButton: videoBoothBtn, invoke: () => Message.emit(EVENTS.TOGGLE_VIDEO_BOOTH) });
+    if (taskWatchBtn) featureHub.register({ featureId: 'core:task-watch', title: '系统任务监视器', version: '1.0.0', weight: 650, domButton: taskWatchBtn, invoke: () => _openTaskWatchWindow() });
   }catch(e){}
   _syncFeatureRegistryFromGrid();
 

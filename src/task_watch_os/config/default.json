@@ -1,0 +1,9 @@
+{
+  "samplingIntervalMs": 500,
+  "foregroundIntervalMs": 500,
+  "maxInMemorySnapshots": 600,
+  "maxMemoryMbSelf": 100,
+  "dataDir": "data",
+  "reportIntervalMs": 60000
+}
+

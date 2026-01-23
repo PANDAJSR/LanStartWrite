@@ -23,7 +23,8 @@
         "arch": "x64"
       }
     ],
-    "icon": "iconpack/LanStartWrite.ico"
+    "icon": "iconpack/LanStartWrite.ico",
+    "requestedExecutionLevel": "requireAdministrator"
   },
   "nsis": {
     "oneClick": false,

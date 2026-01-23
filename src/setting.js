@@ -56,7 +56,8 @@ const DEFAULTS = {
   toolbarButtonHidden: [],
   videoBoothEnabled: false,
   pluginButtonDisplay: {},
-  pdfDefaultMode: 'window'
+  pdfDefaultMode: 'window',
+  pageSwitchDraggable: false
 };
 
 let _lastPersistError = '';

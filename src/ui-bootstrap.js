@@ -1330,12 +1330,24 @@ window.addEventListener('DOMContentLoaded', async ()=>{
   }catch(e){}
 
   let isToolbarWindow = false;
+  let submenuWindowKind = '';
   try{
     const params = new URLSearchParams(location.search || '');
     isToolbarWindow = params.get('toolbarWindow') === '1';
+    submenuWindowKind = params.get('submenuWindow') || '';
   }catch(e){}
 
-  if (isToolbarWindow) {
+  if (submenuWindowKind) {
+    const toolNodes = await loadFragment('./tool_bar/ui_tool.html');
+    toolNodes.forEach(n => document.body.appendChild(n));
+
+    const settingsNodes = await loadFragment('./setting_ui.html');
+    settingsNodes.forEach(n => document.body.appendChild(n));
+
+    try{ await import('./ipc_bridge.js'); }catch(e){ console.warn('import ipc_bridge failed', e); }
+    try{ await import('./tool_bar/ui-tools.js'); }catch(e){ console.warn('import ui-tools failed', e); }
+    try{ await import('./mod.js'); }catch(e){ console.warn('import mod failed', e); }
+  } else if (isToolbarWindow) {
     const toolNodes = await loadFragment('./tool_bar/ui_tool.html');
     toolNodes.forEach(n => document.body.appendChild(n));
 

@@ -1,0 +1,385 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>系统任务监视器 - LanStartWrite</title>
+  <style>
+    @font-face {
+      font-family: 'MiSans';
+      src: local('MiSans'), local('MiSans-Regular'), local('System Font');
+      font-weight: 400;
+      font-display: swap;
+    }
+    @font-face {
+      font-family: 'MiSans';
+      src: local('MiSans-Bold'), local('System Font Bold');
+      font-weight: 700;
+      font-display: swap;
+    }
+    :root {
+      --ls-font-family: "MiSans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      --ls-font-size-base: 14px;
+      --ls-line-height: 1.5;
+      --ls-radius-sm: 8px;
+      --ls-radius-md: 16px;
+      --ls-radius-lg: 24px;
+      --ls-sys-color-primary: #3478F6;
+      --ls-sys-color-on-primary: #ffffff;
+      --ls-sys-color-surface: #F2F3F5;
+      --ls-sys-color-on-surface: #191919;
+      --ls-sys-color-background: #F2F3F5;
+      --ls-sys-color-outline: #E5E6EB;
+      --ls-sys-color-surface-variant: #FFFFFF;
+      --text-high: rgba(0,0,0,0.9);
+      --text-medium: rgba(0,0,0,0.6);
+      --text-disabled: rgba(0,0,0,0.35);
+      --ls-shadow-sm: 0 2px 8px rgba(0,0,0,0.06);
+      --ls-shadow-md: 0 8px 24px rgba(0,0,0,0.08);
+    }
+    * {
+      box-sizing: border-box;
+      -webkit-user-select: none;
+      user-select: none;
+    }
+    html, body {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background-color: var(--ls-sys-color-background);
+      font-family: var(--ls-font-family);
+      font-size: var(--ls-font-size-base);
+      line-height: var(--ls-line-height);
+      color: var(--text-high);
+      -webkit-font-smoothing: antialiased;
+    }
+    .window {
+      display: flex;
+      flex-direction: column;
+      width: 100%;
+      height: 100%;
+    }
+    .titlebar {
+      height: 44px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 16px;
+      -webkit-app-region: drag;
+      flex-shrink: 0;
+    }
+    .title {
+      font-size: 15px;
+      font-weight: 600;
+    }
+    .controls {
+      display: flex;
+      gap: 8px;
+      -webkit-app-region: no-drag;
+    }
+    .btn {
+      height: 30px;
+      padding: 0 10px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: var(--ls-radius-sm);
+      border: 1px solid var(--ls-sys-color-outline);
+      background: var(--ls-sys-color-surface-variant);
+      color: var(--text-high);
+      cursor: pointer;
+      font-family: inherit;
+      font-size: 13px;
+      min-width: 64px;
+    }
+    .btn:hover {
+      box-shadow: var(--ls-shadow-sm);
+    }
+    .btn:active {
+      transform: scale(0.98);
+    }
+    .btn.primary {
+      background: var(--ls-sys-color-primary);
+      color: var(--ls-sys-color-on-primary);
+      border-color: transparent;
+    }
+    .content {
+      flex: 1;
+      min-height: 0;
+      padding: 12px 16px 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .summary {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+    }
+    .summary-item {
+      padding: 10px 12px;
+      border-radius: var(--ls-radius-sm);
+      background: var(--ls-sys-color-surface-variant);
+      border: 1px solid var(--ls-sys-color-outline);
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .summary-label {
+      font-size: 12px;
+      color: var(--text-medium);
+    }
+    .summary-value {
+      font-size: 14px;
+      font-weight: 500;
+    }
+    .summary-value.muted {
+      color: var(--text-disabled);
+      font-weight: 400;
+    }
+    .summary-value.ok {
+      color: #108943;
+    }
+    .summary-value.warn {
+      color: #E89A11;
+    }
+    .table-wrap {
+      flex: 1;
+      min-height: 0;
+      border-radius: var(--ls-radius-md);
+      background: var(--ls-sys-color-surface-variant);
+      border: 1px solid var(--ls-sys-color-outline);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    .table-header {
+      padding: 10px 12px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid var(--ls-sys-color-outline);
+      flex-shrink: 0;
+    }
+    .table-title {
+      font-size: 14px;
+      font-weight: 600;
+    }
+    .table-subtitle {
+      font-size: 12px;
+      color: var(--text-medium);
+    }
+    .table-scroll {
+      flex: 1;
+      min-height: 0;
+      overflow: auto;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+    thead {
+      position: sticky;
+      top: 0;
+      background: #F7F8FA;
+      z-index: 1;
+    }
+    th, td {
+      padding: 8px 10px;
+      text-align: left;
+      white-space: nowrap;
+    }
+    th {
+      font-weight: 500;
+      color: var(--text-medium);
+      border-bottom: 1px solid var(--ls-sys-color-outline);
+    }
+    tbody tr:nth-child(even) {
+      background: #FAFBFF;
+    }
+    tbody tr:hover {
+      background: rgba(52,120,246,0.06);
+    }
+    .cell-number {
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+    }
+    .cell-status {
+      text-transform: lowercase;
+    }
+    .placeholder-row td {
+      text-align: center;
+      color: var(--text-disabled);
+    }
+    .footer {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 6px 4px 0;
+      font-size: 12px;
+      color: var(--text-medium);
+    }
+    .footer-item {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .footer-label {
+      color: var(--text-medium);
+    }
+    .footer-value {
+      color: var(--text-high);
+    }
+    .footer-value.muted {
+      color: var(--text-disabled);
+    }
+    .footer-value.warn {
+      color: #E89A11;
+    }
+    .footer-value.error {
+      color: #D63031;
+    }
+    .control-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .control-group {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 12px;
+      color: var(--text-medium);
+    }
+    .control-label {
+      white-space: nowrap;
+    }
+    .control-select {
+      height: 26px;
+      border-radius: 8px;
+      border: 1px solid var(--ls-sys-color-outline);
+      background: var(--ls-sys-color-surface-variant);
+      padding: 0 8px;
+      font-size: 12px;
+      font-family: inherit;
+      color: var(--text-high);
+    }
+    .chart-wrap {
+      margin-top: 8px;
+      border-radius: var(--ls-radius-md);
+      border: 1px solid var(--ls-sys-color-outline);
+      background: var(--ls-sys-color-surface-variant);
+      padding: 8px 10px 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .chart-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 12px;
+      color: var(--text-medium);
+    }
+    .chart-title {
+      font-weight: 500;
+      color: var(--text-high);
+    }
+    .chart-legend {
+      text-align: right;
+    }
+    .chart-canvas {
+      width: 100%;
+      height: 140px;
+      display: block;
+    }
+  </style>
+</head>
+<body>
+  <div class="window">
+    <div class="titlebar">
+      <div class="title">系统任务监视器</div>
+      <div class="controls">
+        <button class="btn" id="btnTop">置顶</button>
+        <button class="btn" id="btnRefresh">刷新</button>
+        <button class="btn primary" id="btnClose">关闭</button>
+      </div>
+    </div>
+    <div class="content">
+      <div class="summary">
+        <div class="summary-item">
+          <div class="summary-label">模块状态</div>
+          <div class="summary-value" id="statusText">未启动</div>
+        </div>
+        <div class="summary-item">
+          <div class="summary-label">最近采样时间</div>
+          <div class="summary-value muted" id="sampleTime">--</div>
+        </div>
+        <div class="summary-item">
+          <div class="summary-label">当前前台窗口</div>
+          <div class="summary-value muted" id="foregroundText">--</div>
+        </div>
+      </div>
+      <div class="control-row">
+        <div class="control-group">
+          <span class="control-label">采样间隔</span>
+          <select id="intervalSelect" class="control-select">
+            <option value="200">200 ms</option>
+            <option value="500" selected>500 ms</option>
+            <option value="1000">1000 ms</option>
+            <option value="2000">2000 ms</option>
+          </select>
+        </div>
+        <button class="btn" id="btnToggleMonitor">暂停监控</button>
+      </div>
+      <div class="table-wrap">
+        <div class="table-header">
+          <div class="table-title">进程列表</div>
+          <div class="table-subtitle" id="tableSubtitle">按 CPU 使用率排序</div>
+        </div>
+        <div class="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th style="width:70px">PID</th>
+                <th>进程名</th>
+                <th style="width:90px;text-align:right">CPU%</th>
+                <th style="width:110px;text-align:right">内存 (MB)</th>
+                <th style="width:90px">状态</th>
+              </tr>
+            </thead>
+            <tbody id="processTableBody">
+              <tr class="placeholder-row">
+                <td colspan="5">暂无数据</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <div class="chart-wrap">
+        <div class="chart-header">
+          <div class="chart-title">性能趋势</div>
+          <div class="chart-legend">蓝线: CPU 总使用率  橙线: 总内存 (MB)</div>
+        </div>
+        <canvas id="metricsChart" class="chart-canvas"></canvas>
+      </div>
+      <div class="footer">
+        <div class="footer-item">
+          <span class="footer-label">资源预警</span>
+          <span class="footer-value muted" id="resourceWarningText">无</span>
+        </div>
+        <div class="footer-item">
+          <span class="footer-label">最近错误</span>
+          <span class="footer-value muted" id="errorText">无</span>
+        </div>
+      </div>
+    </div>
+  </div>
+  <script type="module" src="./task_watch_ui_renderer.js"></script>
+</body>
+</html>
