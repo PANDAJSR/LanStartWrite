@@ -28,3 +28,4 @@ dist_electron/
 /dist_build
 /dist_build_new
 /dist_build_tmp
+/src/task_watch_os/data
