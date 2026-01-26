@@ -28,4 +28,7 @@ dist_electron/
 /dist_build
 /dist_build_new
 /dist_build_tmp
+
+#log
+.log
 /src/task_watch_os/data
