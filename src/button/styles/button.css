@@ -1,0 +1,68 @@
+.lsButton {
+  -webkit-app-region: no-drag;
+  appearance: none;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+  cursor: pointer;
+  font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, 'Apple Color Emoji',
+    'Segoe UI Emoji';
+  font-size: 12px;
+  line-height: 1;
+  padding: 6px 10px;
+  transition:
+    background 120ms ease,
+    transform 90ms ease,
+    border-color 120ms ease,
+    opacity 120ms ease;
+}
+
+.lsButton:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.lsButton:active {
+  transform: translateY(0.5px);
+}
+
+.lsButton:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.lsButton--danger {
+  border-color: rgba(255, 80, 80, 0.35);
+  background: rgba(255, 80, 80, 0.18);
+}
+
+.lsButton--danger:hover {
+  background: rgba(255, 80, 80, 0.24);
+}
+
+.lsButton--light {
+  border-color: rgba(0, 0, 0, 0.12);
+  background: rgba(255, 255, 255, 0.92);
+  color: rgba(10, 10, 10, 0.92);
+}
+
+.lsButton--light:hover {
+  background: rgba(255, 255, 255, 1);
+}
+
+.lsButton--sm {
+  font-size: 12px;
+  padding: 6px 10px;
+}
+
+.lsButton--md {
+  font-size: 13px;
+  padding: 8px 12px;
+}
+
+.lsButtonGroup {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+

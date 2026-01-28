@@ -1,30 +1,6 @@
-# Dependencies
-node_modules/
-npm-debug.log
-yarn-error.log
-
-# Production/Distribution
-dist/
-dist_electron/
-build/
-out/
-
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
-*~
+node_modules
+dist
+out
 .DS_Store
+*.log
 
-# Electron
-dist_electron/
-
-# Environment
-.env
-.env.local
-.env.*.local
-/.trae
-/dist_build
-/dist_build_new
-/dist_build_tmp

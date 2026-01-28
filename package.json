@@ -1,23 +1,40 @@
 {
-  "name": "LanStartWrite",
-  "version": "0.4.0",
-  "description": "Simple Electron starter",
-  "main": "src/main.js",
+  "name": "lanstart-write",
+  "private": true,
+  "version": "0.0.0",
+  "main": "out/main/index.js",
   "scripts": {
-    "start": "electron .",
-    "dev": "electron .",
-    "test": "electron . --run-tests",
-    "build": "electron-builder --win --x64",
-    "build:portable": "electron-builder --win portable --x64",
-    "build:installer": "electron-builder --win nsis --x64",
-    "build:all": "electron-builder --win --x64"
+    "dev": "electron-vite dev",
+    "build": "electron-vite build && tsc -p tsconfig.backend.json",
+    "preview": "electron-vite preview",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
   },
   "dependencies": {
-    "semver": "^7.5.4",
-    "yauzl": "^2.10.0"
+    "@elysiajs/node": "^1.4.3",
+    "electron": "^35.0.0",
+    "elysia": "^1.4.3",
+    "level": "^10.0.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
   },
   "devDependencies": {
-    "electron": "^34.0.0",
-    "electron-builder": "^25.1.8"
+    "@types/node": "^22.13.1",
+    "@types/react": "^18.3.18",
+    "@types/react-dom": "^18.3.5",
+    "@testing-library/jest-dom": "^6.6.3",
+    "@testing-library/react": "^16.1.0",
+    "@testing-library/user-event": "^14.6.1",
+    "@vitejs/plugin-react": "^4.3.4",
+    "electron-vite": "^3.1.0",
+    "jsdom": "^25.0.1",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3",
+    "vite": "^6.1.0",
+    "vitest": "^2.1.9"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": ["classic-level", "electron", "esbuild"]
   }
 }
+
