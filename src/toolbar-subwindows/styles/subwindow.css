@@ -14,26 +14,50 @@ body {
 }
 
 .subwindowRoot {
+  position: relative;
   width: 100%;
   height: 100%;
   box-sizing: border-box;
   padding: 0;
-  background: rgba(25, 28, 36, 0.72);
+  overflow: hidden;
   color: #ffffff;
   font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, 'Apple Color Emoji',
     'Segoe UI Emoji';
+  background: rgba(25, 28, 36, 0.62);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 0;
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.35);
+}
+
+.subwindowRoot::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-image: var(--hyper-glass-bg);
+  background-size: cover;
+  background-position: center;
+  transform: scale(1.08);
+  opacity: 0.95;
+  filter: saturate(1.25) contrast(1.08);
+  will-change: transform, opacity;
+}
+
+.subwindowRoot::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, rgba(12, 14, 18, 0.62), rgba(12, 14, 18, 0.72));
+  mix-blend-mode: multiply;
+  pointer-events: none;
 }
 
 .subwindowCard {
+  position: relative;
+  z-index: 1;
   width: 100%;
   height: 100%;
   box-sizing: border-box;
-  background: rgba(25, 28, 36, 0.72);
-  backdrop-filter: blur(12px);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 14px;
   padding: 12px;
-  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.35);
 }
 
 .subwindowMeasure {

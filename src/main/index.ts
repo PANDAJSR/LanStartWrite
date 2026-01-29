@@ -3,7 +3,6 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { platform } from 'node:process'
-import { getSystemColors } from '../color__feture/mainSystemColors'
 
 let backendProcess: ChildProcessWithoutNullStreams | undefined
 
@@ -16,7 +15,14 @@ const WINDOW_ID_TOOLBAR_SUBWINDOW = 'toolbar-subwindow'
 let floatingToolbarWindow: BrowserWindow | undefined
 const toolbarSubwindows = new Map<
   string,
-  { win: BrowserWindow; placement: 'top' | 'bottom'; width: number; height: number }
+  {
+    win: BrowserWindow
+    placement: 'top' | 'bottom'
+    effectivePlacement: 'top' | 'bottom'
+    width: number
+    height: number
+    animationTimer?: NodeJS.Timeout
+  }
 >()
 let scheduledRepositionTimer: NodeJS.Timeout | undefined
 
@@ -70,7 +76,7 @@ function createFloatingToolbarWindow(): BrowserWindow {
     alwaysOnTop: true,
     skipTaskbar: true,
     title: WINDOW_TITLE_FLOATING_TOOLBAR,
-    backgroundColor: '#191C24',
+    backgroundColor: '#00000000',
     backgroundMaterial: 'mica',
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
@@ -139,6 +145,95 @@ function scheduleRepositionToolbarSubwindows() {
   }, 0)
 }
 
+type Bounds = { x: number; y: number; width: number; height: number }
+type WorkArea = { x: number; y: number; width: number; height: number }
+
+function stopToolbarSubwindowAnimation(item: { animationTimer?: NodeJS.Timeout }) {
+  if (!item.animationTimer) return
+  clearTimeout(item.animationTimer)
+  item.animationTimer = undefined
+}
+
+function easeOutCubic(t: number) {
+  return 1 - Math.pow(1 - t, 3)
+}
+
+function easeOutBack(t: number) {
+  const c1 = 1.08
+  const c3 = c1 + 1
+  return 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2)
+}
+
+function animateToolbarSubwindowTo(item: { win: BrowserWindow; animationTimer?: NodeJS.Timeout }, to: Bounds, atEdge: boolean) {
+  stopToolbarSubwindowAnimation(item)
+  const from = item.win.getBounds()
+  if (from.x === to.x && from.y === to.y && from.width === to.width && from.height === to.height) return
+
+  const dx = to.x - from.x
+  const dy = to.y - from.y
+  const dist = Math.hypot(dx, dy)
+  const durationMs = Math.max(140, Math.min(240, Math.round(140 + dist * 0.18)))
+  const startAt = Date.now()
+  const ease = atEdge ? easeOutCubic : easeOutBack
+
+  const tick = () => {
+    item.animationTimer = undefined
+    if (item.win.isDestroyed()) return
+    const now = Date.now()
+    const t = Math.max(0, Math.min(1, (now - startAt) / durationMs))
+    const k = ease(t)
+    const next: Bounds = {
+      x: Math.round(from.x + (to.x - from.x) * k),
+      y: Math.round(from.y + (to.y - from.y) * k),
+      width: Math.round(from.width + (to.width - from.width) * k),
+      height: Math.round(from.height + (to.height - from.height) * k)
+    }
+    item.win.setBounds(next, false)
+    if (t >= 1) return
+    item.animationTimer = setTimeout(tick, 16)
+  }
+
+  item.animationTimer = setTimeout(tick, 0)
+}
+
+function computeToolbarSubwindowBounds(
+  item: { effectivePlacement: 'top' | 'bottom'; width: number; height: number },
+  ownerBounds: Bounds,
+  workArea: WorkArea
+) {
+  const gap = 10
+  const widthLimit = Math.max(360, workArea.width - 20)
+  const width = Math.max(360, Math.min(widthLimit, Math.round(item.width)))
+  const heightLimit = Math.max(60, workArea.height - 20)
+  const height = Math.max(60, Math.min(heightLimit, Math.round(item.height)))
+
+  let x = ownerBounds.x
+  let y =
+    item.effectivePlacement === 'bottom'
+      ? ownerBounds.y + ownerBounds.height + gap
+      : ownerBounds.y - height - gap
+
+  const xMax = workArea.x + workArea.width - width
+  x = Math.max(workArea.x, Math.min(xMax, x))
+
+  const yMax = workArea.y + workArea.height - height
+  if (y < workArea.y || y > yMax) {
+    item.effectivePlacement = item.effectivePlacement === 'bottom' ? 'top' : 'bottom'
+    y =
+      item.effectivePlacement === 'bottom'
+        ? ownerBounds.y + ownerBounds.height + gap
+        : ownerBounds.y - height - gap
+    y = Math.max(workArea.y, Math.min(yMax, y))
+  }
+
+  const xi = Math.round(x)
+  const yi = Math.round(y)
+  return {
+    bounds: { x: xi, y: yi, width, height },
+    atEdge: xi === workArea.x || xi === xMax || yi === workArea.y || yi === yMax
+  }
+}
+
 function repositionToolbarSubwindows() {
   const owner = floatingToolbarWindow
   if (!owner || owner.isDestroyed()) return
@@ -149,26 +244,8 @@ function repositionToolbarSubwindows() {
   for (const item of toolbarSubwindows.values()) {
     const win = item.win
     if (win.isDestroyed() || !win.isVisible()) continue
-    const widthLimit = Math.max(360, workArea.width - 20)
-    const width = Math.max(360, Math.min(widthLimit, Math.round(item.width)))
-    const heightLimit = Math.max(60, workArea.height - 20)
-    const height = Math.max(60, Math.min(heightLimit, Math.round(item.height)))
-
-    let x = ownerBounds.x
-    let y =
-      item.placement === 'bottom' ? ownerBounds.y + ownerBounds.height : ownerBounds.y - height
-
-    const xMax = workArea.x + workArea.width - width
-    x = Math.max(workArea.x, Math.min(xMax, x))
-
-    const yMax = workArea.y + workArea.height - height
-    if (y < workArea.y || y > yMax) {
-      const altY =
-        item.placement === 'bottom' ? ownerBounds.y - height : ownerBounds.y + ownerBounds.height
-      y = Math.max(workArea.y, Math.min(yMax, altY))
-    }
-
-    win.setBounds({ x: Math.round(x), y: Math.round(y), width, height }, false)
+    const { bounds, atEdge } = computeToolbarSubwindowBounds(item, ownerBounds, workArea)
+    animateToolbarSubwindowTo(item, bounds, atEdge)
   }
 }
 
@@ -222,10 +299,18 @@ function getOrCreateToolbarSubwindow(kind: string, placement: 'top' | 'bottom'):
   }
 
   win.on('closed', () => {
+    const item = toolbarSubwindows.get(kind)
+    if (item) stopToolbarSubwindowAnimation(item)
     toolbarSubwindows.delete(kind)
   })
 
-  toolbarSubwindows.set(kind, { win, placement, width: Math.max(360, ownerBounds.width), height: 220 })
+  toolbarSubwindows.set(kind, {
+    win,
+    placement,
+    effectivePlacement: placement,
+    width: Math.max(360, ownerBounds.width),
+    height: 220
+  })
   scheduleRepositionToolbarSubwindows()
   return win
 }
@@ -235,6 +320,7 @@ function closeOtherToolbarSubwindows(exceptKind: string) {
     if (kind === exceptKind) continue
     const win = item.win
     if (win.isDestroyed()) continue
+    stopToolbarSubwindowAnimation(item)
     if (win.isVisible()) win.hide()
   }
 }
@@ -251,7 +337,15 @@ function toggleToolbarSubwindow(kind: string, placement: 'top' | 'bottom') {
     return
   }
 
+  item.effectivePlacement = placement
   closeOtherToolbarSubwindows(kind)
+  const owner = floatingToolbarWindow
+  if (owner && !owner.isDestroyed()) {
+    const ownerBounds = owner.getBounds()
+    const display = screen.getDisplayMatching(ownerBounds)
+    const { bounds } = computeToolbarSubwindowBounds(item, ownerBounds, display.workArea)
+    win.setBounds(bounds, false)
+  }
   scheduleRepositionToolbarSubwindows()
   win.showInactive()
 }
@@ -337,34 +431,6 @@ function handleBackendControlMessage(message: any): void {
     const nextHeight = Math.max(1, Math.min(600, Math.round(height)))
     win.setBounds({ ...bounds, width: nextWidth, height: nextHeight }, false)
     scheduleRepositionToolbarSubwindows()
-    return
-  }
-
-  if (message.type === 'GET_SYSTEM_COLORS') {
-    const requestId = String((message as any).requestId ?? '')
-    const modeRaw = String((message as any).mode ?? '')
-    const mode = modeRaw === 'light' || modeRaw === 'dark' ? modeRaw : modeRaw === 'auto' ? 'auto' : undefined
-    if (!requestId) return
-    void getSystemColors({ mode, maxAgeMs: 5_000 })
-      .then((colors) => {
-        sendToBackend({ type: 'SYSTEM_COLORS', requestId, colors })
-      })
-      .catch(() => {
-        sendToBackend({
-          type: 'SYSTEM_COLORS',
-          requestId,
-          colors: {
-            ok: false,
-            mode: 'dark',
-            monet: { seed: { r: 82, g: 92, b: 120, a: 255 }, tones: {} },
-            mica: {
-              background: { r: 20, g: 22, b: 28, a: 220 },
-              surface: { r: 24, g: 26, b: 32, a: 220 },
-              border: { r: 255, g: 255, b: 255, a: 28 }
-            }
-          }
-        })
-      })
     return
   }
 

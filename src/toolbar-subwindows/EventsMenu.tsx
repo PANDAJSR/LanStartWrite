@@ -1,4 +1,5 @@
 import React, { useEffect, useRef } from 'react'
+import { useHyperGlassRealtimeBlur } from '../hyper_glass'
 import { useEventsPoll } from '../toolbar/hooks/useEventsPoll'
 import { postCommand } from '../toolbar/hooks/useBackend'
 import './styles/subwindow.css'
@@ -8,6 +9,8 @@ export function EventsMenu(props: { kind: string }) {
   const rootRef = useRef<HTMLDivElement | null>(null)
   const cardRef = useRef<HTMLDivElement | null>(null)
   const measureRef = useRef<HTMLDivElement | null>(null)
+
+  useHyperGlassRealtimeBlur({ root: rootRef.current })
 
   useEffect(() => {
     const root = rootRef.current

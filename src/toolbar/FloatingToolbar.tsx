@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useEffect, useMemo, useRef } from 'react'
 import { Button, ButtonGroup } from '../button'
+import { useHyperGlassRealtimeBlur } from '../hyper_glass'
 import { usePersistedState } from './hooks/usePersistedState'
 import { postCommand } from './hooks/useBackend'
 import { useToolbarWindowAutoResize } from './hooks/useToolbarWindowAutoResize'
@@ -67,13 +68,15 @@ function ToolbarProvider({ children }: { children: React.ReactNode }) {
 
 function FloatingToolbarInner() {
   const { state, setState } = useToolbar()
+  const rootRef = useRef<HTMLDivElement | null>(null)
   const dragRef = useRef<HTMLDivElement | null>(null)
   const uiButtonSize: 'sm' = 'sm'
 
   useToolbarWindowAutoResize({ root: dragRef.current })
+  useHyperGlassRealtimeBlur({ root: rootRef.current })
 
   return (
-    <div className="toolbarRoot">
+    <div ref={rootRef} className="toolbarRoot">
       <div ref={dragRef} className="toolbarDragArea">
         <div className="toolbarBarRow">
           <div className="toolbarLabel">

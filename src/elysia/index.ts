@@ -10,12 +10,6 @@ type EventItem = {
   ts: number
 }
 
-type PendingSystemColors = {
-  resolve: (value: unknown) => void
-  reject: (err: unknown) => void
-  timer: NodeJS.Timeout
-}
-
 const port = Number(process.env.LANSTART_BACKEND_PORT ?? 3131)
 const dbPath = process.env.LANSTART_DB_PATH ?? './leveldb'
 
@@ -36,37 +30,12 @@ function requestMain(message: unknown): void {
   process.stdout.write(`__LANSTART__${JSON.stringify(message)}\n`)
 }
 
-const pendingSystemColors = new Map<string, PendingSystemColors>()
-
-function requestSystemColors(mode: 'auto' | 'light' | 'dark' = 'auto'): Promise<unknown> {
-  const requestId = `${Date.now()}-${Math.random().toString(16).slice(2)}`
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => {
-      pendingSystemColors.delete(requestId)
-      reject(new Error('SYSTEM_COLORS_TIMEOUT'))
-    }, 2000)
-    pendingSystemColors.set(requestId, { resolve, reject, timer })
-    requestMain({ type: 'GET_SYSTEM_COLORS', requestId, mode })
-  })
-}
-
 const stdin = createInterface({ input: process.stdin, crlfDelay: Infinity })
 stdin.on('line', (line) => {
   const trimmed = line.trim()
   if (!trimmed) return
   try {
     const msg = JSON.parse(trimmed)
-    if (msg && typeof msg === 'object' && (msg as any).type === 'SYSTEM_COLORS') {
-      const requestId = String((msg as any).requestId ?? '')
-      if (requestId) {
-        const pending = pendingSystemColors.get(requestId)
-        if (pending) {
-          clearTimeout(pending.timer)
-          pendingSystemColors.delete(requestId)
-          pending.resolve((msg as any).colors)
-        }
-      }
-    }
     emitEvent('MAIN_MESSAGE', msg)
   } catch {
     return
@@ -203,22 +172,6 @@ const api = new Elysia({ adapter: node() })
       return { ok: true, items, latest: events.at(-1)?.id ?? since }
     },
     { query: t.Object({ since: t.Optional(t.String()) }) }
-  )
-  .get(
-    '/system/colors',
-    async ({ query, set }) => {
-      const modeRaw = String(query.mode ?? 'auto')
-      const mode = modeRaw === 'light' || modeRaw === 'dark' || modeRaw === 'auto' ? modeRaw : 'auto'
-      try {
-        const colors = await requestSystemColors(mode)
-        emitEvent('SYSTEM_COLORS', { mode })
-        return { ok: true, colors }
-      } catch {
-        set.status = 504
-        return { ok: false, error: 'TIMEOUT' }
-      }
-    },
-    { query: t.Object({ mode: t.Optional(t.String()) }) }
   )
 
 api.listen({ hostname: '127.0.0.1', port })
