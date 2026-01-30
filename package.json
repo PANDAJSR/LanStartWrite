@@ -12,29 +12,42 @@
   },
   "dependencies": {
     "@elysiajs/node": "^1.4.3",
+    "@mantine/core": "^8.3.13",
+    "@mantine/hooks": "^8.3.13",
+    "bmp-js": "^0.1.0",
     "electron": "^35.0.0",
     "elysia": "^1.4.3",
+    "framer-motion": "^12.29.2",
+    "jimp": "^1.6.0",
+    "jpeg-js": "^0.4.4",
     "level": "^10.0.0",
+    "pngjs": "^7.0.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },
   "devDependencies": {
-    "@types/node": "^22.13.1",
-    "@types/react": "^18.3.18",
-    "@types/react-dom": "^18.3.5",
     "@testing-library/jest-dom": "^6.6.3",
     "@testing-library/react": "^16.1.0",
     "@testing-library/user-event": "^14.6.1",
+    "@types/node": "^22.13.1",
+    "@types/react": "^18.3.18",
+    "@types/react-dom": "^18.3.5",
     "@vitejs/plugin-react": "^4.3.4",
+    "autoprefixer": "^10.4.23",
     "electron-vite": "^3.1.0",
     "jsdom": "^25.0.1",
+    "postcss": "^8.5.6",
+    "tailwindcss": "3.4.17",
     "tsx": "^4.19.2",
     "typescript": "^5.7.3",
     "vite": "^6.1.0",
     "vitest": "^2.1.9"
   },
   "pnpm": {
-    "onlyBuiltDependencies": ["classic-level", "electron", "esbuild"]
+    "onlyBuiltDependencies": [
+      "classic-level",
+      "electron",
+      "esbuild"
+    ]
   }
 }
-

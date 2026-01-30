@@ -1,4 +1,5 @@
 import React, { useEffect, useRef } from 'react'
+import { motion, useReducedMotion } from '../Framer_Motion'
 import { useHyperGlassRealtimeBlur } from '../hyper_glass'
 import { useEventsPoll } from '../toolbar/hooks/useEventsPoll'
 import { postCommand } from '../toolbar/hooks/useBackend'
@@ -9,6 +10,7 @@ export function EventsMenu(props: { kind: string }) {
   const rootRef = useRef<HTMLDivElement | null>(null)
   const cardRef = useRef<HTMLDivElement | null>(null)
   const measureRef = useRef<HTMLDivElement | null>(null)
+  const reduceMotion = useReducedMotion()
 
   useHyperGlassRealtimeBlur({ root: rootRef.current })
 
@@ -54,8 +56,14 @@ export function EventsMenu(props: { kind: string }) {
   }, [props.kind])
 
   return (
-    <div ref={rootRef} className="subwindowRoot">
-      <div ref={cardRef} className="subwindowCard">
+    <motion.div
+      ref={rootRef}
+      className="subwindowRoot"
+      initial={reduceMotion ? false : { opacity: 0, y: 8, scale: 0.99 }}
+      animate={reduceMotion ? undefined : { opacity: 1, y: 0, scale: 1 }}
+      transition={reduceMotion ? undefined : { duration: 0.18, ease: [0.2, 0.8, 0.2, 1] }}
+    >
+      <div ref={cardRef} className="subwindowCard animate-ls-pop-in">
         <div ref={measureRef} className="subwindowMeasure">
           <div className="subwindowTitle">
             <span>事件</span>
@@ -64,14 +72,20 @@ export function EventsMenu(props: { kind: string }) {
 
           <div className="subwindowList">
             {events.slice(-8).map((e) => (
-              <div key={e.id} className="subwindowRow">
+              <motion.div
+                key={e.id}
+                layout
+                className="subwindowRow"
+                initial={false}
+                transition={reduceMotion ? undefined : { duration: 0.18, ease: 'easeOut' }}
+              >
                 <span>{e.type}</span>
                 <span className="subwindowMeta">#{e.id}</span>
-              </div>
+              </motion.div>
             ))}
           </div>
         </div>
       </div>
-    </div>
+    </motion.div>
   )
 }

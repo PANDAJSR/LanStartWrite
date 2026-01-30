@@ -1,5 +1,7 @@
 import { resolve } from 'node:path'
 import react from '@vitejs/plugin-react'
+import autoprefixer from 'autoprefixer'
+import tailwindcss from 'tailwindcss'
 import { defineConfig } from 'electron-vite'
 
 export default defineConfig({
@@ -24,6 +26,14 @@ export default defineConfig({
   renderer: {
     root: resolve(__dirname, 'src/renderer'),
     plugins: [react()],
+    css: {
+      postcss: {
+        plugins: [
+          tailwindcss({ config: resolve(__dirname, 'src/Tailwind/tailwind.config.cjs') }),
+          autoprefixer()
+        ]
+      }
+    },
     server: {
       fs: {
         allow: [resolve(__dirname, 'src')]

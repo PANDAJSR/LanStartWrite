@@ -1,4 +1,4 @@
-import { contextBridge, desktopCapturer, screen } from 'electron'
+import { contextBridge, desktopCapturer, ipcRenderer, screen } from 'electron'
 
 type CaptureOptions = { maxSide?: number }
 
@@ -49,6 +49,46 @@ contextBridge.exposeInMainWorld('hyperGlass', {
         bounds: display.bounds,
         size: display.size
       }
+    }
+  }
+})
+
+type BackendEventItem = {
+  id: number
+  type: string
+  payload?: unknown
+  ts: number
+}
+
+type Unsubscribe = () => void
+
+contextBridge.exposeInMainWorld('lanstart', {
+  postCommand: async (command: string, payload?: unknown) => {
+    return await ipcRenderer.invoke('lanstart:postCommand', { command, payload })
+  },
+  getEvents: async (since: number) => {
+    return await ipcRenderer.invoke('lanstart:getEvents', { since })
+  },
+  getKv: async (key: string) => {
+    return await ipcRenderer.invoke('lanstart:getKv', { key })
+  },
+  putKv: async (key: string, value: unknown) => {
+    return await ipcRenderer.invoke('lanstart:putKv', { key, value })
+  },
+  getUiState: async (windowId: string) => {
+    return await ipcRenderer.invoke('lanstart:getUiState', { windowId })
+  },
+  putUiStateKey: async (windowId: string, key: string, value: unknown) => {
+    return await ipcRenderer.invoke('lanstart:putUiStateKey', { windowId, key, value })
+  },
+  deleteUiStateKey: async (windowId: string, key: string) => {
+    return await ipcRenderer.invoke('lanstart:deleteUiStateKey', { windowId, key })
+  },
+  onEvent: (listener: (event: BackendEventItem) => void): Unsubscribe => {
+    const wrapped = (_evt: unknown, item: BackendEventItem) => listener(item)
+    ipcRenderer.on('lanstart:backend-event', wrapped as any)
+    return () => {
+      ipcRenderer.removeListener('lanstart:backend-event', wrapped as any)
     }
   }
 })

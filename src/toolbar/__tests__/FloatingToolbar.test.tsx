@@ -43,4 +43,22 @@ describe('FloatingToolbar', () => {
     const commands = bodies.map((b) => b.command).filter(Boolean)
     expect(commands).toContain('toggle-subwindow')
   })
+
+  it('does not raise unhandled rejection on quit', async () => {
+    const user = userEvent.setup()
+    const fetchMock = vi.fn(async () => {
+      throw new Error('fetch_failed')
+    })
+    vi.stubGlobal('fetch', fetchMock as any)
+
+    const unhandled = vi.fn()
+    window.addEventListener('unhandledrejection', unhandled as any)
+
+    render(<FloatingToolbarApp />)
+    await user.click(await screen.findByRole('button', { name: '退出' }))
+    await new Promise((r) => setTimeout(r, 0))
+
+    expect(unhandled).toHaveBeenCalledTimes(0)
+    window.removeEventListener('unhandledrejection', unhandled as any)
+  })
 })

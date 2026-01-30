@@ -1,4 +1,4 @@
-import { BrowserWindow, app, screen } from 'electron'
+import { BrowserWindow, app, ipcMain, screen } from 'electron'
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
@@ -13,6 +13,8 @@ const WINDOW_TITLE_FLOATING_TOOLBAR = '浮动工具栏'
 const WINDOW_ID_TOOLBAR_SUBWINDOW = 'toolbar-subwindow'
 
 let floatingToolbarWindow: BrowserWindow | undefined
+let nextRpcId = 1
+const pendingBackendRpc = new Map<number, { resolve: (v: any) => void; reject: (e: any) => void; timer: NodeJS.Timeout }>()
 const toolbarSubwindows = new Map<
   string,
   {
@@ -25,6 +27,35 @@ const toolbarSubwindows = new Map<
   }
 >()
 let scheduledRepositionTimer: NodeJS.Timeout | undefined
+
+function sendToBackend(message: unknown): void {
+  try {
+    if (!backendProcess?.stdin.writable) return
+    backendProcess.stdin.write(`${JSON.stringify(message)}\n`)
+  } catch {
+    return
+  }
+}
+
+function requestBackendRpc(method: string, params: unknown): Promise<any> {
+  if (!backendProcess) return Promise.reject(new Error('backend_not_ready'))
+  const id = nextRpcId++
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      pendingBackendRpc.delete(id)
+      reject(new Error(`backend_rpc_timeout:${method}`))
+    }, 8000)
+    pendingBackendRpc.set(id, { resolve, reject, timer })
+    sendToBackend({ type: 'RPC_REQUEST', id, method, params })
+  })
+}
+
+function broadcastBackendEvent(item: unknown): void {
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (win.isDestroyed()) continue
+    win.webContents.send('lanstart:backend-event', item)
+  }
+}
 
 function getDevServerUrl(): string | undefined {
   const url = process.env.VITE_DEV_SERVER_URL
@@ -45,6 +76,46 @@ function wireWindowDebug(win: BrowserWindow, name: string): void {
   })
   win.webContents.on('console-message', (_e, level, message, line, sourceId) => {
     process.stdout.write(`[${name}] console(${level}) ${sourceId}:${line} ${message}\n`)
+  })
+}
+
+function wireWindowStatus(win: BrowserWindow, windowId: string): void {
+  const snapshot = (event: string, extra?: Record<string, unknown>) => {
+    const bounds = win.isDestroyed() ? undefined : win.getBounds()
+    const payload = {
+      type: 'WINDOW_STATUS',
+      windowId,
+      event,
+      ts: Date.now(),
+      bounds,
+      visible: !win.isDestroyed() ? win.isVisible() : false,
+      focused: !win.isDestroyed() ? win.isFocused() : false,
+      minimized: !win.isDestroyed() ? win.isMinimized() : false,
+      maximized: !win.isDestroyed() ? win.isMaximized() : false,
+      fullscreen: !win.isDestroyed() ? win.isFullScreen() : false,
+      title: !win.isDestroyed() ? win.getTitle() : '',
+      rendererPid: win.webContents.getOSProcessId?.(),
+      ...extra
+    }
+    sendToBackend(payload)
+  }
+
+  snapshot('created')
+  win.on('show', () => snapshot('show'))
+  win.on('hide', () => snapshot('hide'))
+  win.on('focus', () => snapshot('focus'))
+  win.on('blur', () => snapshot('blur'))
+  win.on('move', () => snapshot('move'))
+  win.on('resize', () => snapshot('resize'))
+  win.on('minimize', () => snapshot('minimize'))
+  win.on('restore', () => snapshot('restore'))
+  win.on('closed', () => snapshot('closed'))
+  win.webContents.on('did-finish-load', () => snapshot('did-finish-load'))
+  win.webContents.on('did-fail-load', (_e, errorCode, errorDescription, validatedURL) => {
+    snapshot('did-fail-load', { errorCode, errorDescription, validatedURL })
+  })
+  win.webContents.on('render-process-gone', (_e, details) => {
+    snapshot('render-process-gone', { reason: details.reason, exitCode: details.exitCode })
   })
 }
 
@@ -88,6 +159,7 @@ function createFloatingToolbarWindow(): BrowserWindow {
   applyWindowsBackdrop(win)
   win.setAlwaysOnTop(true, 'floating')
   wireWindowDebug(win, 'floating-toolbar')
+  wireWindowStatus(win, WINDOW_ID_FLOATING_TOOLBAR)
   win.on('move', scheduleRepositionToolbarSubwindows)
   win.on('resize', scheduleRepositionToolbarSubwindows)
   win.on('show', scheduleRepositionToolbarSubwindows)
@@ -126,6 +198,7 @@ function createChildWindow(): BrowserWindow {
 
   applyWindowsBackdrop(win)
   wireWindowDebug(win, 'child-window')
+  wireWindowStatus(win, 'child')
   const devUrl = getDevServerUrl()
   if (devUrl) {
     win.loadURL(`${devUrl}?window=child`)
@@ -285,6 +358,7 @@ function getOrCreateToolbarSubwindow(kind: string, placement: 'top' | 'bottom'):
   applyWindowsBackdrop(win)
   win.setAlwaysOnTop(true, 'floating')
   wireWindowDebug(win, `subwindow-${kind}`)
+  wireWindowStatus(win, `${WINDOW_ID_TOOLBAR_SUBWINDOW}:${kind}`)
 
   const devUrl = getDevServerUrl()
   if (devUrl) {
@@ -365,13 +439,27 @@ function setToolbarSubwindowBounds(kind: string, bounds: { width: number; height
   scheduleRepositionToolbarSubwindows()
 }
 
-function sendToBackend(message: unknown): void {
-  if (!backendProcess?.stdin.writable) return
-  backendProcess.stdin.write(`${JSON.stringify(message)}\n`)
-}
-
 function handleBackendControlMessage(message: any): void {
   if (!message || typeof message !== 'object') return
+
+  if (message.type === 'RPC_RESPONSE') {
+    const id = Number((message as any).id)
+    const pending = pendingBackendRpc.get(id)
+    if (!pending) return
+    pendingBackendRpc.delete(id)
+    clearTimeout(pending.timer)
+    if ((message as any).ok) {
+      pending.resolve((message as any).result)
+    } else {
+      pending.reject(new Error(String((message as any).error ?? 'backend_rpc_failed')))
+    }
+    return
+  }
+
+  if (message.type === 'BACKEND_EVENT') {
+    broadcastBackendEvent((message as any).event)
+    return
+  }
 
   if (message.type === 'CREATE_WINDOW') {
     const win = createChildWindow()
@@ -435,7 +523,9 @@ function handleBackendControlMessage(message: any): void {
   }
 
   if (message.type === 'QUIT_APP') {
-    app.quit()
+    setTimeout(() => {
+      app.quit()
+    }, 120)
     return
   }
 }
@@ -469,7 +559,8 @@ function startBackend(): void {
   const env = {
     ...process.env,
     LANSTART_BACKEND_PORT: String(BACKEND_PORT),
-    LANSTART_DB_PATH: dbPath
+    LANSTART_DB_PATH: dbPath,
+    LANSTART_BACKEND_TRANSPORT: 'stdio'
   }
 
   const isDev = Boolean(getDevServerUrl())
@@ -516,8 +607,17 @@ function startBackend(): void {
     })
   }
 
+  sendToBackend({ type: 'PROCESS_STATUS', name: 'backend', status: 'spawned', pid: backendProcess.pid, ts: Date.now() })
+
+  backendProcess.stdin.on('error', () => undefined)
+
   backendProcess.on('exit', () => {
     backendProcess = undefined
+    for (const pending of pendingBackendRpc.values()) {
+      clearTimeout(pending.timer)
+      pending.reject(new Error('backend_exited'))
+    }
+    pendingBackendRpc.clear()
   })
 
   wireBackendStdout(backendProcess.stdout)
@@ -527,6 +627,49 @@ function startBackend(): void {
   })
 }
 
+ipcMain.handle('lanstart:postCommand', async (_event, input: { command?: unknown; payload?: unknown }) => {
+  const command = typeof input?.command === 'string' ? input.command : ''
+  if (!command) throw new Error('BAD_COMMAND')
+  return await requestBackendRpc('postCommand', { command, payload: input?.payload })
+})
+
+ipcMain.handle('lanstart:getEvents', async (_event, input: { since?: unknown }) => {
+  const since = typeof input?.since === 'number' ? input.since : Number(input?.since ?? 0)
+  return await requestBackendRpc('getEvents', { since })
+})
+
+ipcMain.handle('lanstart:getKv', async (_event, input: { key?: unknown }) => {
+  const key = typeof input?.key === 'string' ? input.key : ''
+  if (!key) throw new Error('BAD_KEY')
+  return await requestBackendRpc('getKv', { key })
+})
+
+ipcMain.handle('lanstart:putKv', async (_event, input: { key?: unknown; value?: unknown }) => {
+  const key = typeof input?.key === 'string' ? input.key : ''
+  if (!key) throw new Error('BAD_KEY')
+  return await requestBackendRpc('putKv', { key, value: input?.value })
+})
+
+ipcMain.handle('lanstart:getUiState', async (_event, input: { windowId?: unknown }) => {
+  const windowId = typeof input?.windowId === 'string' ? input.windowId : ''
+  if (!windowId) throw new Error('BAD_WINDOW_ID')
+  return await requestBackendRpc('getUiState', { windowId })
+})
+
+ipcMain.handle('lanstart:putUiStateKey', async (_event, input: { windowId?: unknown; key?: unknown; value?: unknown }) => {
+  const windowId = typeof input?.windowId === 'string' ? input.windowId : ''
+  const key = typeof input?.key === 'string' ? input.key : ''
+  if (!windowId || !key) throw new Error('BAD_UI_STATE_KEY')
+  return await requestBackendRpc('putUiStateKey', { windowId, key, value: input?.value })
+})
+
+ipcMain.handle('lanstart:deleteUiStateKey', async (_event, input: { windowId?: unknown; key?: unknown }) => {
+  const windowId = typeof input?.windowId === 'string' ? input.windowId : ''
+  const key = typeof input?.key === 'string' ? input.key : ''
+  if (!windowId || !key) throw new Error('BAD_UI_STATE_KEY')
+  return await requestBackendRpc('deleteUiStateKey', { windowId, key })
+})
+
 app
   .whenReady()
   .then(() => {
@@ -535,6 +678,7 @@ app
     } catch (e) {
       process.stderr.write(String(e))
     }
+    sendToBackend({ type: 'PROCESS_STATUS', name: 'main', status: 'ready', pid: process.pid, ts: Date.now() })
     const win = createFloatingToolbarWindow()
     floatingToolbarWindow = win
     win.once('ready-to-show', () => win.show())
@@ -554,5 +698,7 @@ app.on('window-all-closed', () => {
 })
 
 app.on('before-quit', () => {
+  sendToBackend({ type: 'PROCESS_STATUS', name: 'main', status: 'before-quit', pid: process.pid, ts: Date.now() })
+  sendToBackend({ type: 'CLEANUP_RUNTIME' })
   if (backendProcess && !backendProcess.killed) backendProcess.kill()
 })

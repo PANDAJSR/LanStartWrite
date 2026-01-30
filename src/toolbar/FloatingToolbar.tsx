@@ -1,8 +1,10 @@
 import React, { createContext, useContext, useEffect, useMemo, useRef } from 'react'
 import { Button, ButtonGroup } from '../button'
+import { motion, useReducedMotion } from '../Framer_Motion'
 import { useHyperGlassRealtimeBlur } from '../hyper_glass'
+import { cn } from '../Tailwind'
 import { usePersistedState } from './hooks/usePersistedState'
-import { postCommand } from './hooks/useBackend'
+import { markQuitting, postCommand } from './hooks/useBackend'
 import { useToolbarWindowAutoResize } from './hooks/useToolbarWindowAutoResize'
 import { TOOLBAR_STATE_KEY, WINDOW_TITLE_FLOATING_TOOLBAR } from './utils/constants'
 import './styles/toolbar.css'
@@ -71,17 +73,26 @@ function FloatingToolbarInner() {
   const rootRef = useRef<HTMLDivElement | null>(null)
   const dragRef = useRef<HTMLDivElement | null>(null)
   const uiButtonSize: 'sm' = 'sm'
+  const reduceMotion = useReducedMotion()
 
   useToolbarWindowAutoResize({ root: dragRef.current })
   useHyperGlassRealtimeBlur({ root: rootRef.current })
 
   return (
-    <div ref={rootRef} className="toolbarRoot">
+    <motion.div
+      ref={rootRef}
+      className="toolbarRoot"
+      initial={reduceMotion ? false : { opacity: 0, y: 6, scale: 0.985 }}
+      animate={reduceMotion ? undefined : { opacity: 1, y: 0, scale: 1 }}
+      transition={reduceMotion ? undefined : { duration: 0.18, ease: [0.2, 0.8, 0.2, 1] }}
+    >
       <div ref={dragRef} className="toolbarDragArea">
         <div className="toolbarBarRow">
           <div className="toolbarLabel">
             <div className="toolbarTitle">{WINDOW_TITLE_FLOATING_TOOLBAR}</div>
-            <div className="toolbarMeta">{state.alwaysOnTop ? '置顶' : '未置顶'}</div>
+            <div className={cn('toolbarMeta', state.alwaysOnTop && 'animate-ls-soft-pulse')}>
+              {state.alwaysOnTop ? '置顶' : '未置顶'}
+            </div>
           </div>
 
           <ButtonGroup>
@@ -128,6 +139,7 @@ function FloatingToolbarInner() {
             size={uiButtonSize}
             variant="danger"
             onClick={() => {
+              markQuitting()
               void postCommand('quit')
             }}
           >
@@ -136,7 +148,7 @@ function FloatingToolbarInner() {
           </ButtonGroup>
         </div>
       </div>
-    </div>
+    </motion.div>
   )
 }
 

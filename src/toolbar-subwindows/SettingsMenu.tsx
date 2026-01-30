@@ -1,13 +1,15 @@
 import React, { useEffect, useRef } from 'react'
 import { Button } from '../button'
+import { motion, useReducedMotion } from '../Framer_Motion'
 import { useHyperGlassRealtimeBlur } from '../hyper_glass'
-import { postCommand } from '../toolbar/hooks/useBackend'
+import { markQuitting, postCommand } from '../toolbar/hooks/useBackend'
 import './styles/subwindow.css'
 
 export function SettingsMenu(props: { kind: string }) {
   const rootRef = useRef<HTMLDivElement | null>(null)
   const cardRef = useRef<HTMLDivElement | null>(null)
   const measureRef = useRef<HTMLDivElement | null>(null)
+  const reduceMotion = useReducedMotion()
 
   useHyperGlassRealtimeBlur({ root: rootRef.current })
 
@@ -53,8 +55,14 @@ export function SettingsMenu(props: { kind: string }) {
   }, [props.kind])
 
   return (
-    <div ref={rootRef} className="subwindowRoot">
-      <div ref={cardRef} className="subwindowCard">
+    <motion.div
+      ref={rootRef}
+      className="subwindowRoot"
+      initial={reduceMotion ? false : { opacity: 0, y: 8, scale: 0.99 }}
+      animate={reduceMotion ? undefined : { opacity: 1, y: 0, scale: 1 }}
+      transition={reduceMotion ? undefined : { duration: 0.18, ease: [0.2, 0.8, 0.2, 1] }}
+    >
+      <div ref={cardRef} className="subwindowCard animate-ls-pop-in">
         <div ref={measureRef} className="subwindowMeasure">
           <div className="subwindowTitle">
             <span>设置</span>
@@ -73,6 +81,7 @@ export function SettingsMenu(props: { kind: string }) {
               size="sm"
               variant="danger"
               onClick={() => {
+                markQuitting()
                 void postCommand('quit')
               }}
             >
@@ -81,6 +90,6 @@ export function SettingsMenu(props: { kind: string }) {
           </div>
         </div>
       </div>
-    </div>
+    </motion.div>
   )
 }
