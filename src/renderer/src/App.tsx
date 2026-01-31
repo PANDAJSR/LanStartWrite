@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react'
-import { FloatingToolbarApp, WINDOW_ID_FLOATING_TOOLBAR } from '../../toolbar'
+import { FloatingToolbarApp, FloatingToolbarHandleApp, WINDOW_ID_FLOATING_TOOLBAR, WINDOW_ID_FLOATING_TOOLBAR_HANDLE } from '../../toolbar'
 import { BACKEND_URL } from '../../toolbar/utils/constants'
 import { useEventsPoll } from '../../toolbar/hooks/useEventsPoll'
 import { Button } from '../../button'
@@ -80,6 +80,7 @@ export default function App() {
 
   if (windowId === 'child') return <ChildWindow />
   if (windowId === WINDOW_ID_FLOATING_TOOLBAR) return <FloatingToolbarApp />
+  if (windowId === WINDOW_ID_FLOATING_TOOLBAR_HANDLE) return <FloatingToolbarHandleApp />
 
   if (windowId === 'toolbar-subwindow') {
     if (kind === 'events') return <EventsMenu kind="events" />

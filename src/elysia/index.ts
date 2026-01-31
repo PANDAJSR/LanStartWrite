@@ -65,6 +65,14 @@ function coerceString(v: unknown): string {
   return typeof v === 'string' ? v : ''
 }
 
+type Appearance = 'light' | 'dark'
+
+function coerceAppearance(v: unknown): Appearance | undefined {
+  const s = coerceString(v)
+  if (s === 'light' || s === 'dark') return s
+  return undefined
+}
+
 async function handleCommand(command: string, payload: unknown): Promise<CommandResult> {
   emitEvent('COMMAND', { command, payload })
 
@@ -182,6 +190,13 @@ async function handleCommand(command: string, payload: unknown): Promise<Command
     const height = Number((payload as any)?.height)
     if (!Number.isFinite(width) || !Number.isFinite(height)) return { ok: false, error: 'BAD_BOUNDS' }
     requestMain({ type: 'SET_TOOLBAR_BOUNDS', width, height })
+    return { ok: true }
+  }
+
+  if (command === 'set-appearance') {
+    const appearance = coerceAppearance((payload as any)?.appearance)
+    if (!appearance) return { ok: false, error: 'BAD_APPEARANCE' }
+    requestMain({ type: 'SET_APPEARANCE', appearance })
     return { ok: true }
   }
 

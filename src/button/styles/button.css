@@ -1,16 +1,24 @@
 .lsButton {
   -webkit-app-region: no-drag;
   appearance: none;
-  border: 1px solid rgba(255, 255, 255, 0.16);
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border: 1px solid var(--ls-btn-border);
   border-radius: 10px;
-  background: rgba(255, 255, 255, 0.08);
-  color: #fff;
+  background: var(--ls-btn-bg);
+  color: var(--ls-btn-fg);
   cursor: pointer;
   font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, 'Apple Color Emoji',
     'Segoe UI Emoji';
-  font-size: 12px;
-  line-height: 1;
-  padding: 6px 10px;
+  font-size: 11px;
+  line-height: 1.12;
+  padding: 0;
+  text-align: center;
+  white-space: normal;
   transition:
     background 120ms ease,
     transform 90ms ease,
@@ -19,7 +27,7 @@
 }
 
 .lsButton:hover {
-  background: rgba(255, 255, 255, 0.12);
+  background: var(--ls-btn-bg-hover);
 }
 
 .lsButton:active {
@@ -31,33 +39,37 @@
   opacity: 0.55;
 }
 
+.lsButton--drag {
+  -webkit-app-region: drag;
+  cursor: grab;
+}
+
 .lsButton--danger {
-  border-color: rgba(255, 80, 80, 0.35);
-  background: rgba(255, 80, 80, 0.18);
+  border-color: var(--ls-btn-danger-border);
+  background: var(--ls-btn-danger-bg);
+  color: var(--ls-btn-danger-fg);
 }
 
 .lsButton--danger:hover {
-  background: rgba(255, 80, 80, 0.24);
+  background: var(--ls-btn-danger-bg-hover);
 }
 
 .lsButton--light {
-  border-color: rgba(0, 0, 0, 0.12);
-  background: rgba(255, 255, 255, 0.92);
-  color: rgba(10, 10, 10, 0.92);
+  border-color: var(--ls-btn-light-border);
+  background: var(--ls-btn-light-bg);
+  color: var(--ls-btn-light-fg);
 }
 
 .lsButton--light:hover {
-  background: rgba(255, 255, 255, 1);
+  background: var(--ls-btn-light-bg-hover);
 }
 
 .lsButton--sm {
-  font-size: 12px;
-  padding: 6px 10px;
+  font-size: 11px;
 }
 
 .lsButton--md {
-  font-size: 13px;
-  padding: 8px 12px;
+  font-size: 11px;
 }
 
 .lsButtonGroup {
@@ -65,4 +77,3 @@
   flex-wrap: wrap;
   gap: 8px;
 }
-

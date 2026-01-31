@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
-import { deleteUiStateKey, getEvents, getUiState, putUiStateKey, type BackendEventItem } from './useBackend'
+import { deleteUiStateKey, getEvents, getUiState, postCommand, putUiStateKey, type BackendEventItem } from './useBackend'
+import { usePersistedState } from './usePersistedState'
+import { APPEARANCE_KV_KEY, APPEARANCE_UI_STATE_KEY, UI_STATE_APP_WINDOW_ID } from '../utils/constants'
 
 export function useEventsPoll(intervalMs = 800) {
   const [items, setItems] = useState<BackendEventItem[]>([])
@@ -181,4 +183,40 @@ export function useUiStateBus(windowId: string, options?: { intervalMs?: number 
   }
 
   return { state, setKey, deleteKey, refresh }
+}
+
+export type Appearance = 'light' | 'dark'
+
+function isAppearance(v: unknown): v is Appearance {
+  return v === 'light' || v === 'dark'
+}
+
+export function useAppAppearance() {
+  const [appearance, setAppearanceState] = usePersistedState<Appearance>(APPEARANCE_KV_KEY, 'light', {
+    validate: isAppearance
+  })
+  const bus = useUiStateBus(UI_STATE_APP_WINDOW_ID)
+
+  const busAppearanceRaw = bus.state[APPEARANCE_UI_STATE_KEY]
+  const busAppearance: Appearance | undefined = isAppearance(busAppearanceRaw) ? busAppearanceRaw : undefined
+
+  useEffect(() => {
+    if (!busAppearance) return
+    if (busAppearance === appearance) return
+    setAppearanceState(busAppearance)
+  }, [appearance, busAppearance, setAppearanceState])
+
+  useEffect(() => {
+    try {
+      document.documentElement.setAttribute('data-appearance', appearance)
+    } catch {}
+  }, [appearance])
+
+  const setAppearance = (next: Appearance) => {
+    if (next === appearance) return
+    setAppearanceState(next)
+    postCommand('set-appearance', { appearance: next }).catch(() => undefined)
+  }
+
+  return { appearance, setAppearance }
 }

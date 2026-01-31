@@ -3,6 +3,7 @@ import { Button } from '../button'
 import { motion, useReducedMotion } from '../Framer_Motion'
 import { useHyperGlassRealtimeBlur } from '../hyper_glass'
 import { markQuitting, postCommand } from '../toolbar/hooks/useBackend'
+import { useAppAppearance } from '../toolbar/hooks/useEventsPoll'
 import './styles/subwindow.css'
 
 export function SettingsMenu(props: { kind: string }) {
@@ -10,6 +11,7 @@ export function SettingsMenu(props: { kind: string }) {
   const cardRef = useRef<HTMLDivElement | null>(null)
   const measureRef = useRef<HTMLDivElement | null>(null)
   const reduceMotion = useReducedMotion()
+  const { appearance, setAppearance } = useAppAppearance()
 
   useHyperGlassRealtimeBlur({ root: rootRef.current })
 
@@ -74,9 +76,31 @@ export function SettingsMenu(props: { kind: string }) {
               <span>应用</span>
               <span className="subwindowMeta">LanStartWrite</span>
             </div>
+            <div className="subwindowRow">
+              <span>外观</span>
+              <span className="subwindowMeta">{appearance === 'dark' ? '深色 Mica' : '浅色 Mica'}</span>
+            </div>
           </div>
 
           <div style={{ marginTop: 10, display: 'flex', gap: 8 }}>
+            <Button
+              size="sm"
+              variant={appearance === 'light' ? 'light' : 'default'}
+              onClick={() => {
+                setAppearance('light')
+              }}
+            >
+              浅色
+            </Button>
+            <Button
+              size="sm"
+              variant={appearance === 'dark' ? 'light' : 'default'}
+              onClick={() => {
+                setAppearance('dark')
+              }}
+            >
+              深色
+            </Button>
             <Button
               size="sm"
               variant="danger"

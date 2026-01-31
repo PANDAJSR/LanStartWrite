@@ -33,14 +33,22 @@ export function useToolbarWindowAutoResize(options: { root: HTMLElement | null }
       rafId = window.requestAnimationFrame(send)
     }
 
+    const mo =
+      typeof MutationObserver === 'undefined'
+        ? undefined
+        : new MutationObserver(() => {
+            schedule()
+          })
+    mo?.observe(root, { subtree: true, childList: true, attributes: true, characterData: true })
+
     const ro = new ResizeObserver(schedule)
     ro.observe(root)
     schedule()
 
     return () => {
       ro.disconnect()
+      mo?.disconnect()
       if (rafId) window.cancelAnimationFrame(rafId)
     }
   }, [options.root])
 }
-

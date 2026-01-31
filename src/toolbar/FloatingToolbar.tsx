@@ -2,11 +2,10 @@ import React, { createContext, useContext, useEffect, useMemo, useRef } from 're
 import { Button, ButtonGroup } from '../button'
 import { motion, useReducedMotion } from '../Framer_Motion'
 import { useHyperGlassRealtimeBlur } from '../hyper_glass'
-import { cn } from '../Tailwind'
 import { usePersistedState } from './hooks/usePersistedState'
 import { markQuitting, postCommand } from './hooks/useBackend'
 import { useToolbarWindowAutoResize } from './hooks/useToolbarWindowAutoResize'
-import { TOOLBAR_STATE_KEY, WINDOW_TITLE_FLOATING_TOOLBAR } from './utils/constants'
+import { TOOLBAR_STATE_KEY } from './utils/constants'
 import './styles/toolbar.css'
 
 type ToolbarState = {
@@ -14,6 +13,7 @@ type ToolbarState = {
   alwaysOnTop: boolean
   uiWidth?: number
   uiButtonSize?: 'sm' | 'md'
+  tool?: 'mouse' | 'pen' | 'eraser'
 }
 
 function isToolbarState(value: unknown): value is ToolbarState {
@@ -23,6 +23,7 @@ function isToolbarState(value: unknown): value is ToolbarState {
   if (!okBase) return false
   if (v.uiWidth !== undefined && typeof v.uiWidth !== 'number') return false
   if (v.uiButtonSize !== undefined && v.uiButtonSize !== 'sm' && v.uiButtonSize !== 'md') return false
+  if (v.tool !== undefined && v.tool !== 'mouse' && v.tool !== 'pen' && v.tool !== 'eraser') return false
   return true
 }
 
@@ -52,13 +53,15 @@ function ToolbarProvider({ children }: { children: React.ReactNode }) {
       collapsed: Boolean(state.collapsed),
       alwaysOnTop: Boolean(state.alwaysOnTop),
       uiWidth: typeof state.uiWidth === 'number' ? state.uiWidth : 360,
-      uiButtonSize: state.uiButtonSize === 'md' ? 'md' : 'sm'
+      uiButtonSize: state.uiButtonSize === 'md' ? 'md' : 'sm',
+      tool: state.tool === 'pen' ? 'pen' : state.tool === 'eraser' ? 'eraser' : 'mouse'
     }
     if (
       normalized.collapsed !== state.collapsed ||
       normalized.alwaysOnTop !== state.alwaysOnTop ||
       normalized.uiWidth !== state.uiWidth ||
-      normalized.uiButtonSize !== state.uiButtonSize
+      normalized.uiButtonSize !== state.uiButtonSize ||
+      normalized.tool !== state.tool
     ) {
       setState(normalized)
     }
@@ -71,11 +74,12 @@ function ToolbarProvider({ children }: { children: React.ReactNode }) {
 function FloatingToolbarInner() {
   const { state, setState } = useToolbar()
   const rootRef = useRef<HTMLDivElement | null>(null)
-  const dragRef = useRef<HTMLDivElement | null>(null)
+  const contentRef = useRef<HTMLDivElement | null>(null)
   const uiButtonSize: 'sm' = 'sm'
   const reduceMotion = useReducedMotion()
+  const tool: 'mouse' | 'pen' | 'eraser' = state.tool === 'pen' ? 'pen' : state.tool === 'eraser' ? 'eraser' : 'mouse'
 
-  useToolbarWindowAutoResize({ root: dragRef.current })
+  useToolbarWindowAutoResize({ root: contentRef.current })
   useHyperGlassRealtimeBlur({ root: rootRef.current })
 
   return (
@@ -86,16 +90,43 @@ function FloatingToolbarInner() {
       animate={reduceMotion ? undefined : { opacity: 1, y: 0, scale: 1 }}
       transition={reduceMotion ? undefined : { duration: 0.18, ease: [0.2, 0.8, 0.2, 1] }}
     >
-      <div ref={dragRef} className="toolbarDragArea">
-        <div className="toolbarBarRow">
-          <div className="toolbarLabel">
-            <div className="toolbarTitle">{WINDOW_TITLE_FLOATING_TOOLBAR}</div>
-            <div className={cn('toolbarMeta', state.alwaysOnTop && 'animate-ls-soft-pulse')}>
-              {state.alwaysOnTop ? '置顶' : '未置顶'}
-            </div>
-          </div>
+      <div ref={contentRef} className="toolbarDragArea">
+        <div className="toolbarLayout">
+          <div className="toolbarBarRow">
+            <ButtonGroup>
+          <Button
+            size={uiButtonSize}
+            variant={tool === 'mouse' ? 'light' : 'default'}
+            onClick={() => {
+              setState({ ...state, tool: 'mouse' })
+              void postCommand('qt.setTool', { tool: 'mouse' })
+            }}
+          >
+            鼠标
+          </Button>
 
-          <ButtonGroup>
+          <Button
+            size={uiButtonSize}
+            variant={tool === 'pen' ? 'light' : 'default'}
+            onClick={() => {
+              setState({ ...state, tool: 'pen' })
+              void postCommand('qt.setTool', { tool: 'pen' })
+            }}
+          >
+            笔
+          </Button>
+
+          <Button
+            size={uiButtonSize}
+            variant={tool === 'eraser' ? 'light' : 'default'}
+            onClick={() => {
+              setState({ ...state, tool: 'eraser' })
+              void postCommand('qt.setTool', { tool: 'eraser' })
+            }}
+          >
+            橡皮
+          </Button>
+
           <Button
             size={uiButtonSize}
             onClick={() => {
@@ -146,6 +177,7 @@ function FloatingToolbarInner() {
             退出
           </Button>
           </ButtonGroup>
+          </div>
         </div>
       </div>
     </motion.div>
@@ -157,5 +189,28 @@ export function FloatingToolbarApp() {
     <ToolbarProvider>
       <FloatingToolbarInner />
     </ToolbarProvider>
+  )
+}
+
+export function FloatingToolbarHandleApp() {
+  const rootRef = useRef<HTMLDivElement | null>(null)
+  const reduceMotion = useReducedMotion()
+
+  useHyperGlassRealtimeBlur({ root: rootRef.current })
+
+  return (
+    <motion.div
+      ref={rootRef}
+      className="toolbarRoot toolbarHandleRoot"
+      initial={reduceMotion ? false : { opacity: 0, y: 6, scale: 0.985 }}
+      animate={reduceMotion ? undefined : { opacity: 1, y: 0, scale: 1 }}
+      transition={reduceMotion ? undefined : { duration: 0.18, ease: [0.2, 0.8, 0.2, 1] }}
+    >
+      <div className="toolbarHandleContent">
+        <Button appRegion="drag" className="toolbarDragHandleButton" title="拖动">
+          {''}
+        </Button>
+      </div>
+    </motion.div>
   )
 }

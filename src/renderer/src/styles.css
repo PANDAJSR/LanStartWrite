@@ -5,10 +5,70 @@ body {
   background: transparent;
 }
 
+:root {
+  --ls-surface-fg: rgba(12, 12, 12, 0.92);
+  --ls-surface-bg: rgba(255, 255, 255, 0.58);
+  --ls-surface-border: rgba(0, 0, 0, 0.1);
+  --ls-surface-shadow: 0 18px 40px rgba(0, 0, 0, 0.18);
+  --ls-surface-overlay: linear-gradient(180deg, rgba(255, 255, 255, 0.16), rgba(255, 255, 255, 0.4));
+  --ls-surface-overlay-blend: screen;
+
+  --ls-events-bg: rgba(255, 255, 255, 0.42);
+  --ls-events-border: rgba(0, 0, 0, 0.08);
+
+  --ls-handle-dot: rgba(0, 0, 0, 0.52);
+  --ls-handle-hover-bg: rgba(0, 0, 0, 0.06);
+
+  --ls-btn-fg: rgba(10, 10, 10, 0.92);
+  --ls-btn-bg: rgba(255, 255, 255, 0.46);
+  --ls-btn-bg-hover: rgba(255, 255, 255, 0.62);
+  --ls-btn-border: rgba(0, 0, 0, 0.12);
+
+  --ls-btn-danger-fg: rgba(120, 10, 10, 0.92);
+  --ls-btn-danger-bg: rgba(255, 80, 80, 0.16);
+  --ls-btn-danger-bg-hover: rgba(255, 80, 80, 0.22);
+  --ls-btn-danger-border: rgba(200, 40, 40, 0.28);
+
+  --ls-btn-light-fg: rgba(10, 10, 10, 0.92);
+  --ls-btn-light-bg: rgba(255, 255, 255, 0.92);
+  --ls-btn-light-bg-hover: rgba(255, 255, 255, 1);
+  --ls-btn-light-border: rgba(0, 0, 0, 0.12);
+}
+
+:root[data-appearance='dark'] {
+  --ls-surface-fg: #ffffff;
+  --ls-surface-bg: rgba(25, 28, 36, 0.46);
+  --ls-surface-border: rgba(255, 255, 255, 0.12);
+  --ls-surface-shadow: 0 18px 40px rgba(0, 0, 0, 0.35);
+  --ls-surface-overlay: linear-gradient(180deg, rgba(12, 14, 18, 0.34), rgba(12, 14, 18, 0.46));
+  --ls-surface-overlay-blend: multiply;
+
+  --ls-events-bg: rgba(25, 28, 36, 0.42);
+  --ls-events-border: rgba(255, 255, 255, 0.08);
+
+  --ls-handle-dot: rgba(255, 255, 255, 0.92);
+  --ls-handle-hover-bg: rgba(255, 255, 255, 0.12);
+
+  --ls-btn-fg: #fff;
+  --ls-btn-bg: rgba(255, 255, 255, 0.08);
+  --ls-btn-bg-hover: rgba(255, 255, 255, 0.12);
+  --ls-btn-border: rgba(255, 255, 255, 0.16);
+
+  --ls-btn-danger-fg: #fff;
+  --ls-btn-danger-bg: rgba(255, 80, 80, 0.18);
+  --ls-btn-danger-bg-hover: rgba(255, 80, 80, 0.24);
+  --ls-btn-danger-border: rgba(255, 80, 80, 0.35);
+
+  --ls-btn-light-fg: rgba(10, 10, 10, 0.92);
+  --ls-btn-light-bg: rgba(255, 255, 255, 0.92);
+  --ls-btn-light-bg-hover: rgba(255, 255, 255, 1);
+  --ls-btn-light-border: rgba(0, 0, 0, 0.12);
+}
+
 .childRoot {
   padding: 14px;
   font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial;
-  color: #111;
+  color: var(--ls-surface-fg);
 }
 
 .childHeader {

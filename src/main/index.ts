@@ -1,4 +1,4 @@
-import { BrowserWindow, app, ipcMain, screen } from 'electron'
+import { BrowserWindow, app, ipcMain, nativeTheme, screen } from 'electron'
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
@@ -9,10 +9,50 @@ let backendProcess: ChildProcessWithoutNullStreams | undefined
 const BACKEND_PORT = 3131
 const BACKEND_STDIO_PREFIX = '__LANSTART__'
 const WINDOW_ID_FLOATING_TOOLBAR = '浮动工具栏'
+const WINDOW_ID_FLOATING_TOOLBAR_HANDLE = 'floating-toolbar-handle'
 const WINDOW_TITLE_FLOATING_TOOLBAR = '浮动工具栏'
 const WINDOW_ID_TOOLBAR_SUBWINDOW = 'toolbar-subwindow'
+const TOOLBAR_HANDLE_GAP = 10
+const TOOLBAR_HANDLE_WIDTH = 30
+const APPEARANCE_KV_KEY = 'app-appearance'
+
+type Appearance = 'light' | 'dark'
+
+function isAppearance(v: unknown): v is Appearance {
+  return v === 'light' || v === 'dark'
+}
+
+function surfaceBackgroundColor(appearance: Appearance): string {
+  return appearance === 'dark' ? '#191c24ff' : '#f4f5f7ff'
+}
+
+let currentAppearance: Appearance = 'light'
+let didApplyAppearance = false
+
+function broadcastAppearanceToUiState(appearance: Appearance): void {
+  requestBackendRpc('putUiStateKey', { windowId: 'app', key: 'appearance', value: appearance }).catch(() => undefined)
+}
+
+function applyAppearance(appearance: Appearance): void {
+  if (didApplyAppearance && appearance === currentAppearance) return
+  didApplyAppearance = true
+  currentAppearance = appearance
+  try {
+    nativeTheme.themeSource = appearance
+  } catch {}
+  const bg = surfaceBackgroundColor(appearance)
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (win.isDestroyed()) continue
+    try {
+      win.setBackgroundColor(bg)
+    } catch {}
+  }
+  broadcastAppearanceToUiState(appearance)
+}
 
 let floatingToolbarWindow: BrowserWindow | undefined
+let floatingToolbarHandleWindow: BrowserWindow | undefined
+let syncingToolbarPair = false
 let nextRpcId = 1
 const pendingBackendRpc = new Map<number, { resolve: (v: any) => void; reject: (e: any) => void; timer: NodeJS.Timeout }>()
 const toolbarSubwindows = new Map<
@@ -147,7 +187,7 @@ function createFloatingToolbarWindow(): BrowserWindow {
     alwaysOnTop: true,
     skipTaskbar: true,
     title: WINDOW_TITLE_FLOATING_TOOLBAR,
-    backgroundColor: '#00000000',
+    backgroundColor: surfaceBackgroundColor(currentAppearance),
     backgroundMaterial: 'mica',
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
@@ -162,12 +202,22 @@ function createFloatingToolbarWindow(): BrowserWindow {
   wireWindowStatus(win, WINDOW_ID_FLOATING_TOOLBAR)
   win.on('move', scheduleRepositionToolbarSubwindows)
   win.on('resize', scheduleRepositionToolbarSubwindows)
-  win.on('show', scheduleRepositionToolbarSubwindows)
+  win.on('show', () => {
+    scheduleRepositionToolbarSubwindows()
+    const handle = floatingToolbarHandleWindow
+    if (handle && !handle.isDestroyed()) handle.showInactive()
+  })
   win.on('hide', () => {
+    const handle = floatingToolbarHandleWindow
+    if (handle && !handle.isDestroyed() && handle.isVisible()) handle.hide()
     for (const item of toolbarSubwindows.values()) {
       if (item.win.isDestroyed()) continue
       item.win.hide()
     }
+  })
+  win.on('closed', () => {
+    const handle = floatingToolbarHandleWindow
+    if (handle && !handle.isDestroyed()) handle.close()
   })
 
   const devUrl = getDevServerUrl()
@@ -181,13 +231,69 @@ function createFloatingToolbarWindow(): BrowserWindow {
   return win
 }
 
+function createFloatingToolbarHandleWindow(owner: BrowserWindow): BrowserWindow {
+  const ownerBounds = owner.getBounds()
+  const win = new BrowserWindow({
+    width: TOOLBAR_HANDLE_WIDTH,
+    height: ownerBounds.height,
+    frame: false,
+    transparent: false,
+    resizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    alwaysOnTop: true,
+    skipTaskbar: true,
+    parent: owner,
+    title: '拖动把手',
+    backgroundColor: surfaceBackgroundColor(currentAppearance),
+    backgroundMaterial: 'mica',
+    webPreferences: {
+      preload: join(__dirname, '../preload/index.js'),
+      contextIsolation: true,
+      nodeIntegration: false
+    }
+  })
+
+  applyWindowsBackdrop(win)
+  win.setAlwaysOnTop(true, 'floating')
+  wireWindowDebug(win, 'floating-toolbar-handle')
+  wireWindowStatus(win, WINDOW_ID_FLOATING_TOOLBAR_HANDLE)
+
+  win.on('move', () => {
+    if (syncingToolbarPair) return
+    const toolbar = floatingToolbarWindow
+    if (!toolbar || toolbar.isDestroyed()) return
+    const handleBounds = win.getBounds()
+    const toolbarBounds = toolbar.getBounds()
+    const nextX = handleBounds.x - toolbarBounds.width - TOOLBAR_HANDLE_GAP
+    const nextY = handleBounds.y
+    if (nextX === toolbarBounds.x && nextY === toolbarBounds.y) return
+    syncingToolbarPair = true
+    toolbar.setBounds({ ...toolbarBounds, x: nextX, y: nextY }, false)
+    setTimeout(() => {
+      syncingToolbarPair = false
+    }, 0)
+    scheduleRepositionToolbarSubwindows()
+  })
+
+  const devUrl = getDevServerUrl()
+  if (devUrl) {
+    win.loadURL(`${devUrl}?window=${encodeURIComponent(WINDOW_ID_FLOATING_TOOLBAR_HANDLE)}`)
+    if (process.env.LANSTART_OPEN_DEVTOOLS === '1') win.webContents.openDevTools({ mode: 'detach' })
+  } else {
+    win.loadFile(join(__dirname, '../renderer/index.html'), { query: { window: WINDOW_ID_FLOATING_TOOLBAR_HANDLE } })
+  }
+
+  return win
+}
+
 function createChildWindow(): BrowserWindow {
   const win = new BrowserWindow({
     width: 420,
     height: 260,
     resizable: true,
     title: 'LanStart Window',
-    backgroundColor: '#00000000',
+    backgroundColor: surfaceBackgroundColor(currentAppearance),
     backgroundMaterial: 'mica',
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
@@ -314,6 +420,31 @@ function repositionToolbarSubwindows() {
   const display = screen.getDisplayMatching(ownerBounds)
   const workArea = display.workArea
 
+  const handle = floatingToolbarHandleWindow
+  if (handle && !handle.isDestroyed() && handle.isVisible()) {
+    const next = {
+      x: ownerBounds.x + ownerBounds.width + TOOLBAR_HANDLE_GAP,
+      y: ownerBounds.y,
+      width: TOOLBAR_HANDLE_WIDTH,
+      height: ownerBounds.height
+    }
+    const current = handle.getBounds()
+    if (
+      current.x !== next.x ||
+      current.y !== next.y ||
+      current.width !== next.width ||
+      current.height !== next.height
+    ) {
+      if (!syncingToolbarPair) {
+        syncingToolbarPair = true
+        handle.setBounds(next, false)
+        setTimeout(() => {
+          syncingToolbarPair = false
+        }, 0)
+      }
+    }
+  }
+
   for (const item of toolbarSubwindows.values()) {
     const win = item.win
     if (win.isDestroyed() || !win.isVisible()) continue
@@ -346,7 +477,7 @@ function getOrCreateToolbarSubwindow(kind: string, placement: 'top' | 'bottom'):
     skipTaskbar: true,
     parent: owner,
     title: `二级菜单-${kind}`,
-    backgroundColor: '#00000000',
+    backgroundColor: surfaceBackgroundColor(currentAppearance),
     backgroundMaterial: 'mica',
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
@@ -461,6 +592,13 @@ function handleBackendControlMessage(message: any): void {
     return
   }
 
+  if (message.type === 'SET_APPEARANCE') {
+    const appearance = (message as any).appearance
+    if (!isAppearance(appearance)) return
+    applyAppearance(appearance)
+    return
+  }
+
   if (message.type === 'CREATE_WINDOW') {
     const win = createChildWindow()
     win.once('ready-to-show', () => win.show())
@@ -501,6 +639,7 @@ function handleBackendControlMessage(message: any): void {
   if (message.type === 'SET_TOOLBAR_ALWAYS_ON_TOP') {
     const value = Boolean(message.value)
     floatingToolbarWindow?.setAlwaysOnTop(value, 'floating')
+    floatingToolbarHandleWindow?.setAlwaysOnTop(value, 'floating')
     for (const item of toolbarSubwindows.values()) {
       if (item.win.isDestroyed()) continue
       item.win.setAlwaysOnTop(value, 'floating')
@@ -678,14 +817,36 @@ app
     } catch (e) {
       process.stderr.write(String(e))
     }
+    requestBackendRpc('getKv', { key: APPEARANCE_KV_KEY })
+      .then((value) => {
+        if (!isAppearance(value)) return
+        applyAppearance(value)
+      })
+      .catch(() => {
+        applyAppearance(currentAppearance)
+      })
     sendToBackend({ type: 'PROCESS_STATUS', name: 'main', status: 'ready', pid: process.pid, ts: Date.now() })
     const win = createFloatingToolbarWindow()
     floatingToolbarWindow = win
-    win.once('ready-to-show', () => win.show())
+    const handle = createFloatingToolbarHandleWindow(win)
+    floatingToolbarHandleWindow = handle
+    win.once('ready-to-show', () => {
+      win.show()
+      scheduleRepositionToolbarSubwindows()
+      if (!handle.isDestroyed()) handle.showInactive()
+    })
 
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) {
-        floatingToolbarWindow = createFloatingToolbarWindow()
+        const toolbar = createFloatingToolbarWindow()
+        floatingToolbarWindow = toolbar
+        const nextHandle = createFloatingToolbarHandleWindow(toolbar)
+        floatingToolbarHandleWindow = nextHandle
+        toolbar.once('ready-to-show', () => {
+          toolbar.show()
+          scheduleRepositionToolbarSubwindows()
+          if (!nextHandle.isDestroyed()) nextHandle.showInactive()
+        })
       }
     })
   })

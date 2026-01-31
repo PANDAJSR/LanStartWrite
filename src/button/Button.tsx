@@ -13,6 +13,7 @@ export type ButtonProps = {
   title?: string
   className?: string
   type?: 'button' | 'submit' | 'reset'
+  appRegion?: 'drag' | 'no-drag'
 }
 
 export function Button({
@@ -23,13 +24,15 @@ export function Button({
   children,
   title,
   className,
-  type = 'button'
+  type = 'button',
+  appRegion = 'no-drag'
 }: ButtonProps) {
   const classes = [
     'lsButton',
     variant === 'danger' ? 'lsButton--danger' : null,
     variant === 'light' ? 'lsButton--light' : null,
     size === 'md' ? 'lsButton--md' : 'lsButton--sm',
+    appRegion === 'drag' ? 'lsButton--drag' : null,
     className ?? null
   ]
     .filter(Boolean)
@@ -41,4 +44,3 @@ export function Button({
     </button>
   )
 }
-
