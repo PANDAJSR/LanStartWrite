@@ -156,6 +156,7 @@ function FloatingToolbarInner() {
 
           <Button
             size={uiButtonSize}
+            variant={state.alwaysOnTop ? 'light' : 'default'}
             title="切换是否始终置顶（由主进程执行）"
             onClick={() => {
               const next = !state.alwaysOnTop

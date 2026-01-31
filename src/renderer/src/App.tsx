@@ -1,6 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { FloatingToolbarApp, FloatingToolbarHandleApp, WINDOW_ID_FLOATING_TOOLBAR, WINDOW_ID_FLOATING_TOOLBAR_HANDLE } from '../../toolbar'
-import { BACKEND_URL } from '../../toolbar/utils/constants'
 import { useEventsPoll } from '../../toolbar/hooks/useEventsPoll'
 import { Button } from '../../button'
 import { EventsMenu, SettingsMenu } from '../../toolbar-subwindows'
@@ -21,9 +20,10 @@ function ChildWindow() {
   useEffect(() => {
     const run = async () => {
       try {
-        const res = await fetch(`${BACKEND_URL}/health`)
-        const json = (await res.json()) as { ok: boolean; port: number }
-        setHealth(json.ok ? `ok:${json.port}` : 'bad')
+        if (!window.lanstart) throw new Error('lanstart_unavailable')
+        const res = await window.lanstart.apiRequest({ method: 'GET', path: '/health' })
+        const json = (res.body ?? {}) as { ok?: unknown; port?: unknown }
+        setHealth(json.ok ? `ok:${Number(json.port ?? 0)}` : 'bad')
       } catch {
         setHealth('offline')
       }
@@ -43,11 +43,7 @@ function ChildWindow() {
           size="md"
           variant="light"
           onClick={async () => {
-            await fetch(`${BACKEND_URL}/kv/hello`, {
-              method: 'PUT',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ time: Date.now(), from: 'child' })
-            })
+            await window.lanstart?.putKv('hello', { time: Date.now(), from: 'child' })
           }}
         >
           写入 LevelDB
@@ -56,7 +52,7 @@ function ChildWindow() {
           size="md"
           variant="light"
           onClick={async () => {
-            await fetch(`${BACKEND_URL}/kv/hello`)
+            await window.lanstart?.getKv('hello')
           }}
         >
           读取 LevelDB

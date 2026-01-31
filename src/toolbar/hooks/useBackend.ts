@@ -1,5 +1,3 @@
-import { BACKEND_URL } from '../utils/constants'
-
 export type BackendEventItem = {
   id: number
   type: string
@@ -7,22 +5,13 @@ export type BackendEventItem = {
   ts: number
 }
 
-declare global {
-  interface Window {
-    lanstart?: {
-      postCommand: (command: string, payload?: unknown) => Promise<unknown>
-      getEvents: (since: number) => Promise<{ items: BackendEventItem[]; latest: number }>
-      getKv: <T = unknown>(key: string) => Promise<T>
-      putKv: (key: string, value: unknown) => Promise<void>
-      getUiState: (windowId: string) => Promise<Record<string, unknown>>
-      putUiStateKey: (windowId: string, key: string, value: unknown) => Promise<void>
-      deleteUiStateKey: (windowId: string, key: string) => Promise<void>
-      onEvent?: (listener: (event: BackendEventItem) => void) => () => void
-    }
-  }
-}
-
 let suppressCommandErrors = false
+
+function requireLanstart() {
+  const api = window.lanstart
+  if (!api) throw new Error('lanstart_unavailable')
+  return api
+}
 
 export function markQuitting(): void {
   suppressCommandErrors = true
@@ -30,18 +19,7 @@ export function markQuitting(): void {
 
 export async function postCommand(command: string, payload?: unknown): Promise<void> {
   try {
-    if (window.lanstart?.postCommand) {
-      await window.lanstart.postCommand(command, payload)
-      return
-    }
-
-    const res = await fetch(`${BACKEND_URL}/commands`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ command, payload })
-    })
-
-    if (!res.ok) throw new Error(`command_failed:${command}`)
+    await requireLanstart().postCommand(command, payload)
   } catch (e) {
     if (command === 'quit' || suppressCommandErrors) return
     throw e
@@ -49,63 +27,25 @@ export async function postCommand(command: string, payload?: unknown): Promise<v
 }
 
 export async function getEvents(since: number): Promise<{ items: BackendEventItem[]; latest: number }> {
-  if (window.lanstart?.getEvents) return await window.lanstart.getEvents(since)
-  const res = await fetch(`${BACKEND_URL}/events?since=${since}`)
-  const json = (await res.json()) as { ok: boolean; items: BackendEventItem[]; latest: number }
-  if (!json.ok) throw new Error('events_failed')
-  return { items: json.items, latest: json.latest }
+  return await requireLanstart().getEvents(since)
 }
 
 export async function getKv<T>(key: string): Promise<T> {
-  if (window.lanstart?.getKv) return await window.lanstart.getKv<T>(key)
-  const res = await fetch(`${BACKEND_URL}/kv/${encodeURIComponent(key)}`)
-  if (!res.ok) throw new Error('kv_not_found')
-  const json = (await res.json()) as { ok: boolean; value: T }
-  if (!json.ok) throw new Error('kv_failed')
-  return json.value
+  return (await requireLanstart().getKv(key)) as T
 }
 
 export async function putKv<T>(key: string, value: T): Promise<void> {
-  if (window.lanstart?.putKv) {
-    await window.lanstart.putKv(key, value)
-    return
-  }
-  const res = await fetch(`${BACKEND_URL}/kv/${encodeURIComponent(key)}`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(value)
-  })
-  if (!res.ok) throw new Error('kv_put_failed')
+  await requireLanstart().putKv(key, value)
 }
 
 export async function getUiState(windowId: string): Promise<Record<string, unknown>> {
-  if (window.lanstart?.getUiState) return await window.lanstart.getUiState(windowId)
-  const res = await fetch(`${BACKEND_URL}/ui-state/${encodeURIComponent(windowId)}`)
-  const json = (await res.json()) as { ok: boolean; state?: Record<string, unknown> }
-  if (!json.ok) throw new Error('ui_state_failed')
-  return json.state ?? {}
+  return await requireLanstart().getUiState(windowId)
 }
 
 export async function putUiStateKey(windowId: string, key: string, value: unknown): Promise<void> {
-  if (window.lanstart?.putUiStateKey) {
-    await window.lanstart.putUiStateKey(windowId, key, value)
-    return
-  }
-  const res = await fetch(`${BACKEND_URL}/ui-state/${encodeURIComponent(windowId)}/${encodeURIComponent(key)}`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(value)
-  })
-  if (!res.ok) throw new Error('ui_state_put_failed')
+  await requireLanstart().putUiStateKey(windowId, key, value)
 }
 
 export async function deleteUiStateKey(windowId: string, key: string): Promise<void> {
-  if (window.lanstart?.deleteUiStateKey) {
-    await window.lanstart.deleteUiStateKey(windowId, key)
-    return
-  }
-  const res = await fetch(`${BACKEND_URL}/ui-state/${encodeURIComponent(windowId)}/${encodeURIComponent(key)}`, {
-    method: 'DELETE'
-  })
-  if (!res.ok) throw new Error('ui_state_del_failed')
+  await requireLanstart().deleteUiStateKey(windowId, key)
 }

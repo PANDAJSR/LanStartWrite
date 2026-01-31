@@ -29,8 +29,46 @@ function surfaceBackgroundColor(appearance: Appearance): string {
 let currentAppearance: Appearance = 'light'
 let didApplyAppearance = false
 
+type BackendRpcResponse =
+  | { type: 'RPC_RESPONSE'; id: number; ok: true; result: unknown }
+  | { type: 'RPC_RESPONSE'; id: number; ok: false; error: string }
+
+let nextBackendRpcId = 1
+const pendingBackendRpc = new Map<
+  number,
+  { resolve: (value: unknown) => void; reject: (reason?: unknown) => void; timer: NodeJS.Timeout }
+>()
+
+function requestBackendRpc<T>(method: string, params?: unknown): Promise<T> {
+  const proc = backendProcess
+  if (!proc || !proc.stdin.writable) return Promise.reject(new Error('backend_not_ready'))
+
+  const id = nextBackendRpcId++
+
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      pendingBackendRpc.delete(id)
+      reject(new Error('backend_rpc_timeout'))
+    }, 2400)
+    pendingBackendRpc.set(id, { resolve: resolve as unknown as (value: unknown) => void, reject, timer })
+    sendToBackend({ type: 'RPC_REQUEST', id, method, params })
+  })
+}
+
+async function backendPutUiStateKey(windowId: string, key: string, value: unknown): Promise<void> {
+  await requestBackendRpc('putUiStateKey', { windowId, key, value })
+}
+
+async function backendGetKv(key: string): Promise<unknown> {
+  return await requestBackendRpc('getKv', { key })
+}
+
+function coerceString(v: unknown): string {
+  return typeof v === 'string' ? v : ''
+}
+
 function broadcastAppearanceToUiState(appearance: Appearance): void {
-  requestBackendRpc('putUiStateKey', { windowId: 'app', key: 'appearance', value: appearance }).catch(() => undefined)
+  backendPutUiStateKey('app', 'appearance', appearance).catch(() => undefined)
 }
 
 function applyAppearance(appearance: Appearance): void {
@@ -53,8 +91,6 @@ function applyAppearance(appearance: Appearance): void {
 let floatingToolbarWindow: BrowserWindow | undefined
 let floatingToolbarHandleWindow: BrowserWindow | undefined
 let syncingToolbarPair = false
-let nextRpcId = 1
-const pendingBackendRpc = new Map<number, { resolve: (v: any) => void; reject: (e: any) => void; timer: NodeJS.Timeout }>()
 const toolbarSubwindows = new Map<
   string,
   {
@@ -74,26 +110,6 @@ function sendToBackend(message: unknown): void {
     backendProcess.stdin.write(`${JSON.stringify(message)}\n`)
   } catch {
     return
-  }
-}
-
-function requestBackendRpc(method: string, params: unknown): Promise<any> {
-  if (!backendProcess) return Promise.reject(new Error('backend_not_ready'))
-  const id = nextRpcId++
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => {
-      pendingBackendRpc.delete(id)
-      reject(new Error(`backend_rpc_timeout:${method}`))
-    }, 8000)
-    pendingBackendRpc.set(id, { resolve, reject, timer })
-    sendToBackend({ type: 'RPC_REQUEST', id, method, params })
-  })
-}
-
-function broadcastBackendEvent(item: unknown): void {
-  for (const win of BrowserWindow.getAllWindows()) {
-    if (win.isDestroyed()) continue
-    win.webContents.send('lanstart:backend-event', item)
   }
 }
 
@@ -574,21 +590,18 @@ function handleBackendControlMessage(message: any): void {
   if (!message || typeof message !== 'object') return
 
   if (message.type === 'RPC_RESPONSE') {
-    const id = Number((message as any).id)
+    const id = Number((message as BackendRpcResponse).id)
+    if (!Number.isFinite(id)) return
     const pending = pendingBackendRpc.get(id)
     if (!pending) return
     pendingBackendRpc.delete(id)
     clearTimeout(pending.timer)
-    if ((message as any).ok) {
+    const ok = Boolean((message as BackendRpcResponse).ok)
+    if (ok) {
       pending.resolve((message as any).result)
     } else {
-      pending.reject(new Error(String((message as any).error ?? 'backend_rpc_failed')))
+      pending.reject(new Error(coerceString((message as any).error) || 'backend_rpc_failed'))
     }
-    return
-  }
-
-  if (message.type === 'BACKEND_EVENT') {
-    broadcastBackendEvent((message as any).event)
     return
   }
 
@@ -695,11 +708,14 @@ function wireBackendStdout(stdout: NodeJS.ReadableStream): void {
 
 function startBackend(): void {
   const dbPath = join(app.getPath('userData'), 'leveldb')
+  const transport = process.env.LANSTART_BACKEND_TRANSPORT === 'http' ? 'http' : 'stdio'
+  const host = process.env.LANSTART_BACKEND_HOST ?? '127.0.0.1'
   const env = {
     ...process.env,
     LANSTART_BACKEND_PORT: String(BACKEND_PORT),
+    LANSTART_BACKEND_HOST: host,
     LANSTART_DB_PATH: dbPath,
-    LANSTART_BACKEND_TRANSPORT: 'stdio'
+    LANSTART_BACKEND_TRANSPORT: transport
   }
 
   const isDev = Boolean(getDevServerUrl())
@@ -752,11 +768,11 @@ function startBackend(): void {
 
   backendProcess.on('exit', () => {
     backendProcess = undefined
-    for (const pending of pendingBackendRpc.values()) {
+    for (const [id, pending] of pendingBackendRpc.entries()) {
+      pendingBackendRpc.delete(id)
       clearTimeout(pending.timer)
       pending.reject(new Error('backend_exited'))
     }
-    pendingBackendRpc.clear()
   })
 
   wireBackendStdout(backendProcess.stdout)
@@ -767,46 +783,62 @@ function startBackend(): void {
 }
 
 ipcMain.handle('lanstart:postCommand', async (_event, input: { command?: unknown; payload?: unknown }) => {
-  const command = typeof input?.command === 'string' ? input.command : ''
+  const command = coerceString(input?.command)
   if (!command) throw new Error('BAD_COMMAND')
-  return await requestBackendRpc('postCommand', { command, payload: input?.payload })
+  await requestBackendRpc('postCommand', { command, payload: input?.payload })
+  return null
 })
 
 ipcMain.handle('lanstart:getEvents', async (_event, input: { since?: unknown }) => {
-  const since = typeof input?.since === 'number' ? input.since : Number(input?.since ?? 0)
-  return await requestBackendRpc('getEvents', { since })
+  const since = Number(input?.since ?? 0)
+  const res = (await requestBackendRpc('getEvents', { since })) as { items?: unknown; latest?: unknown }
+  return {
+    items: Array.isArray(res?.items) ? res.items : [],
+    latest: Number(res?.latest ?? since)
+  }
 })
 
 ipcMain.handle('lanstart:getKv', async (_event, input: { key?: unknown }) => {
-  const key = typeof input?.key === 'string' ? input.key : ''
+  const key = coerceString(input?.key)
   if (!key) throw new Error('BAD_KEY')
   return await requestBackendRpc('getKv', { key })
 })
 
 ipcMain.handle('lanstart:putKv', async (_event, input: { key?: unknown; value?: unknown }) => {
-  const key = typeof input?.key === 'string' ? input.key : ''
+  const key = coerceString(input?.key)
   if (!key) throw new Error('BAD_KEY')
-  return await requestBackendRpc('putKv', { key, value: input?.value })
+  await requestBackendRpc('putKv', { key, value: input?.value })
+  return null
 })
 
 ipcMain.handle('lanstart:getUiState', async (_event, input: { windowId?: unknown }) => {
-  const windowId = typeof input?.windowId === 'string' ? input.windowId : ''
+  const windowId = coerceString(input?.windowId)
   if (!windowId) throw new Error('BAD_WINDOW_ID')
   return await requestBackendRpc('getUiState', { windowId })
 })
 
 ipcMain.handle('lanstart:putUiStateKey', async (_event, input: { windowId?: unknown; key?: unknown; value?: unknown }) => {
-  const windowId = typeof input?.windowId === 'string' ? input.windowId : ''
-  const key = typeof input?.key === 'string' ? input.key : ''
+  const windowId = coerceString(input?.windowId)
+  const key = coerceString(input?.key)
   if (!windowId || !key) throw new Error('BAD_UI_STATE_KEY')
-  return await requestBackendRpc('putUiStateKey', { windowId, key, value: input?.value })
+  await requestBackendRpc('putUiStateKey', { windowId, key, value: input?.value })
+  return null
 })
 
 ipcMain.handle('lanstart:deleteUiStateKey', async (_event, input: { windowId?: unknown; key?: unknown }) => {
-  const windowId = typeof input?.windowId === 'string' ? input.windowId : ''
-  const key = typeof input?.key === 'string' ? input.key : ''
+  const windowId = coerceString(input?.windowId)
+  const key = coerceString(input?.key)
   if (!windowId || !key) throw new Error('BAD_UI_STATE_KEY')
-  return await requestBackendRpc('deleteUiStateKey', { windowId, key })
+  await requestBackendRpc('deleteUiStateKey', { windowId, key })
+  return null
+})
+
+ipcMain.handle('lanstart:apiRequest', async (_event, input: { method?: unknown; path?: unknown; body?: unknown }) => {
+  const method = coerceString(input?.method).toUpperCase() || 'GET'
+  const path = coerceString(input?.path)
+  if (!path.startsWith('/')) throw new Error('BAD_PATH')
+  const res = (await requestBackendRpc('apiRequest', { method, path, body: input?.body })) as { status?: unknown; body?: unknown }
+  return { status: Number(res?.status ?? 200), body: (res as any)?.body }
 })
 
 app
@@ -817,14 +849,20 @@ app
     } catch (e) {
       process.stderr.write(String(e))
     }
-    requestBackendRpc('getKv', { key: APPEARANCE_KV_KEY })
-      .then((value) => {
-        if (!isAppearance(value)) return
-        applyAppearance(value)
-      })
-      .catch(() => {
-        applyAppearance(currentAppearance)
-      })
+    ;(async () => {
+      for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+          const value = await backendGetKv(APPEARANCE_KV_KEY)
+          if (isAppearance(value)) applyAppearance(value)
+          return
+        } catch {
+          await new Promise((r) => setTimeout(r, 220))
+        }
+      }
+      applyAppearance(currentAppearance)
+    })().catch(() => {
+      applyAppearance(currentAppearance)
+    })
     sendToBackend({ type: 'PROCESS_STATUS', name: 'main', status: 'ready', pid: process.pid, ts: Date.now() })
     const win = createFloatingToolbarWindow()
     floatingToolbarWindow = win

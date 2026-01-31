@@ -11,8 +11,10 @@ type EventItem = {
 }
 
 const port = Number(process.env.LANSTART_BACKEND_PORT ?? 3131)
+const host = String(process.env.LANSTART_BACKEND_HOST ?? '127.0.0.1')
 const dbPath = process.env.LANSTART_DB_PATH ?? './leveldb'
-const transport = String(process.env.LANSTART_BACKEND_TRANSPORT ?? 'http')
+const transport = String(process.env.LANSTART_BACKEND_TRANSPORT ?? 'stdio')
+const csBaseUrl = String(process.env.LANSTART_CS_BASE_URL ?? '')
 
 const db = openLeavelDb(dbPath)
 
@@ -224,6 +226,42 @@ stdin.on('line', (line) => {
 
       void (async () => {
         try {
+          if (method === 'apiRequest') {
+            const requestMethod = coerceString(params?.method).toUpperCase() || 'GET'
+            const path = coerceString(params?.path)
+            if (!path.startsWith('/')) throw new Error('BAD_PATH')
+
+            const headers: Record<string, string> = Object.create(null) as Record<string, string>
+            let body: string | undefined
+            if (params?.body !== undefined && requestMethod !== 'GET' && requestMethod !== 'HEAD') {
+              headers['Content-Type'] = 'application/json'
+              body = JSON.stringify(params.body)
+            }
+
+            const res = await api.handle(
+              new Request(`http://local${path}`, {
+                method: requestMethod,
+                headers,
+                body
+              })
+            )
+
+            const contentType = res.headers.get('content-type') ?? ''
+            let outBody: unknown
+            if (contentType.includes('application/json') || contentType.includes('+json')) {
+              try {
+                outBody = await res.json()
+              } catch {
+                outBody = await res.text()
+              }
+            } else {
+              outBody = await res.text()
+            }
+
+            requestMain({ type: 'RPC_RESPONSE', id, ok: true, result: { status: res.status, body: outBody } })
+            return
+          }
+
           if (method === 'postCommand') {
             const command = coerceString(params?.command)
             const payload = params?.payload as unknown
@@ -343,6 +381,38 @@ const api = new Elysia({ adapter: node() })
     }
   })
   .get('/health', () => ({ ok: true, port }))
+  .all('/cs/*', async ({ request, set, params }) => {
+    if (!csBaseUrl) {
+      set.status = 503
+      return { ok: false, error: 'CS_BASE_URL_NOT_SET' }
+    }
+
+    const rest = String((params as any)['*'] ?? '')
+    const incomingUrl = new URL(request.url)
+    const targetUrl = new URL(`./${rest}${incomingUrl.search}`, csBaseUrl.endsWith('/') ? csBaseUrl : `${csBaseUrl}/`)
+
+    const method = request.method.toUpperCase()
+
+    const headers = new Headers()
+    const contentType = request.headers.get('content-type')
+    if (contentType) headers.set('content-type', contentType)
+    const accept = request.headers.get('accept')
+    if (accept) headers.set('accept', accept)
+
+    const body = method === 'GET' || method === 'HEAD' ? undefined : await request.arrayBuffer()
+    const res = await fetch(targetUrl, { method, headers, body })
+
+    set.status = res.status
+    const outType = res.headers.get('content-type') ?? ''
+    if (outType.includes('application/json') || outType.includes('+json')) {
+      try {
+        return await res.json()
+      } catch {
+        return await res.text()
+      }
+    }
+    return await res.text()
+  })
   .get(
     '/kv/:key',
     async ({ params, set }) => {
@@ -446,14 +516,15 @@ async function bootstrap(): Promise<void> {
     await cleanupLegacyPersistedMonitoringData()
   } catch {}
 
-  if (transport !== 'stdio') {
-    api.listen({ hostname: '127.0.0.1', port })
-    emitEvent('BACKEND_STARTED', { transport, port, dbPath })
-    console.log(`[backend] listening on http://127.0.0.1:${port}`)
-    return
+  if (transport === 'http') {
+    try {
+      await api.listen({ hostname: host, port })
+    } catch (e) {
+      emitEvent('BACKEND_HTTP_LISTEN_FAILED', { host, port, error: String(e) })
+    }
   }
 
-  emitEvent('BACKEND_STARTED', { transport, dbPath })
+  emitEvent('BACKEND_STARTED', { transport, host, port, dbPath, csBaseUrl: csBaseUrl || undefined })
 }
 
 bootstrap().catch((e) => {

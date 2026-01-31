@@ -9,7 +9,6 @@ export function useEventsPoll(intervalMs = 800) {
 
   useEffect(() => {
     let cancelled = false
-    const api = window.lanstart
 
     const tick = async () => {
       try {
@@ -19,21 +18,6 @@ export function useEventsPoll(intervalMs = 800) {
         latestRef.current = res.latest
       } catch {
         return
-      }
-    }
-
-    if (api?.onEvent) {
-      const unsubscribe = api.onEvent((item) => {
-        if (cancelled) return
-        if (!item || typeof item.id !== 'number') return
-        if (item.id <= latestRef.current) return
-        latestRef.current = item.id
-        setItems((prev) => [...prev.slice(-80), item])
-      })
-      tick()
-      return () => {
-        cancelled = true
-        unsubscribe()
       }
     }
 
@@ -75,7 +59,6 @@ export function useUiStateBus(windowId: string, options?: { intervalMs?: number 
 
   useEffect(() => {
     let cancelled = false
-    const api = window.lanstart
 
     const tick = async () => {
       try {
@@ -109,49 +92,6 @@ export function useUiStateBus(windowId: string, options?: { intervalMs?: number 
         setState((prev) => nextPatches.reduce((acc, patch) => patch(acc), prev))
       } catch {
         return
-      }
-    }
-
-    const applyItems = (items: BackendEventItem[]) => {
-      if (!items.length) return
-      const nextPatches: Array<(prev: Record<string, unknown>) => Record<string, unknown>> = []
-
-      for (const item of items) {
-        if (item.type !== 'UI_STATE_PUT' && item.type !== 'UI_STATE_DEL') continue
-        const payload = (item.payload ?? {}) as any
-        if (coerceString(payload.windowId) !== windowId) continue
-        const key = coerceString(payload.key)
-        if (!key) continue
-
-        if (item.type === 'UI_STATE_PUT') {
-          const value = payload.value as unknown
-          nextPatches.push((prev) => ({ ...prev, [key]: value }))
-        } else {
-          nextPatches.push((prev) => {
-            if (!(key in prev)) return prev
-            const { [key]: _drop, ...rest } = prev
-            return rest
-          })
-        }
-      }
-
-      if (!nextPatches.length) return
-      setState((prev) => nextPatches.reduce((acc, patch) => patch(acc), prev))
-    }
-
-    if (api?.onEvent) {
-      const unsubscribe = api.onEvent((item) => {
-        if (cancelled) return
-        if (!item || typeof item.id !== 'number') return
-        if (item.id <= latestRef.current) return
-        latestRef.current = item.id
-        applyItems([item])
-      })
-
-      tick()
-      return () => {
-        cancelled = true
-        unsubscribe()
       }
     }
 

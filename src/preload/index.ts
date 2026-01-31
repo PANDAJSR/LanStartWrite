@@ -53,42 +53,14 @@ contextBridge.exposeInMainWorld('hyperGlass', {
   }
 })
 
-type BackendEventItem = {
-  id: number
-  type: string
-  payload?: unknown
-  ts: number
-}
-
-type Unsubscribe = () => void
-
 contextBridge.exposeInMainWorld('lanstart', {
-  postCommand: async (command: string, payload?: unknown) => {
-    return await ipcRenderer.invoke('lanstart:postCommand', { command, payload })
-  },
-  getEvents: async (since: number) => {
-    return await ipcRenderer.invoke('lanstart:getEvents', { since })
-  },
-  getKv: async (key: string) => {
-    return await ipcRenderer.invoke('lanstart:getKv', { key })
-  },
-  putKv: async (key: string, value: unknown) => {
-    return await ipcRenderer.invoke('lanstart:putKv', { key, value })
-  },
-  getUiState: async (windowId: string) => {
-    return await ipcRenderer.invoke('lanstart:getUiState', { windowId })
-  },
-  putUiStateKey: async (windowId: string, key: string, value: unknown) => {
-    return await ipcRenderer.invoke('lanstart:putUiStateKey', { windowId, key, value })
-  },
-  deleteUiStateKey: async (windowId: string, key: string) => {
-    return await ipcRenderer.invoke('lanstart:deleteUiStateKey', { windowId, key })
-  },
-  onEvent: (listener: (event: BackendEventItem) => void): Unsubscribe => {
-    const wrapped = (_evt: unknown, item: BackendEventItem) => listener(item)
-    ipcRenderer.on('lanstart:backend-event', wrapped as any)
-    return () => {
-      ipcRenderer.removeListener('lanstart:backend-event', wrapped as any)
-    }
-  }
+  postCommand: (command: string, payload?: unknown) => ipcRenderer.invoke('lanstart:postCommand', { command, payload }),
+  getEvents: (since: number) => ipcRenderer.invoke('lanstart:getEvents', { since }),
+  getKv: (key: string) => ipcRenderer.invoke('lanstart:getKv', { key }),
+  putKv: (key: string, value: unknown) => ipcRenderer.invoke('lanstart:putKv', { key, value }),
+  getUiState: (windowId: string) => ipcRenderer.invoke('lanstart:getUiState', { windowId }),
+  putUiStateKey: (windowId: string, key: string, value: unknown) =>
+    ipcRenderer.invoke('lanstart:putUiStateKey', { windowId, key, value }),
+  deleteUiStateKey: (windowId: string, key: string) => ipcRenderer.invoke('lanstart:deleteUiStateKey', { windowId, key }),
+  apiRequest: (input: { method: string; path: string; body?: unknown }) => ipcRenderer.invoke('lanstart:apiRequest', input)
 })
