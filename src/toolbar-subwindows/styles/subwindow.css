@@ -100,3 +100,46 @@ body {
   grid-template-columns: repeat(4, 40px);
   gap: 8px;
 }
+
+.subwindowPager {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+
+.subwindowPagerViewport {
+  width: calc(40px * 4 + 8px * 3);
+  overflow: hidden;
+  touch-action: none;
+}
+
+.subwindowPagerTrack {
+  display: flex;
+  gap: 0px;
+}
+
+.subwindowPagerPage {
+  width: calc(40px * 4 + 8px * 3);
+  flex: 0 0 auto;
+}
+
+.subwindowPagerDots {
+  display: flex;
+  gap: 6px;
+  justify-content: center;
+  align-items: center;
+  height: 10px;
+}
+
+.subwindowPagerDot {
+  width: 6px;
+  height: 6px;
+  border-radius: 99px;
+  background: currentColor;
+  opacity: 0.25;
+}
+
+.subwindowPagerDot--active {
+  opacity: 0.7;
+}

@@ -109,6 +109,8 @@ const toolbarSubwindows = new Map<
   }
 >()
 let scheduledRepositionTimer: NodeJS.Timeout | undefined
+type ToolbarRepositionReason = 'move' | 'resize' | 'other'
+let scheduledRepositionReason: ToolbarRepositionReason = 'other'
 
 function sendToBackend(message: unknown): void {
   try {
@@ -237,10 +239,10 @@ function createFloatingToolbarWindow(): BrowserWindow {
   win.setAlwaysOnTop(true, 'floating')
   wireWindowDebug(win, 'floating-toolbar')
   wireWindowStatus(win, WINDOW_ID_FLOATING_TOOLBAR)
-  win.on('move', scheduleRepositionToolbarSubwindows)
-  win.on('resize', scheduleRepositionToolbarSubwindows)
+  win.on('move', () => scheduleRepositionToolbarSubwindows('move'))
+  win.on('resize', () => scheduleRepositionToolbarSubwindows('resize'))
   win.on('show', () => {
-    scheduleRepositionToolbarSubwindows()
+    scheduleRepositionToolbarSubwindows('other')
     const handle = floatingToolbarHandleWindow
     if (handle && !handle.isDestroyed()) handle.showInactive()
   })
@@ -310,7 +312,7 @@ function createFloatingToolbarHandleWindow(owner: BrowserWindow): BrowserWindow 
     setTimeout(() => {
       syncingToolbarPair = false
     }, 0)
-    scheduleRepositionToolbarSubwindows()
+    scheduleRepositionToolbarSubwindows('move')
   })
 
   const devUrl = getDevServerUrl()
@@ -426,12 +428,15 @@ function restoreToolbarAlwaysOnTopFromPersistedState() {
     .catch(() => undefined)
 }
 
-function scheduleRepositionToolbarSubwindows() {
+function scheduleRepositionToolbarSubwindows(reason: ToolbarRepositionReason) {
+  scheduledRepositionReason = reason
   if (scheduledRepositionTimer) return
   scheduledRepositionTimer = setTimeout(() => {
     scheduledRepositionTimer = undefined
-    repositionToolbarSubwindows()
-  }, 0)
+    const nextReason = scheduledRepositionReason
+    scheduledRepositionReason = 'other'
+    repositionToolbarSubwindows(nextReason !== 'move')
+  }, reason === 'move' ? 16 : 0)
 }
 
 type Bounds = { x: number; y: number; width: number; height: number }
@@ -523,7 +528,7 @@ function computeToolbarSubwindowBounds(
   }
 }
 
-function repositionToolbarSubwindows() {
+function repositionToolbarSubwindows(animate: boolean) {
   const owner = floatingToolbarWindow
   if (!owner || owner.isDestroyed()) return
   const ownerBounds = owner.getBounds()
@@ -559,7 +564,20 @@ function repositionToolbarSubwindows() {
     const win = item.win
     if (win.isDestroyed() || !win.isVisible()) continue
     const { bounds, atEdge } = computeToolbarSubwindowBounds(item, ownerBounds, workArea)
-    animateToolbarSubwindowTo(item, bounds, atEdge)
+    if (animate) {
+      animateToolbarSubwindowTo(item, bounds, atEdge)
+    } else {
+      stopToolbarSubwindowAnimation(item)
+      const current = win.getBounds()
+      if (
+        current.x !== bounds.x ||
+        current.y !== bounds.y ||
+        current.width !== bounds.width ||
+        current.height !== bounds.height
+      ) {
+        win.setBounds(bounds, false)
+      }
+    }
   }
 }
 
@@ -687,7 +705,7 @@ function getOrCreateToolbarSubwindow(kind: string, placement: 'top' | 'bottom'):
     width: 360,
     height: 220
   })
-  scheduleRepositionToolbarSubwindows()
+  scheduleRepositionToolbarSubwindows('other')
   return win
 }
 
@@ -722,7 +740,7 @@ function toggleToolbarSubwindow(kind: string, placement: 'top' | 'bottom') {
     const { bounds } = computeToolbarSubwindowBounds(item, ownerBounds, display.workArea)
     win.setBounds(bounds, false)
   }
-  scheduleRepositionToolbarSubwindows()
+  scheduleRepositionToolbarSubwindows('other')
   win.showInactive()
 }
 
@@ -730,7 +748,7 @@ function setToolbarSubwindowHeight(kind: string, height: number) {
   const item = toolbarSubwindows.get(kind)
   if (!item || item.win.isDestroyed()) return
   item.height = height
-  scheduleRepositionToolbarSubwindows()
+  scheduleRepositionToolbarSubwindows('other')
 }
 
 function setToolbarSubwindowBounds(kind: string, bounds: { width: number; height: number }) {
@@ -738,7 +756,7 @@ function setToolbarSubwindowBounds(kind: string, bounds: { width: number; height
   if (!item || item.win.isDestroyed()) return
   item.width = bounds.width
   item.height = bounds.height
-  scheduleRepositionToolbarSubwindows()
+  scheduleRepositionToolbarSubwindows('other')
 }
 
 function handleBackendControlMessage(message: any): void {
@@ -863,7 +881,7 @@ function handleBackendControlMessage(message: any): void {
     const nextWidth = Math.max(1, Math.min(1200, Math.round(width)))
     const nextHeight = Math.max(1, Math.min(600, Math.round(height)))
     win.setBounds({ ...bounds, width: nextWidth, height: nextHeight }, false)
-    scheduleRepositionToolbarSubwindows()
+    scheduleRepositionToolbarSubwindows('resize')
     return
   }
 
@@ -1074,7 +1092,7 @@ app
     floatingToolbarHandleWindow = handle
     win.once('ready-to-show', () => {
       win.show()
-      scheduleRepositionToolbarSubwindows()
+      scheduleRepositionToolbarSubwindows('other')
       if (!handle.isDestroyed()) handle.showInactive()
     })
 
@@ -1086,7 +1104,7 @@ app
         floatingToolbarHandleWindow = nextHandle
         toolbar.once('ready-to-show', () => {
           toolbar.show()
-          scheduleRepositionToolbarSubwindows()
+          scheduleRepositionToolbarSubwindows('other')
           if (!nextHandle.isDestroyed()) nextHandle.showInactive()
         })
       }

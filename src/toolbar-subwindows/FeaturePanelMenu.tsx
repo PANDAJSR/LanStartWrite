@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { Button } from '../button'
 import { motion, useReducedMotion } from '../Framer_Motion'
 import { useHyperGlassRealtimeBlur } from '../hyper_glass'
@@ -63,7 +63,10 @@ export function FeaturePanelMenu(props: { kind: string }) {
   const rootRef = useRef<HTMLDivElement | null>(null)
   const cardRef = useRef<HTMLDivElement | null>(null)
   const measureRef = useRef<HTMLDivElement | null>(null)
+  const pagerViewportRef = useRef<HTMLDivElement | null>(null)
   const reduceMotion = useReducedMotion()
+  const [pageIndex, setPageIndex] = useState(0)
+  const [pagerViewportWidth, setPagerViewportWidth] = useState(0)
 
   useHyperGlassRealtimeBlur({ root: rootRef.current })
 
@@ -81,7 +84,7 @@ export function FeaturePanelMenu(props: { kind: string }) {
     const send = () => {
       rafId = 0
       const measureRect = measure?.getBoundingClientRect()
-      const contentWidth = Math.max(measure?.scrollWidth ?? 0, measureRect?.width ?? 0)
+      const contentWidth = Math.max(measureRect?.width ?? 0, 0)
       const contentHeight = Math.max(measure?.scrollHeight ?? 0, measureRect?.height ?? 0)
       const width = Math.max(220, Math.min(1600, Math.ceil(contentWidth) + 26))
       const height = Math.max(60, Math.min(900, Math.ceil(contentHeight) + 26))
@@ -108,6 +111,38 @@ export function FeaturePanelMenu(props: { kind: string }) {
     }
   }, [props.kind])
 
+  useEffect(() => {
+    const viewport = pagerViewportRef.current
+    if (!viewport) return
+    if (typeof ResizeObserver === 'undefined') return
+
+    let rafId = 0
+    let lastWidth = 0
+
+    const send = () => {
+      rafId = 0
+      const rect = viewport.getBoundingClientRect()
+      const nextWidth = Math.max(1, Math.round(rect.width))
+      if (nextWidth === lastWidth) return
+      lastWidth = nextWidth
+      setPagerViewportWidth(nextWidth)
+    }
+
+    const schedule = () => {
+      if (rafId) return
+      rafId = window.requestAnimationFrame(send)
+    }
+
+    const ro = new ResizeObserver(schedule)
+    ro.observe(viewport)
+    schedule()
+
+    return () => {
+      ro.disconnect()
+      if (rafId) window.cancelAnimationFrame(rafId)
+    }
+  }, [])
+
   const items: Array<{ id: string; title: string; icon: string }> = [
     { id: 'app', title: '应用', icon: 'grid' },
     { id: 'create', title: '新建', icon: 'plus' },
@@ -124,8 +159,39 @@ export function FeaturePanelMenu(props: { kind: string }) {
     { id: 'f13', title: '功能 13', icon: 'grid' },
     { id: 'f14', title: '功能 14', icon: 'grid' },
     { id: 'f15', title: '功能 15', icon: 'grid' },
-    { id: 'f16', title: '功能 16', icon: 'grid' }
+    { id: 'f16', title: '功能 16', icon: 'grid' },
+    { id: 'f17', title: '功能 17', icon: 'grid' },
+    { id: 'f18', title: '功能 18', icon: 'grid' },
+    { id: 'f19', title: '功能 19', icon: 'grid' },
+    { id: 'f20', title: '功能 20', icon: 'grid' },
+    { id: 'f21', title: '功能 21', icon: 'grid' },
+    { id: 'f22', title: '功能 22', icon: 'grid' },
+    { id: 'f23', title: '功能 23', icon: 'grid' },
+    { id: 'f24', title: '功能 24', icon: 'grid' },
+    { id: 'f25', title: '功能 25', icon: 'grid' },
+    { id: 'f26', title: '功能 26', icon: 'grid' },
+    { id: 'f27', title: '功能 27', icon: 'grid' },
+    { id: 'f28', title: '功能 28', icon: 'grid' },
+    { id: 'f29', title: '功能 29', icon: 'grid' },
+    { id: 'f30', title: '功能 30', icon: 'grid' },
+    { id: 'f31', title: '功能 31', icon: 'grid' },
+    { id: 'f32', title: '功能 32', icon: 'grid' }
   ]
+
+  const pages = useMemo(() => {
+    const pageSize = 16
+    const result: Array<Array<{ id: string; title: string; icon: string }>> = []
+    for (let i = 0; i < items.length; i += pageSize) {
+      result.push(items.slice(i, i + pageSize))
+    }
+    return result
+  }, [items])
+
+  const pageCount = pages.length
+  const effectivePageIndex = Math.max(0, Math.min(pageCount - 1, pageIndex))
+  const swipeThreshold = 40
+  const pageWidth = pagerViewportWidth || 184
+  const leftLimit = -Math.max(0, (pageCount - 1) * pageWidth)
 
   return (
     <motion.div
@@ -142,16 +208,52 @@ export function FeaturePanelMenu(props: { kind: string }) {
             <span className="subwindowMeta">{items.length}</span>
           </div>
 
-          <div className="subwindowIconGrid">
-            {items.map((item) => (
-              <Button
-                key={item.id}
-                size="sm"
-                title={item.title}
+          <div className="subwindowPager">
+            <div ref={pagerViewportRef} className="subwindowPagerViewport">
+              <motion.div
+                className="subwindowPagerTrack"
+                drag={pageCount > 1 ? 'x' : false}
+                dragConstraints={{ left: leftLimit, right: 0 }}
+                dragElastic={0.06}
+                animate={{ x: -(effectivePageIndex * pageWidth) }}
+                transition={reduceMotion ? undefined : { type: 'spring', stiffness: 360, damping: 38 }}
+                onDragEnd={(_e, info: { offset: { x: number }; velocity: { x: number } }) => {
+                  const offsetX = info.offset.x
+                  const velocityX = info.velocity.x
+                  const swipePower = offsetX + velocityX * 0.12
+                  if (swipePower <= -swipeThreshold && effectivePageIndex < pageCount - 1) {
+                    setPageIndex(effectivePageIndex + 1)
+                    return
+                  }
+                  if (swipePower >= swipeThreshold && effectivePageIndex > 0) {
+                    setPageIndex(effectivePageIndex - 1)
+                  }
+                }}
               >
-                <GridIcon kind={item.icon} />
-              </Button>
-            ))}
+                {pages.map((pageItems, idx) => (
+                  <div key={idx} className="subwindowPagerPage">
+                    <div className="subwindowIconGrid">
+                      {pageItems.map((item) => (
+                        <Button key={item.id} size="sm" title={item.title}>
+                          <GridIcon kind={item.icon} />
+                        </Button>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </motion.div>
+            </div>
+
+            {pageCount > 1 ? (
+              <div className="subwindowPagerDots">
+                {pages.map((_, idx) => (
+                  <span
+                    key={idx}
+                    className={idx === effectivePageIndex ? 'subwindowPagerDot subwindowPagerDot--active' : 'subwindowPagerDot'}
+                  />
+                ))}
+              </div>
+            ) : null}
           </div>
         </div>
       </div>
