@@ -160,10 +160,10 @@ function FloatingToolbarInner() {
           <Button
             size={uiButtonSize}
             onClick={() => {
-              void postCommand('toggle-subwindow', { kind: 'watcher', placement: 'bottom' })
+              void postCommand('watcher.openWindow')
             }}
           >
-            监视
+            监视器
           </Button>
 
           <Button

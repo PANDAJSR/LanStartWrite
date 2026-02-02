@@ -2,8 +2,6 @@ import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { motion, useReducedMotion } from '../Framer_Motion'
 import { useHyperGlassRealtimeBlur } from '../hyper_glass'
 import { Button } from '../button'
-import { useEventsPoll } from '../toolbar/hooks/useEventsPoll'
-import { postCommand } from '../toolbar/hooks/useBackend'
 import '../toolbar-subwindows/styles/subwindow.css'
 import './styles.css'
 
@@ -52,16 +50,16 @@ function formatTime(ts: number): string {
   return `${hh}:${mm}:${ss}`
 }
 
-export function TaskWindowsWatcherMenu(props: { kind: string }) {
+export function TaskWindowsWatcherWindow() {
   const reduceMotion = useReducedMotion()
   const rootRef = useRef<HTMLDivElement | null>(null)
   const cardRef = useRef<HTMLDivElement | null>(null)
-  const measureRef = useRef<HTMLDivElement | null>(null)
-  const events = useEventsPoll(700)
+  const lastWindowKeyRef = useRef<string>('')
 
   const [running, setRunning] = useState(false)
   const [intervalMs, setIntervalMs] = useState(1000)
   const [lastError, setLastError] = useState<string | undefined>(undefined)
+  const [collecting, setCollecting] = useState(true)
   const [sortKey, setSortKey] = useState<SortKey>('cpu')
   const [foreground, setForeground] = useState<WindowRow | undefined>(undefined)
   const [history, setHistory] = useState<WindowRow[]>([])
@@ -70,98 +68,72 @@ export function TaskWindowsWatcherMenu(props: { kind: string }) {
   useHyperGlassRealtimeBlur({ root: rootRef.current })
 
   useEffect(() => {
-    let lastWidth = 0
-    let lastHeight = 0
-    let rafId = 0
+    if (!collecting) return
+    let cancelled = false
+    let timer: number | undefined
 
-    const send = () => {
-      rafId = 0
-      const measureRect = measureRef.current?.getBoundingClientRect()
-      const contentWidth = Math.max(measureRef.current?.scrollWidth ?? 0, measureRect?.width ?? 0)
-      const contentHeight = Math.max(measureRef.current?.scrollHeight ?? 0, measureRect?.height ?? 0)
-      const width = Math.max(360, Math.min(1600, Math.ceil(contentWidth) + 26))
-      const height = Math.max(140, Math.min(900, Math.ceil(contentHeight) + 26))
-      if (width === lastWidth && height === lastHeight) return
-      lastWidth = width
-      lastHeight = height
-      postCommand('set-subwindow-bounds', { kind: props.kind, width, height }).catch(() => undefined)
+    const poll = async () => {
+      if (cancelled) return
+      try {
+        const res = await window.lanstart?.apiRequest({ method: 'GET', path: '/watcher/state' })
+        const body = (res?.body ?? {}) as any
+        const watcher = (body.watcher ?? {}) as any
+        const processesRaw = (body.processes ?? {}) as any
+        const foregroundRaw = (body.foreground ?? {}) as any
+
+        setRunning(Boolean(watcher.running))
+        const nextInterval = Number(watcher.intervalMs)
+        if (Number.isFinite(nextInterval)) setIntervalMs(nextInterval)
+        setLastError(typeof watcher.lastError === 'string' ? watcher.lastError : undefined)
+
+        const list = Array.isArray(processesRaw?.processes) ? (processesRaw.processes as any[]) : []
+        const rows: ProcessRow[] = []
+        for (const item of list) {
+          const pid = Number(item?.pid)
+          const name = typeof item?.name === 'string' ? item.name : ''
+          if (!Number.isFinite(pid) || !name) continue
+          rows.push({
+            pid,
+            name,
+            cpuPercent: Number.isFinite(Number(item?.cpuPercent)) ? Number(item.cpuPercent) : undefined,
+            memoryBytes: Number.isFinite(Number(item?.memoryBytes)) ? Number(item.memoryBytes) : undefined
+          })
+        }
+        setProcesses(rows)
+
+        const ts = Number(foregroundRaw?.ts)
+        const w = (foregroundRaw?.window ?? undefined) as any
+        const title = typeof w?.title === 'string' ? w.title : ''
+        if (title) {
+          const row: WindowRow = {
+            ts: Number.isFinite(ts) ? ts : Date.now(),
+            title,
+            pid: Number.isFinite(Number(w.pid)) ? Number(w.pid) : undefined,
+            processName: typeof w.processName === 'string' ? w.processName : undefined,
+            handle: typeof w.handle === 'string' ? w.handle : undefined
+          }
+          const key = `${row.pid ?? 0}|${row.handle ?? ''}|${row.title}`
+          setForeground(row)
+          if (key && key !== lastWindowKeyRef.current) {
+            lastWindowKeyRef.current = key
+            setHistory((prev) => [row, ...prev].slice(0, 60))
+          }
+        }
+      } catch (e) {
+        setLastError(e instanceof Error ? e.message : String(e))
+      } finally {
+        if (cancelled) return
+        timer = window.setTimeout(() => void poll(), 700)
+      }
     }
 
-    const schedule = () => {
-      if (rafId) return
-      rafId = window.requestAnimationFrame(send)
-    }
-
-    const ro = new ResizeObserver(schedule)
-    if (rootRef.current) ro.observe(rootRef.current)
-    if (cardRef.current) ro.observe(cardRef.current)
-    if (measureRef.current) ro.observe(measureRef.current)
-    schedule()
+    void poll()
 
     return () => {
-      ro.disconnect()
-      if (rafId) window.cancelAnimationFrame(rafId)
+      cancelled = true
+      if (timer) window.clearTimeout(timer)
     }
-  }, [props.kind])
-
-  useEffect(() => {
-    for (let i = events.length - 1; i >= 0; i--) {
-      const e = events[i]
-      if (e.type === 'watcherStatus') {
-        const s = (e.payload ?? {}) as any
-        setRunning(Boolean(s.running))
-        const nextInterval = Number(s.intervalMs)
-        if (Number.isFinite(nextInterval)) setIntervalMs(nextInterval)
-        setLastError(typeof s.lastError === 'string' ? s.lastError : undefined)
-        break
-      }
-    }
-  }, [events])
-
-  useEffect(() => {
-    for (let i = events.length - 1; i >= 0; i--) {
-      const e = events[i]
-      if (e.type !== 'processChanged') continue
-      const p = (e.payload ?? {}) as any
-      const list = Array.isArray(p.processes) ? (p.processes as any[]) : []
-      const rows: ProcessRow[] = []
-      for (const item of list) {
-        const pid = Number(item?.pid)
-        const name = typeof item?.name === 'string' ? item.name : ''
-        if (!Number.isFinite(pid) || !name) continue
-        rows.push({
-          pid,
-          name,
-          cpuPercent: Number.isFinite(Number(item?.cpuPercent)) ? Number(item.cpuPercent) : undefined,
-          memoryBytes: Number.isFinite(Number(item?.memoryBytes)) ? Number(item.memoryBytes) : undefined
-        })
-      }
-      setProcesses(rows)
-      break
-    }
-  }, [events])
-
-  useEffect(() => {
-    for (let i = events.length - 1; i >= 0; i--) {
-      const e = events[i]
-      if (e.type !== 'windowFocusChanged') continue
-      const p = (e.payload ?? {}) as any
-      const ts = Number(p.ts)
-      const w = (p.window ?? {}) as any
-      const title = typeof w.title === 'string' ? w.title : ''
-      if (!title) break
-      const row: WindowRow = {
-        ts: Number.isFinite(ts) ? ts : e.ts,
-        title,
-        pid: Number.isFinite(Number(w.pid)) ? Number(w.pid) : undefined,
-        processName: typeof w.processName === 'string' ? w.processName : undefined,
-        handle: typeof w.handle === 'string' ? w.handle : undefined
-      }
-      setForeground(row)
-      setHistory((prev) => [row, ...prev].slice(0, 60))
-      break
-    }
-  }, [events])
+  }, [collecting])
 
   const sortedProcesses = useMemo(() => {
     const rows = [...processes]
@@ -174,11 +146,11 @@ export function TaskWindowsWatcherMenu(props: { kind: string }) {
   }, [processes, sortKey])
 
   const start = () => {
-    postCommand('watcher.start', { intervalMs }).catch(() => undefined)
+    setCollecting(true)
   }
 
   const stop = () => {
-    postCommand('watcher.stop').catch(() => undefined)
+    setCollecting(false)
   }
 
   return (
@@ -190,20 +162,20 @@ export function TaskWindowsWatcherMenu(props: { kind: string }) {
       transition={reduceMotion ? undefined : { duration: 0.18, ease: [0.2, 0.8, 0.2, 1] }}
     >
       <div ref={cardRef} className="subwindowCard animate-ls-pop-in">
-        <div ref={measureRef} className="subwindowMeasure">
+        <div className="subwindowMeasure">
           <div className="subwindowTitle">
             <span>监视器</span>
-            <span className="subwindowMeta">{running ? '运行中' : '已停止'}</span>
+            <span className="subwindowMeta">{collecting ? '展示中' : '已暂停'}</span>
           </div>
 
           <div className="twRow">
-            <Button size="sm" variant={running ? 'light' : 'default'} onClick={start}>
-              开始
+            <Button size="sm" variant={collecting ? 'light' : 'default'} onClick={start}>
+              开启展示
             </Button>
-            <Button size="sm" variant={!running ? 'light' : 'default'} onClick={stop}>
-              停止
+            <Button size="sm" variant={!collecting ? 'light' : 'default'} onClick={stop}>
+              暂停展示
             </Button>
-            <span className="subwindowMeta">间隔 {intervalMs}ms</span>
+            <span className="subwindowMeta">{running ? `采样中 ${intervalMs}ms` : '采样状态未知'}</span>
             <span className="subwindowMeta">{lastError ? `错误: ${lastError}` : ''}</span>
           </div>
 

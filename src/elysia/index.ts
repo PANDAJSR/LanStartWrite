@@ -237,14 +237,18 @@ async function handleCommand(command: string, payload: unknown): Promise<Command
     }
 
     if (scope === 'watcher') {
-      if (action === 'start') {
+      if (action === 'openWindow') {
+        requestMain({ type: 'OPEN_WATCHER_WINDOW' })
+        return { ok: true }
+      }
+
+      if (action === 'setInterval' || action === 'start') {
         const intervalMs = Number((payload as any)?.intervalMs)
         requestMain({ type: 'START_TASK_WATCHER', intervalMs: Number.isFinite(intervalMs) ? intervalMs : undefined })
         return { ok: true }
       }
 
       if (action === 'stop') {
-        requestMain({ type: 'STOP_TASK_WATCHER' })
         return { ok: true }
       }
 
@@ -540,8 +544,8 @@ const api = new Elysia({ adapter: node() })
         commands: 'POST /commands'
       },
       commands: [
-        { command: 'watcher.start', payload: { intervalMs: 'number?' } },
-        { command: 'watcher.stop', payload: {} }
+        { command: 'watcher.openWindow', payload: {} },
+        { command: 'watcher.setInterval', payload: { intervalMs: 'number?' } }
       ],
       subscription: {
         poll: {

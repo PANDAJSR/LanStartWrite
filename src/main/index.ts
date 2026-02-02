@@ -14,6 +14,7 @@ const WINDOW_ID_FLOATING_TOOLBAR = '浮动工具栏'
 const WINDOW_ID_FLOATING_TOOLBAR_HANDLE = 'floating-toolbar-handle'
 const WINDOW_TITLE_FLOATING_TOOLBAR = '浮动工具栏'
 const WINDOW_ID_TOOLBAR_SUBWINDOW = 'toolbar-subwindow'
+const WINDOW_ID_WATCHER = 'watcher'
 const TOOLBAR_HANDLE_GAP = 10
 const TOOLBAR_HANDLE_WIDTH = 30
 const APPEARANCE_KV_KEY = 'app-appearance'
@@ -93,6 +94,7 @@ function applyAppearance(appearance: Appearance): void {
 let floatingToolbarWindow: BrowserWindow | undefined
 let floatingToolbarHandleWindow: BrowserWindow | undefined
 let paintBoardWindow: BrowserWindow | undefined
+let watcherWindow: BrowserWindow | undefined
 let taskWatcher: TaskWindowsWatcher | undefined
 let syncingToolbarPair = false
 const toolbarSubwindows = new Map<
@@ -115,6 +117,21 @@ function sendToBackend(message: unknown): void {
   } catch {
     return
   }
+}
+
+function ensureTaskWatcherStarted(intervalMs?: number): void {
+  const nextInterval = Number.isFinite(intervalMs ?? NaN) ? Number(intervalMs) : undefined
+  if (!taskWatcher) {
+    const adapter = createTaskWatcherAdapter()
+    taskWatcher = new TaskWindowsWatcher({
+      adapter,
+      emit: (msg) => {
+        sendToBackend(msg)
+      },
+      defaultIntervalMs: nextInterval ?? 1000
+    })
+  }
+  taskWatcher.start(nextInterval)
 }
 
 function getDevServerUrl(): string | undefined {
@@ -331,6 +348,36 @@ function createChildWindow(): BrowserWindow {
     if (process.env.LANSTART_OPEN_DEVTOOLS === '1') win.webContents.openDevTools({ mode: 'detach' })
   } else {
     win.loadFile(join(__dirname, '../renderer/index.html'), { query: { window: 'child' } })
+  }
+
+  return win
+}
+
+function createWatcherWindow(): BrowserWindow {
+  const win = new BrowserWindow({
+    width: 980,
+    height: 720,
+    resizable: true,
+    title: '系统监视器',
+    backgroundColor: surfaceBackgroundColor(currentAppearance),
+    backgroundMaterial: 'mica',
+    webPreferences: {
+      preload: join(__dirname, '../preload/index.js'),
+      contextIsolation: true,
+      nodeIntegration: false
+    }
+  })
+
+  applyWindowsBackdrop(win)
+  wireWindowDebug(win, 'watcher-window')
+  wireWindowStatus(win, WINDOW_ID_WATCHER)
+
+  const devUrl = getDevServerUrl()
+  if (devUrl) {
+    win.loadURL(`${devUrl}?window=${encodeURIComponent(WINDOW_ID_WATCHER)}`)
+    if (process.env.LANSTART_OPEN_DEVTOOLS === '1') win.webContents.openDevTools({ mode: 'detach' })
+  } else {
+    win.loadFile(join(__dirname, '../renderer/index.html'), { query: { window: WINDOW_ID_WATCHER } })
   }
 
   return win
@@ -729,6 +776,22 @@ function handleBackendControlMessage(message: any): void {
     return
   }
 
+  if (message.type === 'OPEN_WATCHER_WINDOW') {
+    const existing = watcherWindow
+    if (existing && !existing.isDestroyed()) {
+      existing.show()
+      existing.focus()
+      return
+    }
+    const win = createWatcherWindow()
+    watcherWindow = win
+    win.once('ready-to-show', () => win.show())
+    win.on('closed', () => {
+      if (watcherWindow === win) watcherWindow = undefined
+    })
+    return
+  }
+
   if (message.type === 'SET_APP_MODE') {
     const modeRaw = String((message as any).mode ?? '')
     const mode = modeRaw === 'whiteboard' ? 'whiteboard' : 'toolbar'
@@ -808,22 +871,11 @@ function handleBackendControlMessage(message: any): void {
 
   if (message.type === 'START_TASK_WATCHER') {
     const intervalMs = Number((message as any).intervalMs)
-    if (!taskWatcher) {
-      const adapter = createTaskWatcherAdapter()
-      taskWatcher = new TaskWindowsWatcher({
-        adapter,
-        emit: (msg) => {
-          sendToBackend(msg)
-        },
-        defaultIntervalMs: Number.isFinite(intervalMs) ? intervalMs : 1000
-      })
-    }
-    taskWatcher.start(Number.isFinite(intervalMs) ? intervalMs : undefined)
+    ensureTaskWatcherStarted(Number.isFinite(intervalMs) ? intervalMs : undefined)
     return
   }
 
   if (message.type === 'STOP_TASK_WATCHER') {
-    taskWatcher?.stop()
     return
   }
 
@@ -1017,6 +1069,7 @@ app
       applyAppearance(currentAppearance)
     })
     sendToBackend({ type: 'PROCESS_STATUS', name: 'main', status: 'ready', pid: process.pid, ts: Date.now() })
+    ensureTaskWatcherStarted()
     const win = createFloatingToolbarWindow()
     floatingToolbarWindow = win
     const handle = createFloatingToolbarHandleWindow(win)
