@@ -145,6 +145,18 @@ function FloatingToolbarInner() {
     setState({ ...state, expanded: !isExpanded })
   }
 
+  // 处理笔按钮点击
+  const handlePenClick = () => {
+    if (tool === 'pen') {
+      // 如果笔已经是当前工具，打开二级菜单（独立窗口）
+      void postCommand('toggle-subwindow', { kind: 'pen', placement: 'bottom' })
+    } else {
+      // 否则切换到笔工具
+      setState({ ...state, tool: 'pen' })
+      void postCommand('app.setTool', { tool: 'pen' })
+    }
+  }
+
   return (
     <motion.div
       ref={rootRef}
@@ -175,11 +187,8 @@ function FloatingToolbarInner() {
                 size={uiButtonSize}
                 variant={tool === 'pen' ? 'light' : 'default'}
                 ariaLabel="笔"
-                title="笔"
-                onClick={() => {
-                  setState({ ...state, tool: 'pen' })
-                  void postCommand('app.setTool', { tool: 'pen' })
-                }}
+                title={tool === 'pen' ? '笔（再次点击打开设置）' : '笔'}
+                onClick={handlePenClick}
               >
                 <ToolbarToolIcon kind="pen" />
               </Button>
