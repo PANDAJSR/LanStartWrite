@@ -58,10 +58,10 @@ export function useHyperGlassRealtimeBlur(options: {
 
     const update = async () => {
       if (inFlight) return
-      const x = Math.round(window.screenX)
-      const y = Math.round(window.screenY)
-      const w = Math.round(window.outerWidth)
-      const h = Math.round(window.outerHeight)
+      const x = window.screenX
+      const y = window.screenY
+      const w = window.outerWidth
+      const h = window.outerHeight
       const moved = x !== lastX || y !== lastY || w !== lastW || h !== lastH
 
       lastX = x

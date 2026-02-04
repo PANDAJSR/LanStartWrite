@@ -1,10 +1,54 @@
 import React from 'react'
 import { motion } from '../../Framer_Motion'
+import { useAppAppearance } from '../../status'
+import { Button } from '../../button'
 import type { SettingsTab } from '../types'
 import './SettingsContent.css'
 
 interface SettingsContentProps {
   activeTab: SettingsTab
+}
+
+// 外观设置组件
+function AppearanceSettings() {
+  const { appearance, setAppearance } = useAppAppearance()
+
+  return (
+    <div className="settingsContentSection">
+      <h2 className="settingsContentTitle">外观</h2>
+      <p className="settingsContentDescription">选择您喜欢的主题外观</p>
+
+      <div className="settingsAppearanceOptions">
+        <button
+          className={`settingsAppearanceCard ${appearance === 'light' ? 'settingsAppearanceCard--active' : ''}`}
+          onClick={() => setAppearance('light')}
+        >
+          <div className="settingsAppearancePreview settingsAppearancePreview--light">
+            <div className="settingsAppearancePreviewHeader" />
+            <div className="settingsAppearancePreviewContent">
+              <div className="settingsAppearancePreviewSidebar" />
+              <div className="settingsAppearancePreviewMain" />
+            </div>
+          </div>
+          <span className="settingsAppearanceLabel">浅色</span>
+        </button>
+
+        <button
+          className={`settingsAppearanceCard ${appearance === 'dark' ? 'settingsAppearanceCard--active' : ''}`}
+          onClick={() => setAppearance('dark')}
+        >
+          <div className="settingsAppearancePreview settingsAppearancePreview--dark">
+            <div className="settingsAppearancePreviewHeader" />
+            <div className="settingsAppearancePreviewContent">
+              <div className="settingsAppearancePreviewSidebar" />
+              <div className="settingsAppearancePreviewMain" />
+            </div>
+          </div>
+          <span className="settingsAppearanceLabel">深色</span>
+        </button>
+      </div>
+    </div>
+  )
 }
 
 // 各选项卡的内容占位组件
@@ -141,6 +185,7 @@ function AboutSettings() {
 }
 
 const contentComponents: Record<SettingsTab, React.FC> = {
+  appearance: AppearanceSettings,
   toolbar: ToolbarSettings,
   'feature-panel': FeaturePanelSettings,
   annotation: AnnotationSettings,

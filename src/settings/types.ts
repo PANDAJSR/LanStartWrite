@@ -1,4 +1,5 @@
 export type SettingsTab =
+  | 'appearance'
   | 'toolbar'
   | 'feature-panel'
   | 'annotation'

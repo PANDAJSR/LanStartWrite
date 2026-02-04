@@ -5,6 +5,19 @@ import './SettingsSidebar.css'
 
 // Fluent 风格图标
 const TabIcons: Record<SettingsTab, React.ReactNode> = {
+  appearance: (
+    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.5">
+      <circle cx="12" cy="12" r="5" />
+      <path d="M12 1v2" />
+      <path d="M12 21v2" />
+      <path d="M4.22 4.22l1.42 1.42" />
+      <path d="M18.36 18.36l1.42 1.42" />
+      <path d="M1 12h2" />
+      <path d="M21 12h2" />
+      <path d="M4.22 19.78l1.42-1.42" />
+      <path d="M18.36 5.64l1.42-1.42" />
+    </svg>
+  ),
   toolbar: (
     <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.5">
       <rect x="3" y="4" width="18" height="16" rx="2" />
@@ -47,6 +60,7 @@ const TabIcons: Record<SettingsTab, React.ReactNode> = {
 }
 
 const tabs: SettingsTabItem[] = [
+  { id: 'appearance', label: '外观', icon: TabIcons.appearance },
   { id: 'toolbar', label: '浮动工具栏', icon: TabIcons.toolbar },
   { id: 'feature-panel', label: '功能面板', icon: TabIcons['feature-panel'] },
   { id: 'annotation', label: '批注系统', icon: TabIcons.annotation },

@@ -144,11 +144,18 @@ function getDevServerUrl(): string | undefined {
   return undefined
 }
 
-function adjustWindowForDPI(win: BrowserWindow, baseWidth: number, baseHeight: number): void {
+function getDisplayScaleFactor(win: BrowserWindow): number {
   const display = screen.getDisplayMatching(win.getBounds())
-  const width = Math.max(1, Math.min(display.workAreaSize.width, Math.round(baseWidth)))
-  const height = Math.max(1, Math.min(display.workAreaSize.height, Math.round(baseHeight)))
-  win.setSize(width, height)
+  return display.scaleFactor
+}
+
+function adjustWindowForDPI(win: BrowserWindow, baseWidth: number, baseHeight: number): void {
+  const scaleFactor = getDisplayScaleFactor(win)
+  if (scaleFactor !== 1) {
+    const scaledWidth = Math.round(baseWidth * scaleFactor)
+    const scaledHeight = Math.round(baseHeight * scaleFactor)
+    win.setSize(scaledWidth, scaledHeight)
+  }
 }
 
 const appWindowsManager = new AppWindowsManager({
@@ -332,7 +339,7 @@ function createFloatingToolbarHandleWindow(owner: BrowserWindow): BrowserWindow 
     const nextY = handleBounds.y
     if (nextX === toolbarBounds.x && nextY === toolbarBounds.y) return
     syncingToolbarPair = true
-    toolbar.setPosition(nextX, nextY, false)
+    toolbar.setBounds({ ...toolbarBounds, x: nextX, y: nextY }, false)
     setTimeout(() => {
       syncingToolbarPair = false
     }, 0)
@@ -509,7 +516,7 @@ function repositionToolbarSubwindows(animate: boolean) {
   const workArea = display.workArea
 
   const handle = floatingToolbarHandleWindow
-  if (handle && !handle.isDestroyed()) {
+  if (handle && !handle.isDestroyed() && handle.isVisible()) {
     const next = {
       x: ownerBounds.x + ownerBounds.width + TOOLBAR_HANDLE_GAP,
       y: ownerBounds.y,
@@ -525,12 +532,7 @@ function repositionToolbarSubwindows(animate: boolean) {
     ) {
       if (!syncingToolbarPair) {
         syncingToolbarPair = true
-        if (current.x !== next.x || current.y !== next.y) {
-          handle.setPosition(next.x, next.y, false)
-        }
-        if (current.width !== next.width || current.height !== next.height) {
-          handle.setSize(next.width, next.height, false)
-        }
+        handle.setBounds(next, false)
         setTimeout(() => {
           syncingToolbarPair = false
         }, 0)
