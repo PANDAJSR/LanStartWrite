@@ -3,6 +3,7 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { platform } from 'node:process'
+import { AppWindowsManager } from '../app_windows_manerger'
 import { createTaskWatcherAdapter } from '../system_different_code'
 import { TaskWindowsWatcher } from '../task_windows_watcher/TaskWindowsWatcher'
 
@@ -95,8 +96,6 @@ function applyAppearance(appearance: Appearance): void {
 let floatingToolbarWindow: BrowserWindow | undefined
 let floatingToolbarHandleWindow: BrowserWindow | undefined
 let paintBoardWindow: BrowserWindow | undefined
-let watcherWindow: BrowserWindow | undefined
-let settingsWindow: BrowserWindow | undefined
 let taskWatcher: TaskWindowsWatcher | undefined
 let syncingToolbarPair = false
 const toolbarSubwindows = new Map<
@@ -144,6 +143,36 @@ function getDevServerUrl(): string | undefined {
   if (!app.isPackaged) return 'http://localhost:5173/'
   return undefined
 }
+
+function getDisplayScaleFactor(win: BrowserWindow): number {
+  const display = screen.getDisplayMatching(win.getBounds())
+  return display.scaleFactor
+}
+
+function adjustWindowForDPI(win: BrowserWindow, baseWidth: number, baseHeight: number): void {
+  const scaleFactor = getDisplayScaleFactor(win)
+  if (scaleFactor !== 1) {
+    const scaledWidth = Math.round(baseWidth * scaleFactor)
+    const scaledHeight = Math.round(baseHeight * scaleFactor)
+    win.setSize(scaledWidth, scaledHeight)
+  }
+}
+
+const appWindowsManager = new AppWindowsManager({
+  preloadPath: join(__dirname, '../preload/index.js'),
+  rendererHtmlPath: join(__dirname, '../renderer/index.html'),
+  getDevServerUrl,
+  getAppearance: () => currentAppearance,
+  surfaceBackgroundColor,
+  applyWindowsBackdrop,
+  wireWindowDebug,
+  wireWindowStatus,
+  adjustWindowForDPI,
+  sendToBackend,
+  ensureTaskWatcherStarted,
+})
+
+appWindowsManager.registerIpcHandlers({ ipcMain, requestBackendRpc, coerceString })
 
 function wireWindowDebug(win: BrowserWindow, name: string): void {
   win.webContents.on('did-fail-load', (_e, errorCode, errorDescription, validatedURL) => {
@@ -323,125 +352,6 @@ function createFloatingToolbarHandleWindow(owner: BrowserWindow): BrowserWindow 
     if (process.env.LANSTART_OPEN_DEVTOOLS === '1') win.webContents.openDevTools({ mode: 'detach' })
   } else {
     win.loadFile(join(__dirname, '../renderer/index.html'), { query: { window: WINDOW_ID_FLOATING_TOOLBAR_HANDLE } })
-  }
-
-  return win
-}
-
-function createChildWindow(): BrowserWindow {
-  const win = new BrowserWindow({
-    width: 420,
-    height: 260,
-    resizable: true,
-    title: 'LanStart Window',
-    backgroundColor: surfaceBackgroundColor(currentAppearance),
-    backgroundMaterial: 'mica',
-    webPreferences: {
-      preload: join(__dirname, '../preload/index.js'),
-      contextIsolation: true,
-      nodeIntegration: false
-    }
-  })
-
-  applyWindowsBackdrop(win)
-  wireWindowDebug(win, 'child-window')
-  wireWindowStatus(win, 'child')
-  const devUrl = getDevServerUrl()
-  if (devUrl) {
-    win.loadURL(`${devUrl}?window=child`)
-    if (process.env.LANSTART_OPEN_DEVTOOLS === '1') win.webContents.openDevTools({ mode: 'detach' })
-  } else {
-    win.loadFile(join(__dirname, '../renderer/index.html'), { query: { window: 'child' } })
-  }
-
-  return win
-}
-
-function createWatcherWindow(): BrowserWindow {
-  const win = new BrowserWindow({
-    width: 980,
-    height: 720,
-    resizable: true,
-    title: '系统监视器',
-    backgroundColor: surfaceBackgroundColor(currentAppearance),
-    backgroundMaterial: 'mica',
-    webPreferences: {
-      preload: join(__dirname, '../preload/index.js'),
-      contextIsolation: true,
-      nodeIntegration: false
-    }
-  })
-
-  applyWindowsBackdrop(win)
-  wireWindowDebug(win, 'watcher-window')
-  wireWindowStatus(win, WINDOW_ID_WATCHER)
-
-  const devUrl = getDevServerUrl()
-  if (devUrl) {
-    win.loadURL(`${devUrl}?window=${encodeURIComponent(WINDOW_ID_WATCHER)}`)
-    if (process.env.LANSTART_OPEN_DEVTOOLS === '1') win.webContents.openDevTools({ mode: 'detach' })
-  } else {
-    win.loadFile(join(__dirname, '../renderer/index.html'), { query: { window: WINDOW_ID_WATCHER } })
-  }
-
-  return win
-}
-
-function getOrCreateSettingsWindow(): BrowserWindow {
-  const existing = settingsWindow
-  if (existing && !existing.isDestroyed()) {
-    existing.show()
-    existing.focus()
-    return existing
-  }
-
-  const { width: screenWidth, height: screenHeight } = screen.getPrimaryDisplay().workAreaSize
-  const winWidth = 800
-  const winHeight = 500
-
-  const win = new BrowserWindow({
-    width: winWidth,
-    height: winHeight,
-    x: Math.round((screenWidth - winWidth) / 2),
-    y: Math.round((screenHeight - winHeight) / 2),
-    title: '设置',
-    resizable: true,
-    minimizable: true,
-    maximizable: false,
-    fullscreenable: false,
-    show: false,
-    frame: false,
-    transparent: true,
-    backgroundMaterial: 'mica',
-    backgroundColor: surfaceBackgroundColor(currentAppearance),
-    webPreferences: {
-      preload: join(__dirname, '../preload/index.js'),
-      sandbox: false,
-      contextIsolation: true,
-      nodeIntegration: false,
-    },
-  })
-
-  settingsWindow = win
-
-  win.once('ready-to-show', () => {
-    win.show()
-  })
-
-  win.on('closed', () => {
-    settingsWindow = undefined
-  })
-
-  applyWindowsBackdrop(win)
-  wireWindowDebug(win, 'settings-window')
-  wireWindowStatus(win, WINDOW_ID_SETTINGS_WINDOW)
-
-  const devUrl = getDevServerUrl()
-  if (devUrl) {
-    win.loadURL(`${devUrl}?window=${encodeURIComponent(WINDOW_ID_SETTINGS_WINDOW)}`)
-    if (process.env.LANSTART_OPEN_DEVTOOLS === '1') win.webContents.openDevTools({ mode: 'detach' })
-  } else {
-    win.loadFile(join(__dirname, '../renderer/index.html'), { query: { window: WINDOW_ID_SETTINGS_WINDOW } })
   }
 
   return win
@@ -868,33 +778,7 @@ function handleBackendControlMessage(message: any): void {
     return
   }
 
-  if (message.type === 'CREATE_WINDOW') {
-    const win = createChildWindow()
-    win.once('ready-to-show', () => win.show())
-    sendToBackend({ type: 'WINDOW_CREATED', window: 'child' })
-    return
-  }
-
-  if (message.type === 'OPEN_WATCHER_WINDOW') {
-    const existing = watcherWindow
-    if (existing && !existing.isDestroyed()) {
-      existing.show()
-      existing.focus()
-      return
-    }
-    const win = createWatcherWindow()
-    watcherWindow = win
-    win.once('ready-to-show', () => win.show())
-    win.on('closed', () => {
-      if (watcherWindow === win) watcherWindow = undefined
-    })
-    return
-  }
-
-  if (message.type === 'OPEN_SETTINGS_WINDOW') {
-    getOrCreateSettingsWindow()
-    return
-  }
+  if (appWindowsManager.handleBackendControlMessage(message)) return
 
   if (message.type === 'SET_APP_MODE') {
     const modeRaw = String((message as any).mode ?? '')
@@ -971,16 +855,6 @@ function handleBackendControlMessage(message: any): void {
     const nextHeight = Math.max(1, Math.min(600, Math.round(height)))
     win.setBounds({ ...bounds, width: nextWidth, height: nextHeight }, false)
     scheduleRepositionToolbarSubwindows('resize')
-    return
-  }
-
-  if (message.type === 'START_TASK_WATCHER') {
-    const intervalMs = Number((message as any).intervalMs)
-    ensureTaskWatcherStarted(Number.isFinite(intervalMs) ? intervalMs : undefined)
-    return
-  }
-
-  if (message.type === 'STOP_TASK_WATCHER') {
     return
   }
 
@@ -1091,65 +965,6 @@ function startBackend(): void {
     process.stderr.write(chunk)
   })
 }
-
-ipcMain.handle('lanstart:postCommand', async (_event, input: { command?: unknown; payload?: unknown }) => {
-  const command = coerceString(input?.command)
-  if (!command) throw new Error('BAD_COMMAND')
-  await requestBackendRpc('postCommand', { command, payload: input?.payload })
-  return null
-})
-
-ipcMain.handle('lanstart:getEvents', async (_event, input: { since?: unknown }) => {
-  const since = Number(input?.since ?? 0)
-  const res = (await requestBackendRpc('getEvents', { since })) as { items?: unknown; latest?: unknown }
-  return {
-    items: Array.isArray(res?.items) ? res.items : [],
-    latest: Number(res?.latest ?? since)
-  }
-})
-
-ipcMain.handle('lanstart:getKv', async (_event, input: { key?: unknown }) => {
-  const key = coerceString(input?.key)
-  if (!key) throw new Error('BAD_KEY')
-  return await requestBackendRpc('getKv', { key })
-})
-
-ipcMain.handle('lanstart:putKv', async (_event, input: { key?: unknown; value?: unknown }) => {
-  const key = coerceString(input?.key)
-  if (!key) throw new Error('BAD_KEY')
-  await requestBackendRpc('putKv', { key, value: input?.value })
-  return null
-})
-
-ipcMain.handle('lanstart:getUiState', async (_event, input: { windowId?: unknown }) => {
-  const windowId = coerceString(input?.windowId)
-  if (!windowId) throw new Error('BAD_WINDOW_ID')
-  return await requestBackendRpc('getUiState', { windowId })
-})
-
-ipcMain.handle('lanstart:putUiStateKey', async (_event, input: { windowId?: unknown; key?: unknown; value?: unknown }) => {
-  const windowId = coerceString(input?.windowId)
-  const key = coerceString(input?.key)
-  if (!windowId || !key) throw new Error('BAD_UI_STATE_KEY')
-  await requestBackendRpc('putUiStateKey', { windowId, key, value: input?.value })
-  return null
-})
-
-ipcMain.handle('lanstart:deleteUiStateKey', async (_event, input: { windowId?: unknown; key?: unknown }) => {
-  const windowId = coerceString(input?.windowId)
-  const key = coerceString(input?.key)
-  if (!windowId || !key) throw new Error('BAD_UI_STATE_KEY')
-  await requestBackendRpc('deleteUiStateKey', { windowId, key })
-  return null
-})
-
-ipcMain.handle('lanstart:apiRequest', async (_event, input: { method?: unknown; path?: unknown; body?: unknown }) => {
-  const method = coerceString(input?.method).toUpperCase() || 'GET'
-  const path = coerceString(input?.path)
-  if (!path.startsWith('/')) throw new Error('BAD_PATH')
-  const res = (await requestBackendRpc('apiRequest', { method, path, body: input?.body })) as { status?: unknown; body?: unknown }
-  return { status: Number(res?.status ?? 200), body: (res as any)?.body }
-})
 
 app
   .whenReady()
