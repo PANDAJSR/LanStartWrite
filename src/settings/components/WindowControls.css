@@ -1,0 +1,56 @@
+/* 窗口控制按钮样式 */
+
+.windowControls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  position: absolute;
+  top: 0;
+  right: 0;
+  z-index: 100;
+}
+
+.windowControlButton {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--ls-surface-fg, rgba(12, 12, 12, 0.6));
+  transition: all 0.2s ease;
+}
+
+.windowControlButton:hover {
+  background: rgba(0, 0, 0, 0.06);
+  color: var(--ls-surface-fg, rgba(12, 12, 12, 0.9));
+}
+
+.windowControlButton--close:hover {
+  background: #ef4444;
+  color: white;
+}
+
+.windowControlButton svg {
+  width: 14px;
+  height: 14px;
+}
+
+/* 深色主题适配 */
+:root[data-appearance='dark'] .windowControlButton {
+  color: rgba(255, 255, 255, 0.6);
+}
+
+:root[data-appearance='dark'] .windowControlButton:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: rgba(255, 255, 255, 0.9);
+}
+
+:root[data-appearance='dark'] .windowControlButton--close:hover {
+  background: #ef4444;
+  color: white;
+}

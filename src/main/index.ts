@@ -144,18 +144,11 @@ function getDevServerUrl(): string | undefined {
   return undefined
 }
 
-function getDisplayScaleFactor(win: BrowserWindow): number {
-  const display = screen.getDisplayMatching(win.getBounds())
-  return display.scaleFactor
-}
-
 function adjustWindowForDPI(win: BrowserWindow, baseWidth: number, baseHeight: number): void {
-  const scaleFactor = getDisplayScaleFactor(win)
-  if (scaleFactor !== 1) {
-    const scaledWidth = Math.round(baseWidth * scaleFactor)
-    const scaledHeight = Math.round(baseHeight * scaleFactor)
-    win.setSize(scaledWidth, scaledHeight)
-  }
+  const display = screen.getDisplayMatching(win.getBounds())
+  const width = Math.max(1, Math.min(display.workAreaSize.width, Math.round(baseWidth)))
+  const height = Math.max(1, Math.min(display.workAreaSize.height, Math.round(baseHeight)))
+  win.setSize(width, height)
 }
 
 const appWindowsManager = new AppWindowsManager({

@@ -4,6 +4,7 @@ import { useHyperGlassRealtimeBlur } from '../hyper_glass'
 import { postCommand } from '../toolbar/hooks/useBackend'
 import { SettingsSidebar } from './components/SettingsSidebar'
 import { SettingsContent } from './components/SettingsContent'
+import { WindowControls } from './components/WindowControls'
 import type { SettingsTab } from './types'
 import './SettingsWindow.css'
 
@@ -67,6 +68,7 @@ export function SettingsWindow() {
       animate={reduceMotion ? undefined : { opacity: 1, y: 0, scale: 1 }}
       transition={reduceMotion ? undefined : { duration: 0.18, ease: [0.2, 0.8, 0.2, 1] }}
     >
+      <WindowControls />
       <div ref={cardRef} className="settingsWindowCard animate-ls-pop-in">
         <div ref={measureRef} className="settingsWindowMeasure">
           <SettingsSidebar activeTab={activeTab} onTabChange={setActiveTab} />

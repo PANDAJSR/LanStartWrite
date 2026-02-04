@@ -102,15 +102,6 @@ export function SettingsSidebar({ activeTab, onTabChange }: SettingsSidebarProps
           >
             <span className="settingsSidebarTabIcon">{tab.icon}</span>
             <span className="settingsSidebarTabLabel">{tab.label}</span>
-            
-            {/* 选中指示器 */}
-            {activeTab === tab.id && (
-              <motion.div
-                className="settingsSidebarTabIndicator"
-                layoutId="activeTabIndicator"
-                transition={{ type: 'spring', stiffness: 500, damping: 30 }}
-              />
-            )}
           </motion.button>
         ))}
       </nav>

@@ -232,6 +232,16 @@ async function handleCommand(command: string, payload: unknown): Promise<Command
         return { ok: true }
       }
 
+      if (action === 'minimizeSettingsWindow') {
+        requestMain({ type: 'MINIMIZE_SETTINGS_WINDOW' })
+        return { ok: true }
+      }
+
+      if (action === 'closeSettingsWindow') {
+        requestMain({ type: 'CLOSE_SETTINGS_WINDOW' })
+        return { ok: true }
+      }
+
       return { ok: false, error: 'UNKNOWN_COMMAND' }
     }
 
