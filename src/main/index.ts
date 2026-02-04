@@ -332,7 +332,7 @@ function createFloatingToolbarHandleWindow(owner: BrowserWindow): BrowserWindow 
     const nextY = handleBounds.y
     if (nextX === toolbarBounds.x && nextY === toolbarBounds.y) return
     syncingToolbarPair = true
-    toolbar.setBounds({ ...toolbarBounds, x: nextX, y: nextY }, false)
+    toolbar.setPosition(nextX, nextY, false)
     setTimeout(() => {
       syncingToolbarPair = false
     }, 0)
@@ -509,7 +509,7 @@ function repositionToolbarSubwindows(animate: boolean) {
   const workArea = display.workArea
 
   const handle = floatingToolbarHandleWindow
-  if (handle && !handle.isDestroyed() && handle.isVisible()) {
+  if (handle && !handle.isDestroyed()) {
     const next = {
       x: ownerBounds.x + ownerBounds.width + TOOLBAR_HANDLE_GAP,
       y: ownerBounds.y,
@@ -525,7 +525,12 @@ function repositionToolbarSubwindows(animate: boolean) {
     ) {
       if (!syncingToolbarPair) {
         syncingToolbarPair = true
-        handle.setBounds(next, false)
+        if (current.x !== next.x || current.y !== next.y) {
+          handle.setPosition(next.x, next.y, false)
+        }
+        if (current.width !== next.width || current.height !== next.height) {
+          handle.setSize(next.width, next.height, false)
+        }
         setTimeout(() => {
           syncingToolbarPair = false
         }, 0)
