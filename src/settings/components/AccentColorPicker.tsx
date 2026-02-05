@@ -24,21 +24,21 @@ export type AccentColor = {
 
 export const PRESET_ACCENT_COLORS: AccentColor[] = [
   {
-    name: '蓝色',
+    name: '黑白',
     value: 'blue',
     light: {
-      primary: '#3b82f6',
-      primaryHover: '#2563eb',
-      primaryActive: '#1d4ed8',
-      primaryLight: 'rgba(59, 130, 246, 0.15)',
-      gradient: 'linear-gradient(135deg, #3b82f6 0%, #2563eb 100%)',
+      primary: '#1a1a1a',
+      primaryHover: '#000000',
+      primaryActive: '#000000',
+      primaryLight: 'rgba(0, 0, 0, 0.1)',
+      gradient: 'linear-gradient(135deg, #2a2a2a 0%, #1a1a1a 100%)',
     },
     dark: {
-      primary: '#60a5fa',
-      primaryHover: '#3b82f6',
-      primaryActive: '#2563eb',
-      primaryLight: 'rgba(96, 165, 250, 0.2)',
-      gradient: 'linear-gradient(135deg, #60a5fa 0%, #3b82f6 100%)',
+      primary: '#f5f5f5',
+      primaryHover: '#ffffff',
+      primaryActive: '#ffffff',
+      primaryLight: 'rgba(255, 255, 255, 0.15)',
+      gradient: 'linear-gradient(135deg, #ffffff 0%, #e5e5e5 100%)',
     },
   },
   {

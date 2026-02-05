@@ -37,7 +37,7 @@ function ChildWindow() {
   return (
     <div className="childRoot">
       <div className="childHeader">
-        <div className="childTitle">子窗口</div>
+        <div className="childTitle">数据库</div>
         <div className="childMeta">backend: {health}</div>
       </div>
 

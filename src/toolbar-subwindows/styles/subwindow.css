@@ -66,6 +66,13 @@ body {
   padding: 12px;
 }
 
+/* 事件菜单卡片专用样式 */
+.eventsMenuCard {
+  justify-content: flex-start;
+  align-items: stretch;
+  padding: 14px;
+}
+
 .subwindowMeasure {
   display: inline-block;
   width: fit-content;
@@ -99,6 +106,65 @@ body {
 .subwindowMeta {
   font-size: 11px;
   opacity: 0.65;
+}
+
+/* 事件菜单专用样式 */
+.eventsMenuMeasure {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  min-width: 280px;
+  max-width: 400px;
+}
+
+.eventsMenuTitle {
+  font-size: 13px;
+  font-weight: 600;
+  opacity: 0.95;
+  margin-bottom: 10px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--ls-surface-border);
+}
+
+.eventsMenuList {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.eventsMenuRow {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 12px;
+  opacity: 0.9;
+  padding: 6px 8px;
+  border-radius: 6px;
+  transition: background 0.15s ease;
+}
+
+.eventsMenuRow:hover {
+  background: var(--ls-accent-light);
+}
+
+.eventsMenuRow span:first-child {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-right: 12px;
+}
+
+.eventsMenuMeta {
+  font-size: 11px;
+  opacity: 0.65;
+  flex-shrink: 0;
 }
 
 .subwindowIconGrid {

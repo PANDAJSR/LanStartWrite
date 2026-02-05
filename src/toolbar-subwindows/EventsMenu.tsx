@@ -32,8 +32,9 @@ export function EventsMenu(props: { kind: string }) {
       const measureRect = measure?.getBoundingClientRect()
       const contentWidth = Math.max(measure?.scrollWidth ?? 0, measureRect?.width ?? 0)
       const contentHeight = Math.max(measure?.scrollHeight ?? 0, measureRect?.height ?? 0)
-      const width = Math.max(360, Math.min(1600, Math.ceil(contentWidth) + 26))
-      const height = Math.max(60, Math.min(900, Math.ceil(contentHeight) + 26))
+      // 限制窗口宽度 280-400px，高度根据内容自适应但最大 280px
+      const width = Math.max(280, Math.min(400, Math.ceil(contentWidth) + 24))
+      const height = Math.max(80, Math.min(280, Math.ceil(contentHeight) + 24))
       if (width === lastWidth && height === lastHeight) return
       lastWidth = width
       lastHeight = height
@@ -65,24 +66,24 @@ export function EventsMenu(props: { kind: string }) {
       animate={reduceMotion ? undefined : { opacity: 1, y: 0, scale: 1 }}
       transition={reduceMotion ? undefined : { duration: 0.18, ease: [0.2, 0.8, 0.2, 1] }}
     >
-      <div ref={cardRef} className="subwindowCard animate-ls-pop-in">
-        <div ref={measureRef} className="subwindowMeasure">
-          <div className="subwindowTitle">
+      <div ref={cardRef} className="subwindowCard animate-ls-pop-in eventsMenuCard">
+        <div ref={measureRef} className="eventsMenuMeasure">
+          <div className="eventsMenuTitle">
             <span>事件</span>
-            <span className="subwindowMeta">{events.length}</span>
+            <span className="eventsMenuMeta">{events.length}</span>
           </div>
 
-          <div className="subwindowList">
+          <div className="eventsMenuList">
             {events.slice(-8).map((e) => (
               <motion.div
                 key={e.id}
                 layout
-                className="subwindowRow"
+                className="eventsMenuRow"
                 initial={false}
                 transition={reduceMotion ? undefined : { duration: 0.18, ease: 'easeOut' }}
               >
                 <span>{e.type}</span>
-                <span className="subwindowMeta">#{e.id}</span>
+                <span className="eventsMenuMeta">#{e.id}</span>
               </motion.div>
             ))}
           </div>

@@ -1,5 +1,6 @@
 import React from 'react'
 import { motion } from '../../Framer_Motion'
+import type { Easing } from 'framer-motion'
 import './TransitionSettings.css'
 
 export type TransitionPreset = {
@@ -8,6 +9,17 @@ export type TransitionPreset = {
   duration: number
   easing: string
   description: string
+}
+
+function toMotionEase(easing: string): Easing {
+  const m = easing.match(/cubic-bezier\(\s*([-\d.]+)\s*,\s*([-\d.]+)\s*,\s*([-\d.]+)\s*,\s*([-\d.]+)\s*\)/i)
+  if (!m) return [0.4, 0, 0.2, 1]
+  const a = Number(m[1])
+  const b = Number(m[2])
+  const c = Number(m[3])
+  const d = Number(m[4])
+  if (![a, b, c, d].every((n) => Number.isFinite(n))) return [0.4, 0, 0.2, 1]
+  return [a, b, c, d]
 }
 
 export const TRANSITION_PRESETS: TransitionPreset[] = [
@@ -129,7 +141,7 @@ export function TransitionSettings({
                   }
                   transition={{
                     duration: preset.duration / 1000,
-                    ease: preset.easing,
+                    ease: toMotionEase(preset.easing),
                     repeat: transitionPreset === preset.value ? Infinity : 0,
                     repeatDelay: 0.5,
                   }}

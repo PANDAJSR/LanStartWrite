@@ -224,7 +224,7 @@ export class AppWindowsManager {
       width: 420,
       height: 260,
       resizable: true,
-      title: 'LanStart Window',
+      title: '数据库',
       backgroundColor: this.deps.surfaceBackgroundColor(appearance),
       backgroundMaterial: 'mica',
       webPreferences: {

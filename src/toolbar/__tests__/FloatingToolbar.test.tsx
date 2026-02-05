@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { FloatingToolbarApp } from '../FloatingToolbar'
+import { FeaturePanelMenu } from '../../toolbar-subwindows'
 
 describe('FloatingToolbar', () => {
   it('posts create-window command on click', async () => {
@@ -26,8 +27,8 @@ describe('FloatingToolbar', () => {
       getZoomLevel: () => 1
     }
 
-    render(<FloatingToolbarApp />)
-    await user.click(await screen.findByRole('button', { name: '新建窗口' }))
+    render(<FeaturePanelMenu kind="feature-panel" />)
+    await user.click(await screen.findByRole('button', { name: '数据库' }))
 
     expect(calls.length).toBeGreaterThan(0)
     expect(calls.map((c) => c.command)).toContain('create-window')
@@ -54,7 +55,7 @@ describe('FloatingToolbar', () => {
       getZoomLevel: () => 1
     }
 
-    render(<FloatingToolbarApp />)
+    render(<FeaturePanelMenu kind="feature-panel" />)
     await user.click(await screen.findByRole('button', { name: '事件' }))
 
     expect(calls.map((c) => c.command)).toContain('toggle-subwindow')
@@ -109,7 +110,7 @@ describe('FloatingToolbar', () => {
     const unhandled = vi.fn()
     window.addEventListener('unhandledrejection', unhandled as any)
 
-    render(<FloatingToolbarApp />)
+    render(<FeaturePanelMenu kind="feature-panel" />)
     await user.click(await screen.findByRole('button', { name: '退出' }))
     await new Promise((r) => setTimeout(r, 0))
 
