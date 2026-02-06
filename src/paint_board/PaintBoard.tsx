@@ -1,17 +1,13 @@
 import React from 'react'
 
-export function PaintBoardApp() {
+export function PaintBoardBackgroundApp() {
   return (
     <div
       style={{
         width: '100vw',
         height: '100vh',
-        background: '#ffffff',
-        display: 'flex',
-        justifyContent: 'center',
-        alignItems: 'center'
+        background: '#ffffff'
       }}
     />
   )
 }
-

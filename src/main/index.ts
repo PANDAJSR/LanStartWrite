@@ -159,7 +159,10 @@ function applyToolbarUiZoom(zoom: number): void {
 
 let floatingToolbarWindow: BrowserWindow | undefined
 let floatingToolbarHandleWindow: BrowserWindow | undefined
-let paintBoardWindow: BrowserWindow | undefined
+let whiteboardBackgroundWindow: BrowserWindow | undefined
+let annotationOverlayWindow: BrowserWindow | undefined
+let screenAnnotationOverlayWindow: BrowserWindow | undefined
+let closingWhiteboardWindows = false
 let taskWatcher: TaskWindowsWatcher | undefined
 let syncingToolbarPair = false
 const toolbarSubwindows = new Map<
@@ -771,7 +774,27 @@ function createPaintBoardWindow(): BrowserWindow {
     win.loadFile(join(__dirname, '../renderer/index.html'), { query: { window: 'paint-board' } })
   }
 
-  const raiseToolbar = () => {
+  const applyWhiteboardZOrder = () => {
+    const bg = whiteboardBackgroundWindow
+    if (bg && !bg.isDestroyed()) {
+      try {
+        bg.setAlwaysOnTop(true, 'normal')
+      } catch {}
+      try {
+        bg.moveTop()
+      } catch {}
+    }
+
+    const overlay = annotationOverlayWindow
+    if (overlay && !overlay.isDestroyed()) {
+      try {
+        overlay.setAlwaysOnTop(true, 'floating')
+      } catch {}
+      try {
+        overlay.moveTop()
+      } catch {}
+    }
+
     applyToolbarOnTopLevel('screen-saver')
   }
 
@@ -779,18 +802,187 @@ function createPaintBoardWindow(): BrowserWindow {
     try {
       win.setFullScreen(true)
     } catch {}
+    try {
+      win.setAlwaysOnTop(true, 'normal')
+    } catch {}
     win.show()
-    raiseToolbar()
+    applyWhiteboardZOrder()
   })
 
-  win.on('show', raiseToolbar)
-  win.on('focus', raiseToolbar)
-  win.on('enter-full-screen', raiseToolbar)
+  win.on('show', applyWhiteboardZOrder)
+  win.on('focus', applyWhiteboardZOrder)
+  win.on('enter-full-screen', applyWhiteboardZOrder)
 
   win.on('closed', () => {
-    if (paintBoardWindow === win) paintBoardWindow = undefined
+    if (whiteboardBackgroundWindow === win) whiteboardBackgroundWindow = undefined
+    if (!closingWhiteboardWindows) {
+      closingWhiteboardWindows = true
+      try {
+        if (annotationOverlayWindow && !annotationOverlayWindow.isDestroyed()) annotationOverlayWindow.close()
+      } finally {
+        annotationOverlayWindow = undefined
+        closingWhiteboardWindows = false
+      }
+    }
     requestBackendRpc('putUiStateKey', { windowId: 'app', key: 'mode', value: 'toolbar' }).catch(() => undefined)
     requestBackendRpc('putKv', { key: 'app-mode', value: 'toolbar' }).catch(() => undefined)
+    restoreToolbarAlwaysOnTopFromPersistedState()
+  })
+
+  return win
+}
+
+function createAnnotationOverlayWindow(ownerWindow: BrowserWindow): BrowserWindow {
+  const owner = floatingToolbarWindow
+  const ownerBounds = owner && !owner.isDestroyed() ? owner.getBounds() : screen.getPrimaryDisplay().bounds
+  const display = screen.getDisplayMatching(ownerBounds)
+  const bounds = display.bounds
+
+  const win = new BrowserWindow({
+    x: bounds.x,
+    y: bounds.y,
+    width: bounds.width,
+    height: bounds.height,
+    frame: false,
+    transparent: true,
+    resizable: false,
+    maximizable: false,
+    fullscreenable: true,
+    skipTaskbar: true,
+    parent: ownerWindow,
+    title: '批注层',
+    backgroundColor: '#00000000',
+    webPreferences: {
+      preload: join(__dirname, '../preload/index.js'),
+      contextIsolation: true,
+      nodeIntegration: false
+    }
+  })
+
+  wireWindowDebug(win, 'annotation-overlay')
+  wireWindowStatus(win, 'annotation-overlay')
+
+  const devUrl = getDevServerUrl()
+  if (devUrl) {
+    win.loadURL(`${devUrl}?window=${encodeURIComponent('paint-board')}&kind=${encodeURIComponent('annotation')}`)
+    if (process.env.LANSTART_OPEN_DEVTOOLS === '1') win.webContents.openDevTools({ mode: 'detach' })
+  } else {
+    win.loadFile(join(__dirname, '../renderer/index.html'), { query: { window: 'paint-board', kind: 'annotation' } })
+  }
+
+  const applyWhiteboardZOrder = () => {
+    const bg = whiteboardBackgroundWindow
+    if (bg && !bg.isDestroyed()) {
+      try {
+        bg.setAlwaysOnTop(true, 'normal')
+      } catch {}
+      try {
+        bg.moveTop()
+      } catch {}
+    }
+
+    const overlay = annotationOverlayWindow
+    if (overlay && !overlay.isDestroyed()) {
+      try {
+        overlay.setAlwaysOnTop(true, 'floating')
+      } catch {}
+      try {
+        overlay.moveTop()
+      } catch {}
+    }
+
+    applyToolbarOnTopLevel('screen-saver')
+  }
+
+  win.once('ready-to-show', () => {
+    try {
+      win.setFullScreen(true)
+    } catch {}
+    try {
+      win.setAlwaysOnTop(true, 'floating')
+    } catch {}
+    try {
+      win.setIgnoreMouseEvents(true, { forward: true })
+    } catch {}
+    win.show()
+    applyWhiteboardZOrder()
+  })
+
+  win.on('show', applyWhiteboardZOrder)
+  win.on('focus', applyWhiteboardZOrder)
+  win.on('enter-full-screen', applyWhiteboardZOrder)
+
+  win.on('closed', () => {
+    if (annotationOverlayWindow === win) annotationOverlayWindow = undefined
+    if (!closingWhiteboardWindows) {
+      closingWhiteboardWindows = true
+      try {
+        if (whiteboardBackgroundWindow && !whiteboardBackgroundWindow.isDestroyed()) whiteboardBackgroundWindow.close()
+      } finally {
+        whiteboardBackgroundWindow = undefined
+        closingWhiteboardWindows = false
+      }
+    }
+    requestBackendRpc('putUiStateKey', { windowId: 'app', key: 'mode', value: 'toolbar' }).catch(() => undefined)
+    requestBackendRpc('putKv', { key: 'app-mode', value: 'toolbar' }).catch(() => undefined)
+    restoreToolbarAlwaysOnTopFromPersistedState()
+  })
+
+  return win
+}
+
+function createScreenAnnotationOverlayWindow(): BrowserWindow {
+  const owner = floatingToolbarWindow
+  const ownerBounds = owner && !owner.isDestroyed() ? owner.getBounds() : screen.getPrimaryDisplay().bounds
+  const display = screen.getDisplayMatching(ownerBounds)
+  const bounds = display.bounds
+
+  const win = new BrowserWindow({
+    x: bounds.x,
+    y: bounds.y,
+    width: bounds.width,
+    height: bounds.height,
+    show: false,
+    frame: false,
+    transparent: true,
+    resizable: false,
+    maximizable: false,
+    fullscreenable: true,
+    skipTaskbar: true,
+    title: '屏幕批注层',
+    backgroundColor: '#00000000',
+    webPreferences: {
+      preload: join(__dirname, '../preload/index.js'),
+      contextIsolation: true,
+      nodeIntegration: false
+    }
+  })
+
+  wireWindowDebug(win, 'screen-annotation-overlay')
+  wireWindowStatus(win, 'screen-annotation-overlay')
+
+  const devUrl = getDevServerUrl()
+  if (devUrl) {
+    win.loadURL(`${devUrl}?window=${encodeURIComponent('paint-board')}&kind=${encodeURIComponent('annotation')}`)
+    if (process.env.LANSTART_OPEN_DEVTOOLS === '1') win.webContents.openDevTools({ mode: 'detach' })
+  } else {
+    win.loadFile(join(__dirname, '../renderer/index.html'), { query: { window: 'paint-board', kind: 'annotation' } })
+  }
+
+  win.once('ready-to-show', () => {
+    try {
+      win.setFullScreen(true)
+    } catch {}
+    try {
+      win.setAlwaysOnTop(true, 'floating')
+    } catch {}
+    try {
+      win.setIgnoreMouseEvents(true, { forward: true })
+    } catch {}
+  })
+
+  win.on('closed', () => {
+    if (screenAnnotationOverlayWindow === win) screenAnnotationOverlayWindow = undefined
     restoreToolbarAlwaysOnTopFromPersistedState()
   })
 
@@ -971,18 +1163,121 @@ function handleBackendControlMessage(message: any): void {
     const modeRaw = String((message as any).mode ?? '')
     const mode = modeRaw === 'whiteboard' ? 'whiteboard' : 'toolbar'
     if (mode === 'whiteboard') {
+      const screenOverlay = screenAnnotationOverlayWindow
+      if (screenOverlay && !screenOverlay.isDestroyed()) {
+        try {
+          screenOverlay.setIgnoreMouseEvents(true, { forward: true })
+        } catch {}
+        try {
+          if (screenOverlay.isVisible()) screenOverlay.hide()
+        } catch {}
+      }
       hideAllToolbarSubwindows()
+      appWindowsManager.hideAll()
       applyToolbarOnTopLevel('screen-saver')
-      if (!paintBoardWindow || paintBoardWindow.isDestroyed()) {
-        paintBoardWindow = createPaintBoardWindow()
+      if (!whiteboardBackgroundWindow || whiteboardBackgroundWindow.isDestroyed()) {
+        whiteboardBackgroundWindow = createPaintBoardWindow()
       } else {
-        paintBoardWindow.show()
+        whiteboardBackgroundWindow.show()
+      }
+      if (!annotationOverlayWindow || annotationOverlayWindow.isDestroyed()) {
+        const bg = whiteboardBackgroundWindow
+        if (bg && !bg.isDestroyed()) annotationOverlayWindow = createAnnotationOverlayWindow(bg)
+      } else {
+        annotationOverlayWindow.show()
       }
     } else {
-      if (paintBoardWindow && !paintBoardWindow.isDestroyed()) paintBoardWindow.close()
-      paintBoardWindow = undefined
+      closingWhiteboardWindows = true
+      try {
+        if (annotationOverlayWindow && !annotationOverlayWindow.isDestroyed()) annotationOverlayWindow.close()
+        if (whiteboardBackgroundWindow && !whiteboardBackgroundWindow.isDestroyed()) whiteboardBackgroundWindow.close()
+      } finally {
+        annotationOverlayWindow = undefined
+        whiteboardBackgroundWindow = undefined
+        closingWhiteboardWindows = false
+      }
       restoreToolbarAlwaysOnTopFromPersistedState()
     }
+    return
+  }
+
+  if (message.type === 'SET_ANNOTATION_INPUT') {
+    const enabled = Boolean((message as any).enabled)
+    const targets = [annotationOverlayWindow, screenAnnotationOverlayWindow]
+    for (const win of targets) {
+      if (!win || win.isDestroyed()) continue
+      try {
+        win.setIgnoreMouseEvents(!enabled, { forward: true })
+      } catch {}
+    }
+    return
+  }
+
+  if (message.type === 'SET_SCREEN_ANNOTATION_VISIBLE') {
+    const visible = Boolean((message as any).visible)
+
+    if ((whiteboardBackgroundWindow && !whiteboardBackgroundWindow.isDestroyed()) || (annotationOverlayWindow && !annotationOverlayWindow.isDestroyed())) {
+      const overlay = screenAnnotationOverlayWindow
+      if (overlay && !overlay.isDestroyed()) {
+        try {
+          overlay.setIgnoreMouseEvents(true, { forward: true })
+        } catch {}
+        try {
+          if (overlay.isVisible()) overlay.hide()
+        } catch {}
+      }
+      return
+    }
+
+    if (visible) {
+      if (!screenAnnotationOverlayWindow || screenAnnotationOverlayWindow.isDestroyed()) {
+        screenAnnotationOverlayWindow = createScreenAnnotationOverlayWindow()
+      }
+
+      const overlay = screenAnnotationOverlayWindow
+      if (!overlay || overlay.isDestroyed()) return
+
+      const applyOverlayZOrder = () => {
+        if (overlay.isDestroyed()) return
+        try {
+          overlay.setAlwaysOnTop(true, 'floating')
+        } catch {}
+        try {
+          overlay.moveTop()
+        } catch {}
+        try {
+          overlay.setIgnoreMouseEvents(false, { forward: true })
+        } catch {}
+        applyToolbarOnTopLevel('screen-saver')
+      }
+
+      const doShow = () => {
+        if (overlay.isDestroyed()) return
+        if (!overlay.isVisible()) {
+          try {
+            overlay.showInactive()
+          } catch {
+            overlay.show()
+          }
+        }
+        applyOverlayZOrder()
+      }
+
+      if (overlay.webContents.isLoading()) overlay.once('ready-to-show', doShow)
+      else doShow()
+    } else {
+      const overlay = screenAnnotationOverlayWindow
+      if (overlay && !overlay.isDestroyed()) {
+        try {
+          overlay.setIgnoreMouseEvents(true, { forward: true })
+        } catch {}
+        try {
+          if (overlay.isVisible()) overlay.hide()
+        } catch {}
+      }
+      restoreToolbarAlwaysOnTopFromPersistedState()
+    }
+
     return
   }
 
@@ -1018,7 +1313,11 @@ function handleBackendControlMessage(message: any): void {
 
   if (message.type === 'SET_TOOLBAR_ALWAYS_ON_TOP') {
     const value = Boolean(message.value)
-    if (paintBoardWindow && !paintBoardWindow.isDestroyed()) {
+    if (
+      (whiteboardBackgroundWindow && !whiteboardBackgroundWindow.isDestroyed()) ||
+      (annotationOverlayWindow && !annotationOverlayWindow.isDestroyed()) ||
+      (screenAnnotationOverlayWindow && !screenAnnotationOverlayWindow.isDestroyed() && screenAnnotationOverlayWindow.isVisible())
+    ) {
       applyToolbarOnTopLevel('screen-saver')
       return
     }

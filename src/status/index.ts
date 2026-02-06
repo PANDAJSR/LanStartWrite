@@ -6,6 +6,12 @@ import {
   APPEARANCE_UI_STATE_KEY,
   ACTIVE_APP_UI_STATE_KEY,
   EFFECTIVE_WRITING_BACKEND_UI_STATE_KEY,
+  ERASER_THICKNESS_UI_STATE_KEY,
+  ERASER_TYPE_UI_STATE_KEY,
+  PEN_COLOR_UI_STATE_KEY,
+  PEN_THICKNESS_UI_STATE_KEY,
+  PEN_TYPE_UI_STATE_KEY,
+  TOOL_UI_STATE_KEY,
   TOOLBAR_STATE_KEY,
   TOOLBAR_STATE_UI_STATE_KEY,
   UI_STATE_APP_WINDOW_ID,
@@ -19,7 +25,9 @@ import {
   type AppMode,
   type ActiveApp,
   type Appearance,
+  type EraserType,
   type EffectiveWritingBackend,
+  type PenType,
   type WritingFramework
 } from './keys'
 
@@ -30,6 +38,12 @@ export {
   APPEARANCE_UI_STATE_KEY,
   ACTIVE_APP_UI_STATE_KEY,
   EFFECTIVE_WRITING_BACKEND_UI_STATE_KEY,
+  ERASER_THICKNESS_UI_STATE_KEY,
+  ERASER_TYPE_UI_STATE_KEY,
+  PEN_COLOR_UI_STATE_KEY,
+  PEN_THICKNESS_UI_STATE_KEY,
+  PEN_TYPE_UI_STATE_KEY,
+  TOOL_UI_STATE_KEY,
   TOOLBAR_STATE_KEY,
   TOOLBAR_STATE_UI_STATE_KEY,
   UI_STATE_APP_WINDOW_ID,
@@ -43,7 +57,9 @@ export {
   type AppMode,
   type ActiveApp,
   type Appearance,
+  type EraserType,
   type EffectiveWritingBackend,
+  type PenType,
   type WritingFramework
 } from './keys'
 

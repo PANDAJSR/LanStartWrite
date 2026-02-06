@@ -202,6 +202,16 @@ export class AppWindowsManager {
     })
     return win
   }
+
+  hideAll(): void {
+    for (const win of this.windows.values()) {
+      if (win.isDestroyed()) continue
+      if (!win.isVisible()) continue
+      try {
+        win.hide()
+      } catch {}
+    }
+  }
  
   private showWindowWhenReady(win: BrowserWindow, opts: { focus: boolean }): void {
     const doShow = () => {

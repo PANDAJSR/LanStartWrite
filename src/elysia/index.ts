@@ -4,12 +4,19 @@ import { createInterface } from 'node:readline'
 import { deleteByPrefix, deleteValue, getValue, openLeavelDb, putValue } from '../LeavelDB'
 import {
   ACTIVE_APP_UI_STATE_KEY,
+  APP_MODE_UI_STATE_KEY,
   EFFECTIVE_WRITING_BACKEND_UI_STATE_KEY,
+  ERASER_THICKNESS_UI_STATE_KEY,
+  ERASER_TYPE_UI_STATE_KEY,
+  PEN_COLOR_UI_STATE_KEY,
+  PEN_THICKNESS_UI_STATE_KEY,
+  PEN_TYPE_UI_STATE_KEY,
   PPT_FULLSCREEN_UI_STATE_KEY,
   UI_STATE_APP_WINDOW_ID,
   WRITING_FRAMEWORK_KV_KEY,
   WRITING_FRAMEWORK_UI_STATE_KEY,
   isActiveApp,
+  isAppMode,
   isWritingFramework,
   type ActiveApp,
   type EffectiveWritingBackend,
@@ -130,6 +137,12 @@ async function handleCommand(command: string, payload: unknown): Promise<Command
         return { ok: true }
       }
 
+      if (action === 'setAnnotationInput') {
+        const enabled = Boolean((payload as any)?.enabled)
+        requestMain({ type: 'SET_ANNOTATION_INPUT', enabled })
+        return { ok: true }
+      }
+
       if (action === 'toggleSubwindow') {
         const kind = coerceString((payload as any)?.kind)
         const placementRaw = coerceString((payload as any)?.placement)
@@ -218,15 +231,60 @@ async function handleCommand(command: string, payload: unknown): Promise<Command
           value: effective
         })
 
+        const modeRaw = state[APP_MODE_UI_STATE_KEY]
+        const mode = isAppMode(modeRaw) ? modeRaw : 'toolbar'
+        if (mode === 'toolbar') {
+          requestMain({ type: 'SET_SCREEN_ANNOTATION_VISIBLE', visible: tool !== 'mouse' })
+        }
+
         emitEvent('BACKEND_FORWARD', { target: effective, command: 'setTool', payload: { tool }, reason: { writingFramework, activeApp, pptFullscreen } })
         return { ok: true }
       }
 
+      if (action === 'setPenSettings') {
+        const typeRaw = coerceString((payload as any)?.type)
+        const type = typeRaw === 'highlighter' ? 'highlighter' : typeRaw === 'laser' ? 'laser' : 'writing'
+        const colorRaw = coerceString((payload as any)?.color)
+        const color = colorRaw || '#333333'
+        const thicknessRaw = Number((payload as any)?.thickness)
+        const thickness = Number.isFinite(thicknessRaw) ? Math.max(1, Math.min(120, thicknessRaw)) : 6
+
+        const state = getOrInitUiState(UI_STATE_APP_WINDOW_ID)
+        state[PEN_TYPE_UI_STATE_KEY] = type
+        state[PEN_COLOR_UI_STATE_KEY] = color
+        state[PEN_THICKNESS_UI_STATE_KEY] = thickness
+        emitEvent('UI_STATE_PUT', { windowId: UI_STATE_APP_WINDOW_ID, key: PEN_TYPE_UI_STATE_KEY, value: type })
+        emitEvent('UI_STATE_PUT', { windowId: UI_STATE_APP_WINDOW_ID, key: PEN_COLOR_UI_STATE_KEY, value: color })
+        emitEvent('UI_STATE_PUT', { windowId: UI_STATE_APP_WINDOW_ID, key: PEN_THICKNESS_UI_STATE_KEY, value: thickness })
+
+        const uiFrameworkRaw = state[WRITING_FRAMEWORK_UI_STATE_KEY]
+        const uiFramework = isWritingFramework(uiFrameworkRaw) ? uiFrameworkRaw : undefined
+        const writingFramework = uiFramework ?? (await getPersistedWritingFramework()) ?? 'konva'
+        const activeAppRaw = state[ACTIVE_APP_UI_STATE_KEY]
+        const activeApp = isActiveApp(activeAppRaw) ? activeAppRaw : undefined
+        const pptFullscreen = state[PPT_FULLSCREEN_UI_STATE_KEY] === true
+        const effective = resolveEffectiveWritingBackend({ writingFramework, activeApp, pptFullscreen })
+
+        emitEvent('BACKEND_FORWARD', {
+          target: effective,
+          command: 'setPenSettings',
+          payload: { type, color, thickness },
+          reason: { writingFramework, activeApp, pptFullscreen }
+        })
+        return { ok: true }
+      }
+
       if (action === 'setEraserSettings') {
-        const type = coerceString((payload as any)?.type)
-        const thickness = Number((payload as any)?.thickness)
+        const typeRaw = coerceString((payload as any)?.type)
+        const type = typeRaw === 'stroke' ? 'stroke' : 'pixel'
+        const thicknessRaw = Number((payload as any)?.thickness)
+        const thickness = Number.isFinite(thicknessRaw) ? Math.max(1, Math.min(240, thicknessRaw)) : 18
         
         const state = getOrInitUiState(UI_STATE_APP_WINDOW_ID)
+        state[ERASER_TYPE_UI_STATE_KEY] = type
+        state[ERASER_THICKNESS_UI_STATE_KEY] = thickness
+        emitEvent('UI_STATE_PUT', { windowId: UI_STATE_APP_WINDOW_ID, key: ERASER_TYPE_UI_STATE_KEY, value: type })
+        emitEvent('UI_STATE_PUT', { windowId: UI_STATE_APP_WINDOW_ID, key: ERASER_THICKNESS_UI_STATE_KEY, value: thickness })
         const uiFrameworkRaw = state[WRITING_FRAMEWORK_UI_STATE_KEY]
         const uiFramework = isWritingFramework(uiFrameworkRaw) ? uiFrameworkRaw : undefined
         const writingFramework = uiFramework ?? (await getPersistedWritingFramework()) ?? 'konva'

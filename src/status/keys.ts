@@ -11,7 +11,7 @@ export const APP_MODE_KV_KEY = 'app-mode'
 
 export type Appearance = 'light' | 'dark'
 
-export type WritingFramework = 'konva' | 'qt'
+export type WritingFramework = 'konva' | 'qt' | 'leafer'
 export const WRITING_FRAMEWORK_UI_STATE_KEY = 'writingFramework'
 export const WRITING_FRAMEWORK_KV_KEY = 'writing-framework'
 
@@ -19,8 +19,19 @@ export type ActiveApp = 'unknown' | 'word' | 'ppt'
 export const ACTIVE_APP_UI_STATE_KEY = 'activeApp'
 export const PPT_FULLSCREEN_UI_STATE_KEY = 'pptFullscreen'
 
-export type EffectiveWritingBackend = 'konva' | 'qt' | 'word' | 'ppt'
+export type EffectiveWritingBackend = 'konva' | 'qt' | 'leafer' | 'word' | 'ppt'
 export const EFFECTIVE_WRITING_BACKEND_UI_STATE_KEY = 'effectiveWritingBackend'
+
+export const TOOL_UI_STATE_KEY = 'tool'
+
+export type PenType = 'writing' | 'highlighter' | 'laser'
+export const PEN_TYPE_UI_STATE_KEY = 'penType'
+export const PEN_COLOR_UI_STATE_KEY = 'penColor'
+export const PEN_THICKNESS_UI_STATE_KEY = 'penThickness'
+
+export type EraserType = 'pixel' | 'stroke'
+export const ERASER_TYPE_UI_STATE_KEY = 'eraserType'
+export const ERASER_THICKNESS_UI_STATE_KEY = 'eraserThickness'
 
 export function isAppearance(v: unknown): v is Appearance {
   return v === 'light' || v === 'dark'
@@ -31,7 +42,7 @@ export function isAppMode(v: unknown): v is AppMode {
 }
 
 export function isWritingFramework(v: unknown): v is WritingFramework {
-  return v === 'konva' || v === 'qt'
+  return v === 'konva' || v === 'qt' || v === 'leafer'
 }
 
 export function isActiveApp(v: unknown): v is ActiveApp {
@@ -39,5 +50,5 @@ export function isActiveApp(v: unknown): v is ActiveApp {
 }
 
 export function isEffectiveWritingBackend(v: unknown): v is EffectiveWritingBackend {
-  return v === 'konva' || v === 'qt' || v === 'word' || v === 'ppt'
+  return v === 'konva' || v === 'qt' || v === 'leafer' || v === 'word' || v === 'ppt'
 }

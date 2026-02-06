@@ -4,7 +4,7 @@ import { useEventsPoll } from '../../toolbar/hooks/useEventsPoll'
 import { Button } from '../../button'
 import { EventsMenu, FeaturePanelMenu, PenSubmenu, EraserSubmenu, SettingsMenu } from '../../toolbar-subwindows'
 import { TaskWindowsWatcherWindow } from '../../task_windows_watcher'
-import { PaintBoardApp } from '../../paint_board'
+import { AnnotationOverlayApp, PaintBoardBackgroundApp } from '../../paint_board'
 import { SettingsWindow, useAppearanceSettings } from '../../settings'
 
 function useWindowParams(): { windowId: string; kind?: string } {
@@ -85,7 +85,7 @@ export default function App() {
   if (windowId === 'child') return <WithAppearance><ChildWindow /></WithAppearance>
   if (windowId === WINDOW_ID_FLOATING_TOOLBAR) return <WithAppearance><FloatingToolbarApp /></WithAppearance>
   if (windowId === WINDOW_ID_FLOATING_TOOLBAR_HANDLE) return <WithAppearance><FloatingToolbarHandleApp /></WithAppearance>
-  if (windowId === 'paint-board') return <PaintBoardApp />
+  if (windowId === 'paint-board') return kind === 'annotation' ? <AnnotationOverlayApp /> : <PaintBoardBackgroundApp />
   if (windowId === 'watcher') return <WithAppearance><TaskWindowsWatcherWindow /></WithAppearance>
   if (windowId === 'settings-window') return <WithAppearance><SettingsWindow /></WithAppearance>
 
