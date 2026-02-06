@@ -274,6 +274,175 @@
   margin: 0 0 16px 0;
 }
 
+.settingsToolbarPreview {
+  padding: 18px 18px 16px;
+  border-radius: 16px;
+  border: 1px solid var(--ls-surface-border, rgba(0, 0, 0, 0.08));
+  background: rgba(255, 255, 255, 0.45);
+}
+
+.settingsToolbarPreviewTitle {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ls-surface-fg, rgba(12, 12, 12, 0.8));
+  margin-bottom: 4px;
+}
+
+.settingsToolbarPreviewHint {
+  font-size: 12px;
+  color: var(--ls-surface-fg, rgba(12, 12, 12, 0.55));
+  margin-bottom: 14px;
+}
+
+.settingsToolbarPreviewToolbarShell {
+  position: relative;
+  border-radius: 14px;
+  border: 1px solid var(--ls-surface-border, rgba(0, 0, 0, 0.08));
+  background: var(--ls-surface-bg, rgba(255, 255, 255, 0.6));
+  box-shadow: var(--ls-surface-shadow, 0 10px 24px rgba(0, 0, 0, 0.12));
+  overflow: hidden;
+}
+
+.settingsToolbarPreviewToolbarShell::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-image: var(--hyper-glass-bg);
+  background-size: cover;
+  background-position: center;
+  transform: scale(1.08);
+  opacity: 0.32;
+  filter: saturate(1.12) contrast(1.04);
+  pointer-events: none;
+}
+
+.settingsToolbarPreviewToolbarShell::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: var(--ls-surface-overlay, rgba(255, 255, 255, 0.55));
+  mix-blend-mode: var(--ls-surface-overlay-blend, normal);
+  pointer-events: none;
+}
+
+.settingsToolbarPreviewToolbarDragArea {
+  position: relative;
+  z-index: 1;
+  padding: 10px;
+  overflow-x: auto;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.settingsToolbarPreviewToolbarLayout {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.settingsToolbarPreviewToolbarBarRow {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 10px;
+}
+
+.settingsToolbarReorderGroup {
+  display: flex;
+  gap: 10px;
+  flex-wrap: nowrap;
+  align-items: center;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.settingsToolbarReorderItem {
+  display: inline-flex;
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+}
+
+.settingsToolbarPreviewToggleButton {
+  padding: 0;
+  width: 28px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  color: var(--ls-surface-fg);
+  opacity: 0.5;
+  border: none;
+  box-shadow: none;
+}
+
+.settingsToolbarPreviewToggleButton:hover {
+  background: transparent;
+  opacity: 0.75;
+}
+
+.settingsToolbarPreviewToggleButton:active {
+  background: transparent;
+  opacity: 0.9;
+}
+
+.settingsToolbarSelectionPanel {
+  margin-top: 14px;
+  padding: 12px 12px 10px;
+  border-radius: 14px;
+  border: 1px solid var(--ls-surface-border, rgba(0, 0, 0, 0.08));
+  background: rgba(0, 0, 0, 0.02);
+}
+
+.settingsToolbarSelectionHeader {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.settingsToolbarSelectionTitle {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ls-surface-fg, rgba(12, 12, 12, 0.75));
+}
+
+.settingsToolbarSelectionMeta {
+  font-size: 12px;
+  color: var(--ls-surface-fg, rgba(12, 12, 12, 0.55));
+}
+
+.settingsToolbarSelectionBody {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.settingsToolbarSelectionIcon {
+  width: 34px;
+  height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 10px;
+  border: 1px solid var(--ls-surface-border, rgba(0, 0, 0, 0.08));
+  background: rgba(255, 255, 255, 0.6);
+}
+
+.settingsToolbarSelectionName {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ls-surface-fg, rgba(12, 12, 12, 0.85));
+}
+
+.settingsToolbarSelectionActions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 /* 深色主题适配 */
 :root[data-appearance='dark'] .settingsContent {
   background: rgba(25, 28, 36, 0.4);
@@ -315,6 +484,26 @@
 
 :root[data-appearance='dark'] .settingsContentPlaceholderText {
   color: rgba(255, 255, 255, 0.4);
+}
+
+:root[data-appearance='dark'] .settingsToolbarPreview {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(255, 255, 255, 0.08);
+}
+
+:root[data-appearance='dark'] .settingsToolbarPreviewToolbarShell {
+  border-color: rgba(255, 255, 255, 0.12);
+  background: rgba(25, 28, 36, 0.75);
+}
+
+:root[data-appearance='dark'] .settingsToolbarSelectionPanel {
+  background: rgba(255, 255, 255, 0.03);
+  border-color: rgba(255, 255, 255, 0.08);
+}
+
+:root[data-appearance='dark'] .settingsToolbarSelectionIcon {
+  border-color: rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.04);
 }
 
 :root[data-appearance='dark'] .settingsAboutCard {

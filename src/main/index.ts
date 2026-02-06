@@ -235,20 +235,29 @@ function wireWindowDebug(win: BrowserWindow, name: string): void {
 
 function wireWindowStatus(win: BrowserWindow, windowId: string): void {
   const snapshot = (event: string, extra?: Record<string, unknown>) => {
-    const bounds = win.isDestroyed() ? undefined : win.getBounds()
+    const destroyed = win.isDestroyed()
+    let bounds: Electron.Rectangle | undefined
+    if (!destroyed) {
+      try {
+        bounds = win.getBounds()
+      } catch {
+        bounds = undefined
+      }
+    }
+    const rendererPid = !destroyed && !win.webContents.isDestroyed() ? win.webContents.getOSProcessId?.() : undefined
     const payload = {
       type: 'WINDOW_STATUS',
       windowId,
       event,
       ts: Date.now(),
       bounds,
-      visible: !win.isDestroyed() ? win.isVisible() : false,
-      focused: !win.isDestroyed() ? win.isFocused() : false,
-      minimized: !win.isDestroyed() ? win.isMinimized() : false,
-      maximized: !win.isDestroyed() ? win.isMaximized() : false,
-      fullscreen: !win.isDestroyed() ? win.isFullScreen() : false,
-      title: !win.isDestroyed() ? win.getTitle() : '',
-      rendererPid: win.webContents.getOSProcessId?.(),
+      visible: !destroyed ? win.isVisible() : false,
+      focused: !destroyed ? win.isFocused() : false,
+      minimized: !destroyed ? win.isMinimized() : false,
+      maximized: !destroyed ? win.isMaximized() : false,
+      fullscreen: !destroyed ? win.isFullScreen() : false,
+      title: !destroyed ? win.getTitle() : '',
+      rendererPid,
       ...extra
     }
     sendToBackend(payload)

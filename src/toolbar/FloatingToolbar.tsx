@@ -2,7 +2,7 @@ import React, { createContext, useContext, useEffect, useMemo, useRef, useState 
 import { Button, ButtonGroup } from '../button'
 import { motion, useReducedMotion } from '../Framer_Motion'
 import { useHyperGlassRealtimeBlur } from '../hyper_glass'
-import { TOOLBAR_STATE_KEY, useAppMode } from '../status'
+import { getKv, TOOLBAR_STATE_KEY, TOOLBAR_STATE_UI_STATE_KEY, UI_STATE_APP_WINDOW_ID, useAppMode, useUiStateBus } from '../status'
 import { usePersistedState } from './hooks/usePersistedState'
 import { postCommand } from './hooks/useBackend'
 import { useToolbarWindowAutoResize } from './hooks/useToolbarWindowAutoResize'
@@ -68,6 +68,47 @@ type ToolbarState = {
   uiButtonSize?: 'sm' | 'md'
   tool?: 'mouse' | 'pen' | 'eraser'
   expanded?: boolean
+  primaryButtonsOrder?: Array<'mouse' | 'pen' | 'eraser' | 'whiteboard'>
+  secondaryButtonsOrder?: Array<'undo' | 'redo' | 'feature-panel'>
+}
+
+const DEFAULT_PRIMARY_BUTTONS_ORDER: Array<'mouse' | 'pen' | 'eraser' | 'whiteboard'> = ['mouse', 'pen', 'eraser', 'whiteboard']
+const DEFAULT_SECONDARY_BUTTONS_ORDER: Array<'undo' | 'redo' | 'feature-panel'> = ['undo', 'redo', 'feature-panel']
+
+function normalizePrimaryButtonsOrder(input: unknown): Array<'mouse' | 'pen' | 'eraser' | 'whiteboard'> {
+  if (!Array.isArray(input)) return DEFAULT_PRIMARY_BUTTONS_ORDER
+  const allowed = new Set(DEFAULT_PRIMARY_BUTTONS_ORDER)
+  const unique: Array<'mouse' | 'pen' | 'eraser' | 'whiteboard'> = []
+  for (const item of input) {
+    if (item !== 'mouse' && item !== 'pen' && item !== 'eraser' && item !== 'whiteboard') continue
+    if (!allowed.has(item)) continue
+    if (unique.includes(item)) continue
+    unique.push(item)
+  }
+  for (const item of DEFAULT_PRIMARY_BUTTONS_ORDER) if (!unique.includes(item)) unique.push(item)
+  return unique
+}
+
+function normalizeSecondaryButtonsOrder(input: unknown): Array<'undo' | 'redo' | 'feature-panel'> {
+  if (!Array.isArray(input)) return DEFAULT_SECONDARY_BUTTONS_ORDER
+  const allowed = new Set(DEFAULT_SECONDARY_BUTTONS_ORDER)
+  const unique: Array<'undo' | 'redo' | 'feature-panel'> = []
+  for (const item of input) {
+    if (item !== 'undo' && item !== 'redo' && item !== 'feature-panel') continue
+    if (!allowed.has(item)) continue
+    if (unique.includes(item)) continue
+    unique.push(item)
+  }
+  for (const item of DEFAULT_SECONDARY_BUTTONS_ORDER) if (!unique.includes(item)) unique.push(item)
+  return unique
+}
+
+function arraysEqual<T>(a: readonly T[] | undefined, b: readonly T[] | undefined): boolean {
+  if (a === b) return true
+  if (!a || !b) return false
+  if (a.length !== b.length) return false
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false
+  return true
 }
 
 function isToolbarState(value: unknown): value is ToolbarState {
@@ -79,6 +120,8 @@ function isToolbarState(value: unknown): value is ToolbarState {
   if (v.uiButtonSize !== undefined && v.uiButtonSize !== 'sm' && v.uiButtonSize !== 'md') return false
   if (v.tool !== undefined && v.tool !== 'mouse' && v.tool !== 'pen' && v.tool !== 'eraser') return false
   if (v.expanded !== undefined && typeof v.expanded !== 'boolean') return false
+  if (v.primaryButtonsOrder !== undefined && !Array.isArray(v.primaryButtonsOrder)) return false
+  if (v.secondaryButtonsOrder !== undefined && !Array.isArray(v.secondaryButtonsOrder)) return false
   return true
 }
 
@@ -101,17 +144,50 @@ function ToolbarProvider({ children }: { children: React.ReactNode }) {
     alwaysOnTop: true,
     uiWidth: 360,
     uiButtonSize: 'sm',
-    expanded: true
+    expanded: true,
+    primaryButtonsOrder: DEFAULT_PRIMARY_BUTTONS_ORDER,
+    secondaryButtonsOrder: DEFAULT_SECONDARY_BUTTONS_ORDER
   }, { validate: isToolbarState })
 
+  const bus = useUiStateBus(UI_STATE_APP_WINDOW_ID)
+  const revRaw = bus.state[TOOLBAR_STATE_UI_STATE_KEY]
+  const rev = typeof revRaw === 'number' ? revRaw : typeof revRaw === 'string' ? Number(revRaw) : 0
+  const lastRevRef = useRef(0)
+
   useEffect(() => {
+    if (!rev) return
+    if (rev === lastRevRef.current) return
+    lastRevRef.current = rev
+    let cancelled = false
+
+    ;(async () => {
+      try {
+        const loaded = await getKv<unknown>(TOOLBAR_STATE_KEY)
+        if (cancelled) return
+        if (!isToolbarState(loaded)) return
+        setState(loaded)
+      } catch {
+        return
+      }
+    })()
+
+    return () => {
+      cancelled = true
+    }
+  }, [rev, setState])
+
+  useEffect(() => {
+    const normalizedPrimary = normalizePrimaryButtonsOrder((state as any).primaryButtonsOrder)
+    const normalizedSecondary = normalizeSecondaryButtonsOrder((state as any).secondaryButtonsOrder)
     const normalized: ToolbarState = {
       collapsed: Boolean(state.collapsed),
       alwaysOnTop: Boolean(state.alwaysOnTop),
       uiWidth: typeof state.uiWidth === 'number' ? state.uiWidth : 360,
       uiButtonSize: state.uiButtonSize === 'md' ? 'md' : 'sm',
       tool: state.tool === 'pen' ? 'pen' : state.tool === 'eraser' ? 'eraser' : 'mouse',
-      expanded: state.expanded !== false
+      expanded: state.expanded !== false,
+      primaryButtonsOrder: normalizedPrimary,
+      secondaryButtonsOrder: normalizedSecondary
     }
     if (
       normalized.collapsed !== state.collapsed ||
@@ -119,7 +195,9 @@ function ToolbarProvider({ children }: { children: React.ReactNode }) {
       normalized.uiWidth !== state.uiWidth ||
       normalized.uiButtonSize !== state.uiButtonSize ||
       normalized.tool !== state.tool ||
-      normalized.expanded !== state.expanded
+      normalized.expanded !== state.expanded ||
+      !arraysEqual(normalizedPrimary, state.primaryButtonsOrder) ||
+      !arraysEqual(normalizedSecondary, state.secondaryButtonsOrder)
     ) {
       setState(normalized)
     }
@@ -163,6 +241,130 @@ function FloatingToolbarInner() {
     }
   }
 
+  const primaryButtonsOrder = state.primaryButtonsOrder ?? DEFAULT_PRIMARY_BUTTONS_ORDER
+  const secondaryButtonsOrder = state.secondaryButtonsOrder ?? DEFAULT_SECONDARY_BUTTONS_ORDER
+
+  const renderPrimaryButton = (id: 'mouse' | 'pen' | 'eraser' | 'whiteboard') => {
+    if (id === 'mouse') {
+      return (
+        <Button
+          key="mouse"
+          size={uiButtonSize}
+          variant={tool === 'mouse' ? 'light' : 'default'}
+          ariaLabel="鼠标"
+          title="鼠标"
+          onClick={() => {
+            setState({ ...state, tool: 'mouse' })
+            void postCommand('app.setTool', { tool: 'mouse' })
+          }}
+        >
+          <ToolbarToolIcon kind="mouse" />
+        </Button>
+      )
+    }
+
+    if (id === 'pen') {
+      return (
+        <Button
+          key="pen"
+          size={uiButtonSize}
+          variant={tool === 'pen' ? 'light' : 'default'}
+          ariaLabel="笔"
+          title={tool === 'pen' ? '笔（再次点击打开设置）' : '笔'}
+          onClick={handlePenClick}
+        >
+          <ToolbarToolIcon kind="pen" />
+        </Button>
+      )
+    }
+
+    if (id === 'eraser') {
+      return (
+        <Button
+          key="eraser"
+          size={uiButtonSize}
+          variant={tool === 'eraser' ? 'light' : 'default'}
+          ariaLabel="橡皮"
+          title="橡皮"
+          onClick={() => {
+            setState({ ...state, tool: 'eraser' })
+            void postCommand('app.setTool', { tool: 'eraser' })
+          }}
+        >
+          <ToolbarToolIcon kind="eraser" />
+        </Button>
+      )
+    }
+
+    return (
+      <Button
+        key="whiteboard"
+        size={uiButtonSize}
+        variant={whiteboardActive ? 'light' : 'default'}
+        ariaLabel="白板"
+        title="白板"
+        onClick={() => {
+          setAppMode(whiteboardActive ? 'toolbar' : 'whiteboard')
+        }}
+      >
+        <ToolbarToolIcon kind="whiteboard" />
+      </Button>
+    )
+  }
+
+  const renderSecondaryButton = (id: 'undo' | 'redo' | 'feature-panel') => {
+    if (id === 'undo') {
+      return (
+        <Button
+          key="undo"
+          size={uiButtonSize}
+          ariaLabel="撤销"
+          title="撤销"
+          onClick={() => {
+            console.log('撤销')
+          }}
+        >
+          <UndoIcon />
+        </Button>
+      )
+    }
+
+    if (id === 'redo') {
+      return (
+        <Button
+          key="redo"
+          size={uiButtonSize}
+          ariaLabel="重做"
+          title="重做"
+          onClick={() => {
+            console.log('重做')
+          }}
+        >
+          <RedoIcon />
+        </Button>
+      )
+    }
+
+    return (
+      <Button
+        key="feature-panel"
+        size={uiButtonSize}
+        ariaLabel="功能面板"
+        title="功能面板"
+        onClick={() => {
+          void postCommand('toggle-subwindow', { kind: 'feature-panel', placement: 'bottom' })
+        }}
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 20 20">
+          <path
+            fill="currentColor"
+            d="M4.5 17a1.5 1.5 0 0 1-1.493-1.355L3 15.501v-11a1.5 1.5 0 0 1 1.356-1.493L4.5 3H9a1.5 1.5 0 0 1 1.493 1.355l.007.145v.254l2.189-2.269a1.5 1.5 0 0 1 2.007-.138l.116.101l2.757 2.725a1.5 1.5 0 0 1 .111 2.011l-.103.116l-2.311 2.2h.234a1.5 1.5 0 0 1 1.493 1.356L17 11v4.5a1.5 1.5 0 0 1-1.355 1.493L15.5 17zm5-6.5H4v5a.5.5 0 0 0 .326.47l.084.023l.09.008h5zm6 0h-5V16h5a.5.5 0 0 0 .492-.41L16 15.5V11a.5.5 0 0 0-.41-.491zm-5-2.79V9.5h1.79zM9 4H4.5a.5.5 0 0 0-.492.411L4 4.501v5h5.5v-5a.5.5 0 0 0-.326-.469L9.09 4.01zm5.122-.826a.5.5 0 0 0-.645-.053l-.068.06l-2.616 2.713a.5.5 0 0 0-.057.623l.063.078l2.616 2.615a.5.5 0 0 0 .62.07l.078-.061l2.758-2.627a.5.5 0 0 0 .054-.638l-.059-.069z"
+          />
+        </svg>
+      </Button>
+    )
+  }
+
   return (
     <motion.div
       ref={rootRef}
@@ -176,53 +378,7 @@ function FloatingToolbarInner() {
           {/* 主要工具按钮区域 */}
           <div className="toolbarBarRow">
             <ButtonGroup>
-              <Button
-                size={uiButtonSize}
-                variant={tool === 'mouse' ? 'light' : 'default'}
-                ariaLabel="鼠标"
-                title="鼠标"
-                onClick={() => {
-                  setState({ ...state, tool: 'mouse' })
-                  void postCommand('app.setTool', { tool: 'mouse' })
-                }}
-              >
-                <ToolbarToolIcon kind="mouse" />
-              </Button>
-
-              <Button
-                size={uiButtonSize}
-                variant={tool === 'pen' ? 'light' : 'default'}
-                ariaLabel="笔"
-                title={tool === 'pen' ? '笔（再次点击打开设置）' : '笔'}
-                onClick={handlePenClick}
-              >
-                <ToolbarToolIcon kind="pen" />
-              </Button>
-
-              <Button
-                size={uiButtonSize}
-                variant={tool === 'eraser' ? 'light' : 'default'}
-                ariaLabel="橡皮"
-                title="橡皮"
-                onClick={() => {
-                  setState({ ...state, tool: 'eraser' })
-                  void postCommand('app.setTool', { tool: 'eraser' })
-                }}
-              >
-                <ToolbarToolIcon kind="eraser" />
-              </Button>
-
-              <Button
-                size={uiButtonSize}
-                variant={whiteboardActive ? 'light' : 'default'}
-                ariaLabel="白板"
-                title="白板"
-                onClick={() => {
-                  setAppMode(whiteboardActive ? 'toolbar' : 'whiteboard')
-                }}
-              >
-                <ToolbarToolIcon kind="whiteboard" />
-              </Button>
+              {primaryButtonsOrder.map(renderPrimaryButton)}
             </ButtonGroup>
           </div>
 
@@ -251,42 +407,7 @@ function FloatingToolbarInner() {
           >
             <div className="toolbarBarRow toolbarCollapsibleContent">
               <ButtonGroup>
-                <Button
-                  size={uiButtonSize}
-                  ariaLabel="撤销"
-                  title="撤销"
-                  onClick={() => {
-                    // TODO: 实现撤销功能
-                    console.log('撤销')
-                  }}
-                >
-                  <UndoIcon />
-                </Button>
-
-                <Button
-                  size={uiButtonSize}
-                  ariaLabel="重做"
-                  title="重做"
-                  onClick={() => {
-                    // TODO: 实现重做功能
-                    console.log('重做')
-                  }}
-                >
-                  <RedoIcon />
-                </Button>
-
-                <Button
-                  size={uiButtonSize}
-                  ariaLabel="功能面板"
-                  title="功能面板"
-                  onClick={() => {
-                    void postCommand('toggle-subwindow', { kind: 'feature-panel', placement: 'bottom' })
-                  }}
-                >
-                  <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 20 20">
-                    <path fill="currentColor" d="M4.5 17a1.5 1.5 0 0 1-1.493-1.355L3 15.501v-11a1.5 1.5 0 0 1 1.356-1.493L4.5 3H9a1.5 1.5 0 0 1 1.493 1.355l.007.145v.254l2.189-2.269a1.5 1.5 0 0 1 2.007-.138l.116.101l2.757 2.725a1.5 1.5 0 0 1 .111 2.011l-.103.116l-2.311 2.2h.234a1.5 1.5 0 0 1 1.493 1.356L17 11v4.5a1.5 1.5 0 0 1-1.355 1.493L15.5 17zm5-6.5H4v5a.5.5 0 0 0 .326.47l.084.023l.09.008h5zm6 0h-5V16h5a.5.5 0 0 0 .492-.41L16 15.5V11a.5.5 0 0 0-.41-.491zm-5-2.79V9.5h1.79zM9 4H4.5a.5.5 0 0 0-.492.411L4 4.501v5h5.5v-5a.5.5 0 0 0-.326-.469L9.09 4.01zm5.122-.826a.5.5 0 0 0-.645-.053l-.068.06l-2.616 2.713a.5.5 0 0 0-.057.623l.063.078l2.616 2.615a.5.5 0 0 0 .62.07l.078-.061l2.758-2.627a.5.5 0 0 0 .054-.638l-.059-.069z"/>
-                  </svg>
-                </Button>
+                {secondaryButtonsOrder.map(renderSecondaryButton)}
               </ButtonGroup>
             </div>
           </motion.div>

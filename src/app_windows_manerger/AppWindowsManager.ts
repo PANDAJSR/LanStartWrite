@@ -278,8 +278,8 @@ export class AppWindowsManager {
  
     const appearance = this.deps.getAppearance()
     const { width: screenWidth, height: screenHeight } = screen.getPrimaryDisplay().workAreaSize
-    const winWidth = 600
-    const winHeight = 400
+    const winWidth = 560
+    const winHeight = 380
 
     const win = new BrowserWindow({
       width: winWidth,
@@ -313,7 +313,7 @@ export class AppWindowsManager {
     else win.loadFile(this.deps.rendererHtmlPath, { query: { window: 'settings-window' } })
  
     win.webContents.on('did-finish-load', () => {
-      this.deps.adjustWindowForDPI(win, 600, 400)
+      this.deps.adjustWindowForDPI(win, 560, 380)
     })
  
     return win

@@ -1,4 +1,5 @@
 export const TOOLBAR_STATE_KEY = 'toolbar-state'
+export const TOOLBAR_STATE_UI_STATE_KEY = 'toolbarStateRev'
 
 export const UI_STATE_APP_WINDOW_ID = 'app'
 export const APPEARANCE_UI_STATE_KEY = 'appearance'
