@@ -306,30 +306,28 @@ export function PenSubmenu(props: { kind: string }) {
 
           {/* 主内容区：左右两列布局 */}
           <div className="penSubmenuContent">
-            
-            {/* 左列：颜色九宫格 (3x4) */}
-            <div className="penColorSection">
-              <div className="penColorGrid">
-                {PRESET_COLORS.map((color) => (
-                  <ColorButton
-                    key={color}
-                    color={color}
-                    isActive={selectedColor === color}
-                    onClick={() => {
-                      setSelectedColor(color)
-                      applyPenSettings()
-                    }}
-                  />
-                ))}
+            <div className="penUpperSection">
+              {/* 左列：颜色九宫格 (3x4) */}
+              <div className="penColorSection">
+                <div className="penColorGrid">
+                  {PRESET_COLORS.map((color) => (
+                    <ColorButton
+                      key={color}
+                      color={color}
+                      isActive={selectedColor === color}
+                      onClick={() => {
+                        setSelectedColor(color)
+                        applyPenSettings()
+                      }}
+                    />
+                  ))}
+                </div>
               </div>
-            </div>
 
-            {/* 垂直分隔线 */}
-            <div className="penSubmenuVerticalDivider" />
+              {/* 垂直分隔线 */}
+              <div className="penSubmenuVerticalDivider" />
 
-            {/* 右列：笔类型 + 粗细调节 */}
-            <div className="penControlSection">
-              {/* 笔类型列表 */}
+              {/* 右列：笔类型 */}
               <div className="penTypeSection">
                 {PEN_TYPES.map((pen) => (
                   <PenTypeButton
@@ -346,16 +344,31 @@ export function PenSubmenu(props: { kind: string }) {
                   />
                 ))}
               </div>
+            </div>
 
-              {/* 粗细调节 */}
-              <div className="penThicknessSection">
-                <ThicknessSlider 
-                  value={thickness} 
-                  onChange={(value) => {
-                    setThickness(value)
-                    applyPenSettings()
-                  }} 
-                />
+            {/* 粗细调节 */}
+            <div className="penThicknessSection">
+              <ThicknessSlider 
+                value={thickness} 
+                onChange={(value) => {
+                  setThickness(value)
+                  applyPenSettings()
+                }} 
+              />
+            </div>
+          </div>
+
+          {/* 下方：状态栏 */}
+          <div className="penBottomSection">
+            <div className="penStatusBar">
+              <span className="penStatusText">
+                {selectedPenType === 'writing' ? '书写笔' : selectedPenType === 'highlighter' ? '荧光笔' : '激光笔'} {thickness}PX
+              </span>
+              <div className="penStatusColorDisplay">
+                <div className="penStatusColorDot" style={{ backgroundColor: selectedColor }} />
+                <span className="penStatusText">
+                  {selectedColor.toUpperCase()}
+                </span>
               </div>
             </div>
           </div>

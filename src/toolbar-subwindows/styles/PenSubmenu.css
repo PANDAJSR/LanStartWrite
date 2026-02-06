@@ -13,13 +13,21 @@
   width: 100%;
 }
 
-/* 主内容容器 - 左右分栏 */
+/* 主内容容器 - 垂直布局 */
 .penSubmenuContent {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  width: 100%;
+  padding-top: 4px;
+}
+
+/* 上半部分：颜色 + 笔类型 */
+.penUpperSection {
   display: flex;
   flex-direction: row;
   gap: 16px;
   width: 100%;
-  padding-top: 4px;
 }
 
 /* 左列：颜色选择 */
@@ -37,7 +45,7 @@
 
 /* 颜色按钮 */
 .penColorButton {
-  width: 44px;
+  width: 52px; /* 加宽颜色块 */
   height: 32px;
   border-radius: 8px; /* 圆角矩形 */
   border: 2px solid transparent;
@@ -75,17 +83,9 @@
   margin: 0 4px;
 }
 
-/* 右列：控制区 (笔类型 + 粗细) */
-.penControlSection {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  justify-content: space-between;
-  min-width: 160px;
-}
-
 /* 笔类型列表 */
 .penTypeSection {
+  flex: 1;
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -133,7 +133,7 @@
 
 /* 粗细控制区 */
 .penThicknessSection {
-  margin-top: 16px;
+  margin-top: 0;
   padding: 8px 4px;
   background: rgba(0, 0, 0, 0.02);
   border-radius: 8px;
@@ -225,6 +225,44 @@
 /* 隐藏底部状态栏 */
 .penSubmenuFooter {
   display: none;
+}
+
+/* 底部状态栏 */
+.penBottomSection {
+  margin-top: 16px;
+  padding: 12px 18px;
+  background: rgba(0, 0, 0, 0.04);
+  border-radius: 14px;
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.03);
+}
+
+.penStatusBar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.penStatusText {
+  /* 模仿草图中的手写字体感觉 */
+  font-family: "Comic Sans MS", "Chalkboard SE", "Segoe Print", sans-serif;
+  font-size: 16px;
+  color: #444;
+  opacity: 0.85;
+  letter-spacing: 0.5px;
+}
+
+.penStatusColorDisplay {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.penStatusColorDot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 1px solid rgba(0,0,0,0.1);
 }
 
 /* 响应式调整 */
