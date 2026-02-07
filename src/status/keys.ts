@@ -52,6 +52,7 @@ export type LeaferSettings = {
   freezeScreen: boolean
   rendererEngine?: LeaferRendererEngine
   nibMode?: LeaferNibMode
+  postBakeOptimize?: boolean
 }
 
 export const LEAFER_SETTINGS_KV_KEY = 'leafer-settings'
@@ -82,6 +83,7 @@ export function isLeaferSettings(v: unknown): v is LeaferSettings {
   const s = v as any
   if (s.rendererEngine !== undefined && s.rendererEngine !== 'canvas2d' && s.rendererEngine !== 'webgl' && s.rendererEngine !== 'webgpu') return false
   if (s.nibMode !== undefined && s.nibMode !== 'off' && s.nibMode !== 'dynamic' && s.nibMode !== 'static') return false
+  if (s.postBakeOptimize !== undefined && typeof s.postBakeOptimize !== 'boolean') return false
   return (
     typeof s.multiTouch === 'boolean' &&
     typeof s.inkSmoothing === 'boolean' &&

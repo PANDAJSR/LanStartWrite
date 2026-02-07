@@ -968,7 +968,8 @@ function AnnotationSettings() {
       showInkWhenPassthrough: true,
       freezeScreen: false,
       rendererEngine: 'canvas2d',
-      nibMode: 'off'
+      nibMode: 'off',
+      postBakeOptimize: false
     },
     { validate: isLeaferSettings }
   )
@@ -1164,6 +1165,12 @@ function AnnotationSettings() {
               checked={leaferSettings.inkSmoothing}
               onChange={(e) => persistLeaferSettings({ ...leaferSettings, inkSmoothing: e.currentTarget.checked })}
               label="墨迹平滑"
+              size="md"
+            />
+            <Switch
+              checked={leaferSettings.postBakeOptimize ?? false}
+              onChange={(e) => persistLeaferSettings({ ...leaferSettings, postBakeOptimize: e.currentTarget.checked })}
+              label="烘干后处理优化"
               size="md"
             />
             <Switch
