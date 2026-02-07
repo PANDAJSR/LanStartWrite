@@ -80,6 +80,18 @@
   margin-bottom: 12px;
 }
 
+.settingsFormGroup {
+  margin-top: 14px;
+  margin-bottom: 14px;
+}
+
+.settingsSwitchList {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding-top: 6px;
+}
+
 /* 关于页面卡片 */
 .settingsAboutCard {
   display: flex;

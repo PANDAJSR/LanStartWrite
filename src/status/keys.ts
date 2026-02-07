@@ -37,6 +37,18 @@ export const CLEAR_PAGE_REV_UI_STATE_KEY = 'clearPageRev'
 export const UNDO_REV_UI_STATE_KEY = 'undoRev'
 export const REDO_REV_UI_STATE_KEY = 'redoRev'
 
+export type LeaferRendererEngine = 'canvas2d' | 'webgl' | 'webgpu'
+export type LeaferSettings = {
+  multiTouch: boolean
+  inkSmoothing: boolean
+  showInkWhenPassthrough: boolean
+  freezeScreen: boolean
+  rendererEngine?: LeaferRendererEngine
+}
+
+export const LEAFER_SETTINGS_KV_KEY = 'leafer-settings'
+export const LEAFER_SETTINGS_UI_STATE_KEY = 'leaferSettingsRev'
+
 export function isAppearance(v: unknown): v is Appearance {
   return v === 'light' || v === 'dark'
 }
@@ -55,4 +67,16 @@ export function isActiveApp(v: unknown): v is ActiveApp {
 
 export function isEffectiveWritingBackend(v: unknown): v is EffectiveWritingBackend {
   return v === 'konva' || v === 'qt' || v === 'leafer' || v === 'word' || v === 'ppt'
+}
+
+export function isLeaferSettings(v: unknown): v is LeaferSettings {
+  if (!v || typeof v !== 'object') return false
+  const s = v as any
+  if (s.rendererEngine !== undefined && s.rendererEngine !== 'canvas2d' && s.rendererEngine !== 'webgl' && s.rendererEngine !== 'webgpu') return false
+  return (
+    typeof s.multiTouch === 'boolean' &&
+    typeof s.inkSmoothing === 'boolean' &&
+    typeof s.showInkWhenPassthrough === 'boolean' &&
+    typeof s.freezeScreen === 'boolean'
+  )
 }

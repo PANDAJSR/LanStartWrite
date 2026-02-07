@@ -1,7 +1,19 @@
 import React from 'react'
 import { Box, Select, Switch } from '@mantine/core'
 import { motion } from '../../Framer_Motion'
-import { putKv, putUiStateKey, TOOLBAR_STATE_KEY, TOOLBAR_STATE_UI_STATE_KEY, UI_STATE_APP_WINDOW_ID, useAppAppearance, usePersistedState } from '../../status'
+import {
+  LEAFER_SETTINGS_KV_KEY,
+  LEAFER_SETTINGS_UI_STATE_KEY,
+  TOOLBAR_STATE_KEY,
+  TOOLBAR_STATE_UI_STATE_KEY,
+  UI_STATE_APP_WINDOW_ID,
+  isLeaferSettings,
+  putKv,
+  putUiStateKey,
+  type LeaferSettings,
+  useAppAppearance,
+  usePersistedState
+} from '../../status'
 import { Button } from '../../button'
 import type { SettingsTab } from '../types'
 import { AccentColorPicker } from './AccentColorPicker'
@@ -948,6 +960,34 @@ function AnnotationSettings() {
   const writingSystemLabel =
     writingSystem === 'inkcanvas' ? 'inkcanvas' : writingSystem === 'winui' ? 'winui' : 'leafer.js'
 
+  const [leaferSettings, setLeaferSettings] = usePersistedState<LeaferSettings>(
+    LEAFER_SETTINGS_KV_KEY,
+    {
+      multiTouch: false,
+      inkSmoothing: true,
+      showInkWhenPassthrough: true,
+      freezeScreen: false,
+      rendererEngine: 'canvas2d'
+    },
+    { validate: isLeaferSettings }
+  )
+
+  const persistLeaferSettings = (next: LeaferSettings) => {
+    setLeaferSettings(next)
+    void (async () => {
+      try {
+        await putKv(LEAFER_SETTINGS_KV_KEY, next)
+      } catch {
+        return
+      }
+      try {
+        await putUiStateKey(UI_STATE_APP_WINDOW_ID, LEAFER_SETTINGS_UI_STATE_KEY, Date.now())
+      } catch {
+        return
+      }
+    })()
+  }
+
   return (
     <div className="settingsContentSection">
       <h2 className="settingsContentTitle">批注系统</h2>
@@ -970,15 +1010,67 @@ function AnnotationSettings() {
         />
       </div>
 
-      <div className="settingsContentPlaceholder">
-        <div className="settingsContentPlaceholderIcon">
-          <svg viewBox="0 0 24 24" width="48" height="48" fill="none" stroke="currentColor" strokeWidth="1.5">
-            <path d="M12 19l7-7 3 3-7 7-3-3z" />
-            <path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z" />
-          </svg>
+      {writingSystem === 'leafer' ? (
+        <div className="settingsFormCard">
+          <div className="settingsFormTitle">Leafer.js</div>
+          <div className="settingsFormDescription">配置 Leafer.js 书写体验</div>
+          <div className="settingsFormGroup">
+            <div className="settingsFormTitle">笔迹渲染引擎</div>
+            <div className="settingsFormDescription">Canvas2D 默认启用低延迟模式；WebGPU 为实验性</div>
+            <Select
+              value={leaferSettings.rendererEngine ?? 'canvas2d'}
+              data={[
+                { value: 'canvas2d', label: 'Canvas2D（低延迟，默认）' },
+                { value: 'webgl', label: 'WebGL' },
+                { value: 'webgpu', label: 'WebGPU（实验性）' }
+              ]}
+              allowDeselect={false}
+              onChange={(value) => {
+                if (value !== 'canvas2d' && value !== 'webgl' && value !== 'webgpu') return
+                persistLeaferSettings({ ...leaferSettings, rendererEngine: value })
+              }}
+            />
+          </div>
+          <div className="settingsSwitchList">
+            <Switch
+              checked={leaferSettings.multiTouch}
+              onChange={(e) => persistLeaferSettings({ ...leaferSettings, multiTouch: e.currentTarget.checked })}
+              label="多指书写"
+              size="md"
+            />
+            <Switch
+              checked={leaferSettings.inkSmoothing}
+              onChange={(e) => persistLeaferSettings({ ...leaferSettings, inkSmoothing: e.currentTarget.checked })}
+              label="墨迹平滑"
+              size="md"
+            />
+            <Switch
+              checked={leaferSettings.showInkWhenPassthrough}
+              onChange={(e) =>
+                persistLeaferSettings({ ...leaferSettings, showInkWhenPassthrough: e.currentTarget.checked })
+              }
+              label="操作穿透时显示笔迹"
+              size="md"
+            />
+            <Switch
+              checked={leaferSettings.freezeScreen}
+              onChange={(e) => persistLeaferSettings({ ...leaferSettings, freezeScreen: e.currentTarget.checked })}
+              label="屏幕内容冻结批注"
+              size="md"
+            />
+          </div>
         </div>
-        <p className="settingsContentPlaceholderText">{writingSystemLabel} 的启用与设置即将推出</p>
-      </div>
+      ) : (
+        <div className="settingsContentPlaceholder">
+          <div className="settingsContentPlaceholderIcon">
+            <svg viewBox="0 0 24 24" width="48" height="48" fill="none" stroke="currentColor" strokeWidth="1.5">
+              <path d="M12 19l7-7 3 3-7 7-3-3z" />
+              <path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z" />
+            </svg>
+          </div>
+          <p className="settingsContentPlaceholderText">{writingSystemLabel} 的启用与设置即将推出</p>
+        </div>
+      )}
     </div>
   )
 }
