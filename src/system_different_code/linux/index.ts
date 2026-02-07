@@ -83,3 +83,7 @@ export function createLinuxAdapter(): TaskWatcherAdapter {
   return { getProcesses: getProcessesLinux, getForegroundWindow: getForegroundWindowLinux }
 }
 
+export async function forceTopmostWindowsLinux(_hwnds: bigint[]): Promise<void> {
+  return
+}
+

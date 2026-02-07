@@ -38,16 +38,16 @@
 .penColorGrid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  grid-template-rows: repeat(4, auto); /* 4行 */
-  gap: 10px;
+  grid-template-rows: repeat(3, auto); /* 3行 */
+  gap: 12px;
   justify-items: center;
 }
 
 /* 颜色按钮 */
 .penColorButton {
-  width: 52px; /* 加宽颜色块 */
-  height: 32px;
-  border-radius: 8px; /* 圆角矩形 */
+  width: 44px; /* 加大并改为圆形 */
+  height: 44px;
+  border-radius: 50%; /* 圆形 */
   border: 2px solid transparent;
   cursor: pointer;
   position: relative;

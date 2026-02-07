@@ -40,6 +40,37 @@ function runPowerShellJson(script: string, timeoutMs = 1400): Promise<unknown> {
   })
 }
 
+function runPowerShell(script: string, timeoutMs = 1400): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const proc = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', script], {
+      windowsHide: true,
+      stdio: ['ignore', 'ignore', 'pipe']
+    })
+
+    let stderr = ''
+
+    const timer = setTimeout(() => {
+      try {
+        proc.kill()
+      } catch {}
+      reject(new Error('powershell_timeout'))
+    }, timeoutMs)
+
+    proc.stderr.on('data', (c) => {
+      stderr += String(c)
+    })
+    proc.on('error', (e) => {
+      clearTimeout(timer)
+      reject(e)
+    })
+    proc.on('close', (code) => {
+      clearTimeout(timer)
+      if (code !== 0) reject(new Error(stderr.trim() || `powershell_exit_${code ?? 'unknown'}`))
+      else resolve()
+    })
+  })
+}
+
 export async function getProcessesWindows(): Promise<ProcessSample[]> {
   const script =
     'Get-Process | Select-Object Id,ProcessName,CPU,WorkingSet64 | ConvertTo-Json -Depth 3 -Compress'
@@ -121,3 +152,45 @@ export function createWindowsAdapter(): TaskWatcherAdapter {
   return { getProcesses: getProcessesWindows, getForegroundWindow: getForegroundWindowWindows }
 }
 
+export async function forceTopmostWindowsWindows(hwnds: bigint[]): Promise<void> {
+  const uniq: bigint[] = []
+  const seen = new Set<string>()
+  for (const h of hwnds) {
+    if (typeof h !== 'bigint') continue
+    if (h <= 0n) continue
+    const k = h.toString()
+    if (seen.has(k)) continue
+    seen.add(k)
+    uniq.push(h)
+  }
+  if (uniq.length === 0) return
+
+  const list = uniq.map((h) => h.toString()).join(',')
+  const script = `
+Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+public class LanStartWin32Z {
+  [DllImport("user32.dll", SetLastError=true)]
+  public static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
+  [DllImport("user32.dll", SetLastError=true)]
+  public static extern bool BringWindowToTop(IntPtr hWnd);
+}
+"@
+$SWP_NOSIZE = 0x0001
+$SWP_NOMOVE = 0x0002
+$SWP_NOACTIVATE = 0x0010
+$SWP_SHOWWINDOW = 0x0040
+$HWND_TOPMOST = [IntPtr](-1)
+$flags = $SWP_NOSIZE -bor $SWP_NOMOVE -bor $SWP_NOACTIVATE -bor $SWP_SHOWWINDOW
+$hwnds = @(${list})
+foreach ($h in $hwnds) {
+  try {
+    $ptr = [IntPtr]::new([Int64]$h)
+    [LanStartWin32Z]::SetWindowPos($ptr, $HWND_TOPMOST, 0, 0, 0, 0, $flags) | Out-Null
+    [LanStartWin32Z]::BringWindowToTop($ptr) | Out-Null
+  } catch {}
+}
+`
+  await runPowerShell(script, 1200).catch(() => undefined)
+}

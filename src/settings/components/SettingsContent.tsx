@@ -118,7 +118,6 @@ function ToolbarSettings() {
 
   type ToolbarState = {
     collapsed: boolean
-    alwaysOnTop: boolean
     uiWidth?: number
     uiButtonSize?: 'sm' | 'md'
     tool?: 'mouse' | 'pen' | 'eraser'
@@ -223,8 +222,7 @@ function ToolbarSettings() {
   const isToolbarState = (value: unknown): value is ToolbarState => {
     if (!value || typeof value !== 'object') return false
     const v = value as any
-    const okBase = typeof v.collapsed === 'boolean' && typeof v.alwaysOnTop === 'boolean'
-    if (!okBase) return false
+    if (typeof v.collapsed !== 'boolean') return false
     if (v.uiWidth !== undefined && typeof v.uiWidth !== 'number') return false
     if (v.uiButtonSize !== undefined && v.uiButtonSize !== 'sm' && v.uiButtonSize !== 'md') return false
     if (v.tool !== undefined && v.tool !== 'mouse' && v.tool !== 'pen' && v.tool !== 'eraser') return false
@@ -241,7 +239,6 @@ function ToolbarSettings() {
     TOOLBAR_STATE_KEY,
     {
       collapsed: false,
-      alwaysOnTop: true,
       uiWidth: 360,
       uiButtonSize: 'sm',
       expanded: true,

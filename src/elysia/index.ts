@@ -169,12 +169,6 @@ async function handleCommand(command: string, payload: unknown): Promise<Command
         return { ok: true }
       }
 
-      if (action === 'setToolbarAlwaysOnTop') {
-        const value = Boolean((payload as any)?.value)
-        requestMain({ type: 'SET_TOOLBAR_ALWAYS_ON_TOP', value })
-        return { ok: true }
-      }
-
       if (action === 'setToolbarBounds') {
         const width = Number((payload as any)?.width)
         const height = Number((payload as any)?.height)
@@ -401,12 +395,6 @@ async function handleCommand(command: string, payload: unknown): Promise<Command
     const height = Number((payload as any)?.height)
     if (!kind || !Number.isFinite(width) || !Number.isFinite(height)) return { ok: false, error: 'BAD_SUBWINDOW_BOUNDS' }
     requestMain({ type: 'SET_SUBWINDOW_BOUNDS', kind, width, height })
-    return { ok: true }
-  }
-
-  if (command === 'set-toolbar-always-on-top') {
-    const value = Boolean((payload as any)?.value)
-    requestMain({ type: 'SET_TOOLBAR_ALWAYS_ON_TOP', value })
     return { ok: true }
   }
 

@@ -75,7 +75,6 @@ function ChevronRightIcon() {
 
 type ToolbarState = {
   collapsed: boolean
-  alwaysOnTop: boolean
   uiWidth?: number
   uiButtonSize?: 'sm' | 'md'
   tool?: 'mouse' | 'pen' | 'eraser'
@@ -195,8 +194,7 @@ function arraysEqual<T>(a: readonly T[] | undefined, b: readonly T[] | undefined
 function isToolbarState(value: unknown): value is ToolbarState {
   if (!value || typeof value !== 'object') return false
   const v = value as any
-  const okBase = typeof v.collapsed === 'boolean' && typeof v.alwaysOnTop === 'boolean'
-  if (!okBase) return false
+  if (typeof v.collapsed !== 'boolean') return false
   if (v.uiWidth !== undefined && typeof v.uiWidth !== 'number') return false
   if (v.uiButtonSize !== undefined && v.uiButtonSize !== 'sm' && v.uiButtonSize !== 'md') return false
   if (v.tool !== undefined && v.tool !== 'mouse' && v.tool !== 'pen' && v.tool !== 'eraser') return false
@@ -225,7 +223,6 @@ function useToolbar() {
 function ToolbarProvider({ children }: { children: React.ReactNode }) {
   const [state, setState] = usePersistedState<ToolbarState>(TOOLBAR_STATE_KEY, {
     collapsed: false,
-    alwaysOnTop: true,
     uiWidth: 360,
     uiButtonSize: 'sm',
     expanded: true,
@@ -271,7 +268,6 @@ function ToolbarProvider({ children }: { children: React.ReactNode }) {
     const normalizedSecondary = normalizeSecondaryButtonsOrder((state as any).secondaryButtonsOrder, normalizedAllowedSecondary, normalizedPinnedSecondary)
     const normalized: ToolbarState = {
       collapsed: Boolean(state.collapsed),
-      alwaysOnTop: Boolean(state.alwaysOnTop),
       uiWidth: typeof state.uiWidth === 'number' ? state.uiWidth : 360,
       uiButtonSize: state.uiButtonSize === 'md' ? 'md' : 'sm',
       tool: state.tool === 'pen' ? 'pen' : state.tool === 'eraser' ? 'eraser' : 'mouse',
@@ -284,7 +280,6 @@ function ToolbarProvider({ children }: { children: React.ReactNode }) {
     }
     if (
       normalized.collapsed !== state.collapsed ||
-      normalized.alwaysOnTop !== state.alwaysOnTop ||
       normalized.uiWidth !== state.uiWidth ||
       normalized.uiButtonSize !== state.uiButtonSize ||
       normalized.tool !== state.tool ||

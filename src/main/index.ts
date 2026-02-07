@@ -3,8 +3,8 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { platform } from 'node:process'
-import { AppWindowsManager } from '../app_windows_manerger'
-import { createTaskWatcherAdapter } from '../system_different_code'
+import { AppWindowsManager, startWindowTopmostPolling } from '../app_windows_manerger'
+import { createTaskWatcherAdapter, forceTopmostWindows } from '../system_different_code'
 import { TaskWindowsWatcher } from '../task_windows_watcher/TaskWindowsWatcher'
 import { createLanstartwriteLinkController } from '../url_http_link'
 
@@ -41,6 +41,7 @@ let currentAppearance: Appearance = 'light'
 let didApplyAppearance = false
 let toolbarUiZoom = 0
 let nativeMicaEnabled = false
+let stopToolbarTopmostPolling: (() => void) | undefined
 
 type BackendRpcResponse =
   | { type: 'RPC_RESPONSE'; id: number; ok: true; result: unknown }
@@ -429,7 +430,7 @@ function createFloatingToolbarWindow(): BrowserWindow {
   })
 
   applyWindowsBackdrop(win)
-  win.setAlwaysOnTop(true, 'floating')
+  win.setAlwaysOnTop(true, 'screen-saver')
   wireWindowDebug(win, 'floating-toolbar')
   wireWindowStatus(win, WINDOW_ID_FLOATING_TOOLBAR)
   try {
@@ -490,7 +491,7 @@ function createFloatingToolbarHandleWindow(owner: BrowserWindow): BrowserWindow 
   })
 
   applyWindowsBackdrop(win)
-  win.setAlwaysOnTop(true, 'floating')
+  win.setAlwaysOnTop(true, 'screen-saver')
   wireWindowDebug(win, 'floating-toolbar-handle')
   wireWindowStatus(win, WINDOW_ID_FLOATING_TOOLBAR_HANDLE)
   try {
@@ -548,6 +549,19 @@ function applyToolbarOnTopLevel(level: 'normal' | 'floating' | 'torn-off-menu' |
   }
 }
 
+function readWin32Hwnd(win: BrowserWindow): bigint | undefined {
+  if (process.platform !== 'win32') return undefined
+  try {
+    const buf = win.getNativeWindowHandle()
+    if (!buf || typeof (buf as any).length !== 'number') return undefined
+    if (buf.length >= 8 && typeof (buf as any).readBigInt64LE === 'function') return (buf as any).readBigInt64LE(0) as bigint
+    if (buf.length >= 4 && typeof (buf as any).readUInt32LE === 'function') return BigInt((buf as any).readUInt32LE(0))
+    return undefined
+  } catch {
+    return undefined
+  }
+}
+
 function hideAllToolbarSubwindows() {
   for (const item of toolbarSubwindows.values()) {
     const win = item.win
@@ -555,25 +569,6 @@ function hideAllToolbarSubwindows() {
     stopToolbarSubwindowAnimation(item)
     if (win.isVisible()) win.hide()
   }
-}
-
-function restoreToolbarAlwaysOnTopFromPersistedState() {
-  requestBackendRpc('getKv', { key: 'toolbar-state' })
-    .then((raw: any) => {
-      const alwaysOnTop = Boolean(raw?.alwaysOnTop)
-      const toolbar = floatingToolbarWindow
-      if (toolbar && !toolbar.isDestroyed()) toolbar.setAlwaysOnTop(alwaysOnTop, 'floating')
-
-      const handle = floatingToolbarHandleWindow
-      if (handle && !handle.isDestroyed()) handle.setAlwaysOnTop(alwaysOnTop, 'floating')
-
-      for (const item of toolbarSubwindows.values()) {
-        const win = item.win
-        if (win.isDestroyed()) continue
-        win.setAlwaysOnTop(alwaysOnTop, 'floating')
-      }
-    })
-    .catch(() => undefined)
 }
 
 function scheduleRepositionToolbarSubwindows(reason: ToolbarRepositionReason) {
@@ -826,7 +821,6 @@ function createPaintBoardWindow(): BrowserWindow {
     }
     requestBackendRpc('putUiStateKey', { windowId: 'app', key: 'mode', value: 'toolbar' }).catch(() => undefined)
     requestBackendRpc('putKv', { key: 'app-mode', value: 'toolbar' }).catch(() => undefined)
-    restoreToolbarAlwaysOnTopFromPersistedState()
   })
 
   return win
@@ -925,7 +919,6 @@ function createAnnotationOverlayWindow(ownerWindow: BrowserWindow): BrowserWindo
     }
     requestBackendRpc('putUiStateKey', { windowId: 'app', key: 'mode', value: 'toolbar' }).catch(() => undefined)
     requestBackendRpc('putKv', { key: 'app-mode', value: 'toolbar' }).catch(() => undefined)
-    restoreToolbarAlwaysOnTopFromPersistedState()
   })
 
   return win
@@ -983,7 +976,6 @@ function createScreenAnnotationOverlayWindow(): BrowserWindow {
 
   win.on('closed', () => {
     if (screenAnnotationOverlayWindow === win) screenAnnotationOverlayWindow = undefined
-    restoreToolbarAlwaysOnTopFromPersistedState()
   })
 
   return win
@@ -1022,7 +1014,7 @@ function getOrCreateToolbarSubwindow(kind: string, placement: 'top' | 'bottom'):
   })
 
   applyWindowsBackdrop(win)
-  win.setAlwaysOnTop(true, 'floating')
+  win.setAlwaysOnTop(true, 'screen-saver')
   wireWindowDebug(win, `subwindow-${kind}`)
   wireWindowStatus(win, `${WINDOW_ID_TOOLBAR_SUBWINDOW}:${kind}`)
   try {
@@ -1196,7 +1188,7 @@ function handleBackendControlMessage(message: any): void {
         whiteboardBackgroundWindow = undefined
         closingWhiteboardWindows = false
       }
-      restoreToolbarAlwaysOnTopFromPersistedState()
+      applyToolbarOnTopLevel('screen-saver')
     }
     return
   }
@@ -1275,7 +1267,7 @@ function handleBackendControlMessage(message: any): void {
           if (overlay.isVisible()) overlay.hide()
         } catch {}
       }
-      restoreToolbarAlwaysOnTopFromPersistedState()
+      applyToolbarOnTopLevel('screen-saver')
     }
 
     return
@@ -1308,25 +1300,6 @@ function handleBackendControlMessage(message: any): void {
     const height = Number((message as any).height)
     if (!kind || !Number.isFinite(width) || !Number.isFinite(height)) return
     setToolbarSubwindowBounds(kind, { width, height })
-    return
-  }
-
-  if (message.type === 'SET_TOOLBAR_ALWAYS_ON_TOP') {
-    const value = Boolean(message.value)
-    if (
-      (whiteboardBackgroundWindow && !whiteboardBackgroundWindow.isDestroyed()) ||
-      (annotationOverlayWindow && !annotationOverlayWindow.isDestroyed()) ||
-      (screenAnnotationOverlayWindow && !screenAnnotationOverlayWindow.isDestroyed() && screenAnnotationOverlayWindow.isVisible())
-    ) {
-      applyToolbarOnTopLevel('screen-saver')
-      return
-    }
-    floatingToolbarWindow?.setAlwaysOnTop(value, 'floating')
-    floatingToolbarHandleWindow?.setAlwaysOnTop(value, 'floating')
-    for (const item of toolbarSubwindows.values()) {
-      if (item.win.isDestroyed()) continue
-      item.win.setAlwaysOnTop(value, 'floating')
-    }
     return
   }
 
@@ -1501,10 +1474,40 @@ if (hasSingleInstanceLock) {
       floatingToolbarWindow = win
       const handle = createFloatingToolbarHandleWindow(win)
       floatingToolbarHandleWindow = handle
+      if (!stopToolbarTopmostPolling) {
+        const poller = startWindowTopmostPolling({
+          intervalMs: 500,
+          getTargets: () => {
+            const out: BrowserWindow[] = []
+            const toolbar = floatingToolbarWindow
+            if (toolbar && !toolbar.isDestroyed()) out.push(toolbar)
+            const h = floatingToolbarHandleWindow
+            if (h && !h.isDestroyed()) out.push(h)
+            for (const item of toolbarSubwindows.values()) {
+              const sw = item.win
+              if (sw && !sw.isDestroyed()) out.push(sw)
+            }
+            return out
+          },
+          tick: async (targets) => {
+            applyToolbarOnTopLevel('screen-saver')
+            if (process.platform !== 'win32') return
+            const hwnds: bigint[] = []
+            for (const w of targets) {
+              if (!w || w.isDestroyed()) continue
+              const hwnd = readWin32Hwnd(w)
+              if (typeof hwnd === 'bigint') hwnds.push(hwnd)
+            }
+            await forceTopmostWindows(hwnds)
+          }
+        })
+        stopToolbarTopmostPolling = poller.stop
+      }
       win.once('ready-to-show', () => {
         win.show()
         scheduleRepositionToolbarSubwindows('other')
         if (!handle.isDestroyed()) handle.showInactive()
+        applyToolbarOnTopLevel('screen-saver')
       })
 
       app.on('activate', () => {
@@ -1533,6 +1536,9 @@ app.on('window-all-closed', () => {
 app.on('before-quit', () => {
   sendToBackend({ type: 'PROCESS_STATUS', name: 'main', status: 'before-quit', pid: process.pid, ts: Date.now() })
   sendToBackend({ type: 'CLEANUP_RUNTIME' })
+  try {
+    stopToolbarTopmostPolling?.()
+  } catch {}
   taskWatcher?.stop()
   if (backendProcess && !backendProcess.killed) backendProcess.kill()
 })

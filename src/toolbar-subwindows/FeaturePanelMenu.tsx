@@ -2,14 +2,11 @@ import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { Button } from '../button'
 import { motion, useReducedMotion } from '../Framer_Motion'
 import { useHyperGlassRealtimeBlur } from '../hyper_glass'
-import { TOOLBAR_STATE_KEY, usePersistedState } from '../status'
 import { markQuitting, postCommand } from '../toolbar/hooks/useBackend'
 import { useZoomOnWheel } from '../toolbar/hooks/useZoomOnWheel'
 import { getAppButtonVisibility, type AppButtonId } from '../toolbar/utils/constants'
 import {
   WatcherIcon,
-  PinIcon,
-  PinFilledIcon,
   EventsIcon,
   SettingsIcon,
   QuitIcon,
@@ -17,7 +14,7 @@ import {
 } from '../toolbar/components/ToolbarIcons'
 import './styles/subwindow.css'
 
-type GridIconKind = 'grid' | 'plus' | 'gear' | 'doc' | 'db' | 'events' | 'watcher' | 'pin' | 'pin-filled' | 'quit'
+type GridIconKind = 'grid' | 'plus' | 'gear' | 'doc' | 'db' | 'events' | 'watcher' | 'quit'
 
 function GridIcon(props: { kind: GridIconKind }) {
   const stroke = 'currentColor'
@@ -50,14 +47,6 @@ function GridIcon(props: { kind: GridIconKind }) {
 
   if (props.kind === 'watcher') {
     return <WatcherIcon />
-  }
-
-  if (props.kind === 'pin') {
-    return <PinIcon />
-  }
-
-  if (props.kind === 'pin-filled') {
-    return <PinFilledIcon />
   }
 
   if (props.kind === 'gear') {
@@ -100,19 +89,6 @@ export function FeaturePanelMenu(props: { kind: string }) {
   const [pagerViewportWidth, setPagerViewportWidth] = useState(0)
 
   useHyperGlassRealtimeBlur({ root: rootRef.current })
-
-  type ToolbarState = { collapsed: boolean; alwaysOnTop: boolean }
-  function isToolbarState(v: unknown): v is ToolbarState {
-    if (!v || typeof v !== 'object') return false
-    const x = v as any
-    return typeof x.collapsed === 'boolean' && typeof x.alwaysOnTop === 'boolean'
-  }
-
-  const [toolbarState, setToolbarState] = usePersistedState<ToolbarState>(
-    TOOLBAR_STATE_KEY,
-    { collapsed: false, alwaysOnTop: true },
-    { validate: isToolbarState }
-  )
 
   useEffect(() => {
     const root = rootRef.current
@@ -214,17 +190,6 @@ export function FeaturePanelMenu(props: { kind: string }) {
         }
       },
       {
-        id: 'pin',
-        title: toolbarState.alwaysOnTop ? '取消置顶' : '置顶',
-        icon: toolbarState.alwaysOnTop ? 'pin-filled' : 'pin',
-        variant: toolbarState.alwaysOnTop ? 'light' : 'default',
-        onClick: () => {
-          const next = !toolbarState.alwaysOnTop
-          setToolbarState({ ...toolbarState, alwaysOnTop: next })
-          void postCommand('set-toolbar-always-on-top', { value: next })
-        }
-      },
-      {
         id: 'settings',
         title: '设置',
         icon: 'gear',
@@ -245,7 +210,7 @@ export function FeaturePanelMenu(props: { kind: string }) {
     ]
 
     return allItems.filter((item) => getAppButtonVisibility(item.id).showInFeaturePanel)
-  }, [setToolbarState, toolbarState.alwaysOnTop])
+  }, [])
 
   const pages = useMemo(() => {
     const pageSize = 16

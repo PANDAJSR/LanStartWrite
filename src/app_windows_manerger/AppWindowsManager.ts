@@ -330,3 +330,33 @@ export class AppWindowsManager {
     return win
   }
 }
+
+export function startWindowTopmostPolling(opts: {
+  intervalMs?: number
+  getTargets: () => BrowserWindow[]
+  tick: (targets: BrowserWindow[]) => void | Promise<void>
+}): { stop: () => void } {
+  const intervalMs = Number.isFinite(opts.intervalMs) ? Math.max(500, Number(opts.intervalMs)) : 5000
+  let stopped = false
+  let running = false
+
+  const timer = setInterval(() => {
+    if (stopped) return
+    if (running) return
+    running = true
+    Promise.resolve()
+      .then(() => opts.getTargets())
+      .then((targets) => opts.tick(targets))
+      .catch(() => undefined)
+      .finally(() => {
+        running = false
+      })
+  }, intervalMs)
+
+  return {
+    stop() {
+      stopped = true
+      clearInterval(timer)
+    }
+  }
+}

@@ -9,7 +9,7 @@ import './styles/PenSubmenu.css'
 
 type PenType = 'writing' | 'highlighter' | 'laser'
 
-// 预设颜色 - 3x4 布局需要 12 个颜色
+// 预设颜色 - 3x3 布局需要 9 个颜色
 const PRESET_COLORS = [
   '#000000', // 黑色
   '#FF0000', // 红色
@@ -20,9 +20,6 @@ const PRESET_COLORS = [
   '#FFA500', // 橙色
   '#00FFFF', // 青色
   '#FFFFFF', // 白色
-  '#808080', // 灰色 (新增)
-  '#795548', // 棕色 (新增)
-  '#E91E63', // 粉色 (新增)
 ]
 
 // 倾斜的彩色铅笔/钢笔图标（更符合草图效果）

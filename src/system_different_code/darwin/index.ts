@@ -80,3 +80,7 @@ export function createDarwinAdapter(): TaskWatcherAdapter {
   return { getProcesses: getProcessesDarwin, getForegroundWindow: getForegroundWindowDarwin }
 }
 
+export async function forceTopmostWindowsDarwin(_hwnds: bigint[]): Promise<void> {
+  return
+}
+
