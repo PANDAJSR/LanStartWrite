@@ -97,7 +97,8 @@ const DEFAULT_LEAFER_SETTINGS: LeaferSettings = {
   inkSmoothing: true,
   showInkWhenPassthrough: true,
   freezeScreen: false,
-  rendererEngine: 'canvas2d'
+  rendererEngine: 'canvas2d',
+  nibMode: 'off'
 }
 
 export function AnnotationOverlayApp() {
@@ -120,11 +121,13 @@ export function AnnotationOverlayApp() {
   }, [eraserThickness, penColor, penThickness, penType, tool])
 
   const toolRef = useRef(tool)
+  const penTypeRef = useRef(penType)
   const effectiveStrokeRef = useRef(effectiveStroke)
   const eraserTypeRef = useRef(eraserType)
   const eraserThicknessRef = useRef(eraserThickness)
   const multiTouchRef = useRef(DEFAULT_LEAFER_SETTINGS.multiTouch)
   const inkSmoothingRef = useRef(DEFAULT_LEAFER_SETTINGS.inkSmoothing)
+  const nibModeRef = useRef(DEFAULT_LEAFER_SETTINGS.nibMode ?? 'off')
   const apiRef = useRef<null | { undo: () => void; redo: () => void; clear: () => void }>(null)
   const lastUndoRevRef = useRef<number | null>(null)
   const lastRedoRevRef = useRef<number | null>(null)
@@ -167,8 +170,16 @@ export function AnnotationOverlayApp() {
   }, [leaferSettings.inkSmoothing])
 
   useEffect(() => {
+    nibModeRef.current = leaferSettings.nibMode ?? 'off'
+  }, [leaferSettings.nibMode])
+
+  useEffect(() => {
     toolRef.current = tool
   }, [tool])
+
+  useEffect(() => {
+    penTypeRef.current = penType
+  }, [penType])
 
   useEffect(() => {
     effectiveStrokeRef.current = effectiveStroke
@@ -423,6 +434,69 @@ export function AnnotationOverlayApp() {
       const baked = bakePolyline(prefixInput, strokeWidth)
       if (baked.length <= 2) return points
       return baked.slice(0, -2).concat(points.slice(tailStart))
+    }
+
+    type NibSegment = { points: number[]; strokeWidth: number }
+
+    const buildNibSegments = (points: number[], baseStrokeWidth: number, mode: 'off' | 'dynamic' | 'static'): NibSegment[] => {
+      if (mode !== 'dynamic') return [{ points, strokeWidth: baseStrokeWidth }]
+      if (points.length < 8) return [{ points, strokeWidth: baseStrokeWidth }]
+
+      const lengths: number[] = []
+      let totalLen = 0
+      for (let i = 2; i + 1 < points.length; i += 2) {
+        const ax = points[i - 2]
+        const ay = points[i - 1]
+        const bx = points[i]
+        const by = points[i + 1]
+        const d = Math.hypot(bx - ax, by - ay)
+        lengths.push(d)
+        totalLen += d
+      }
+      totalLen = Math.max(1e-6, totalLen)
+
+      const smoothstep = (edge0: number, edge1: number, x: number) => {
+        const t = clamp((x - edge0) / (edge1 - edge0), 0, 1)
+        return t * t * (3 - 2 * t)
+      }
+
+      const widthAtIndex = (idx: number, accLen: number) => {
+        const t = accLen / totalLen
+        const start = smoothstep(0, 0.18, t)
+        const end = smoothstep(0, 0.18, 1 - t)
+        const taper = Math.min(start, end)
+        const dist = idx > 0 ? lengths[idx - 1] : 0
+        const speedFactor = clamp(1.15 - dist * 0.12, 0.55, 1.15)
+        const w = baseStrokeWidth * (0.35 + 0.65 * taper) * speedFactor
+        return clamp(w, 1, 240)
+      }
+
+      const targetSegLen = clamp(baseStrokeWidth * 2.2, 18, 46)
+      const segments: NibSegment[] = []
+      let segStart = 0
+      let segAcc = 0
+      let acc = 0
+      for (let i = 0; i < lengths.length; i++) {
+        const d = lengths[i]
+        acc += d
+        segAcc += d
+        if (segAcc < targetSegLen && i < lengths.length - 1) continue
+
+        const startCoordIndex = segStart * 2
+        const endCoordIndex = (i + 1) * 2
+        const segPoints = points.slice(startCoordIndex, endCoordIndex + 2)
+        if (segPoints.length >= 4) {
+          const midLen = acc - segAcc * 0.5
+          const sw = widthAtIndex(i, midLen)
+          segments.push({ points: segPoints, strokeWidth: sw })
+        }
+
+        segStart = i
+        segAcc = 0
+      }
+
+      if (!segments.length) return [{ points, strokeWidth: baseStrokeWidth }]
+      return segments
     }
 
     const appendCircleTriangles = (verts: number[], cx: number, cy: number, r: number, segments: number) => {
@@ -851,11 +925,14 @@ struct VSOut {
         number,
         {
           line: null | Line
+          bakedLines: Line[]
           points: number[]
           erasing: boolean
           erased: Line[]
           erasedSet: Set<Line>
           strokeWidth: number
+          stroke: any
+          nibDynamic: boolean
           smoothX: number
           smoothY: number
           hasSmooth: boolean
@@ -904,8 +981,6 @@ struct VSOut {
         if (!session) return
         if (!inkSmoothingRef.current) return
         if (!session.line) return
-        const meta = getMeta(session.line)
-        if (!meta) return
         const now = performance.now()
         const newCoords = session.points.length - session.lastBakeLen
         if (newCoords < BAKE_MIN_NEW_COORDS && now - session.lastBakeAt < BAKE_MIN_INTERVAL_MS) return
@@ -919,14 +994,66 @@ struct VSOut {
           if (!current || current !== session) return
           if (!inkSmoothingRef.current) return
           if (!current.line) return
-          const m = getMeta(current.line)
-          if (!m) return
-          const baked = bakePolylineWithTail(current.points, m.strokeWidth, BAKE_TAIL_POINTS)
+          const baked = bakePolylineWithTail(current.points, current.strokeWidth, BAKE_TAIL_POINTS)
           if (baked === current.points) return
           current.points = baked
-          m.points = baked
-          recomputeBounds(m, baked)
-          ;(current.line as any).points = baked
+
+          if (!current.nibDynamic) {
+            const m = getMeta(current.line)
+            if (!m) return
+            m.points = baked
+            recomputeBounds(m, baked)
+            ;(current.line as any).points = baked
+            return
+          }
+
+          const tailCoords = BAKE_TAIL_POINTS * 2
+          const prefixLen = Math.max(0, baked.length - tailCoords)
+          const prefix = baked.slice(0, prefixLen)
+          const tail = baked.slice(Math.max(0, prefixLen - 2))
+
+          const tailMeta = getMeta(current.line)
+          if (tailMeta) {
+            tailMeta.points = tail
+            recomputeBounds(tailMeta, tail)
+          }
+          ;(current.line as any).points = tail
+
+          const segments = buildNibSegments(prefix, current.strokeWidth, 'dynamic')
+          const nextLines: Line[] = []
+          for (let i = 0; i < segments.length; i++) {
+            const seg = segments[i]
+            const existing = current.bakedLines[i]
+            if (existing) {
+              const em = getMeta(existing)
+              if (em) {
+                em.strokeWidth = seg.strokeWidth
+                em.points = seg.points
+                recomputeBounds(em, seg.points)
+              }
+              ;(existing as any).points = seg.points
+              ;(existing as any).strokeWidth = seg.strokeWidth
+              nextLines.push(existing)
+              continue
+            }
+            const line = new Line({
+              points: seg.points,
+              ...current.stroke,
+              strokeWidth: seg.strokeWidth
+            } as any)
+            const p0x = seg.points[0] ?? 0
+            const p0y = seg.points[1] ?? 0
+            setMeta(line, { role: 'stroke', strokeWidth: seg.strokeWidth, points: seg.points, minX: p0x, minY: p0y, maxX: p0x, maxY: p0y })
+            const meta = getMeta(line)
+            if (meta) recomputeBounds(meta, seg.points)
+            addNodes([line])
+            nextLines.push(line)
+          }
+
+          if (current.bakedLines.length > nextLines.length) {
+            removeNodes(current.bakedLines.slice(nextLines.length))
+          }
+          current.bakedLines = nextLines
         })
       }
 
@@ -937,11 +1064,14 @@ struct VSOut {
         const { x, y } = getPoint(e)
         const session = {
           line: null as null | Line,
+          bakedLines: [] as Line[],
           points: [] as number[],
           erasing: toolRef.current === 'eraser' && eraserTypeRef.current === 'stroke',
           erased: [] as Line[],
           erasedSet: new Set<Line>(),
           strokeWidth: 6,
+          stroke: null as any,
+          nibDynamic: false,
           smoothX: x,
           smoothY: y,
           hasSmooth: false,
@@ -972,6 +1102,8 @@ struct VSOut {
         const stroke = effectiveStrokeRef.current as any
         const strokeWidth = typeof stroke?.strokeWidth === 'number' ? stroke.strokeWidth : toolRef.current === 'eraser' ? eraserThicknessRef.current : 6
         session.strokeWidth = strokeWidth
+        session.stroke = stroke
+        session.nibDynamic = nibModeRef.current === 'dynamic' && toolRef.current === 'pen' && penTypeRef.current === 'writing'
         session.line = new Line({
           points: session.points,
           ...stroke
@@ -1010,10 +1142,23 @@ struct VSOut {
 
         if (!session.line) return
         const meta = getMeta(session.line)
-        if (meta) {
-          for (let i = 0; i + 1 < appended.length; i += 2) updateBounds(meta, appended[i], appended[i + 1])
+        if (!session.nibDynamic) {
+          if (meta) {
+            for (let i = 0; i + 1 < appended.length; i += 2) updateBounds(meta, appended[i], appended[i + 1])
+          }
+          ;(session.line as any).points = session.points
+          maybeScheduleBake(e.pointerId)
+          return
         }
-        ;(session.line as any).points = session.points
+
+        const tailCoords = BAKE_TAIL_POINTS * 2
+        const tailStart = session.bakedLines.length ? Math.max(0, session.points.length - tailCoords - 2) : 0
+        const tail = session.points.slice(tailStart)
+        if (meta) {
+          meta.points = tail
+          recomputeBounds(meta, tail)
+        }
+        ;(session.line as any).points = tail
         maybeScheduleBake(e.pointerId)
       }
 
@@ -1029,6 +1174,30 @@ struct VSOut {
 
         if (erased.length) record({ kind: 'remove', nodes: erased })
         else if (activeLine) {
+          if (session.nibDynamic) {
+            const full = inkSmoothingRef.current ? bakePolyline(session.points, session.strokeWidth) : session.points
+            const segments = buildNibSegments(full, session.strokeWidth, 'dynamic')
+            removeNodes([activeLine, ...session.bakedLines])
+
+            const next: Line[] = []
+            for (const seg of segments) {
+              const line = new Line({
+                points: seg.points,
+                ...session.stroke,
+                strokeWidth: seg.strokeWidth
+              } as any)
+              const p0x = seg.points[0] ?? 0
+              const p0y = seg.points[1] ?? 0
+              setMeta(line, { role: 'stroke', strokeWidth: seg.strokeWidth, points: seg.points, minX: p0x, minY: p0y, maxX: p0x, maxY: p0y })
+              const meta = getMeta(line)
+              if (meta) recomputeBounds(meta, seg.points)
+              addNodes([line])
+              next.push(line)
+            }
+            record({ kind: 'add', nodes: next })
+            return
+          }
+
           if (inkSmoothingRef.current) {
             const meta = getMeta(activeLine)
             const sw = meta?.strokeWidth ?? session.strokeWidth
@@ -1159,11 +1328,14 @@ struct VSOut {
       number,
       {
         node: null | RenderNode
+        bakedNodes: RenderNode[]
         points: number[]
         erasingStroke: boolean
         erased: RenderNode[]
         erasedSet: Set<RenderNode>
         strokeWidth: number
+        color: [number, number, number, number]
+        nibDynamic: boolean
         smoothX: number
         smoothY: number
         hasSmooth: boolean
@@ -1226,12 +1398,57 @@ struct VSOut {
         if (!inkSmoothingRef.current) return
         const node = current.node
         if (!node) return
-        const baked = bakePolylineWithTail(current.points, node.strokeWidth, BAKE_TAIL_POINTS)
+        const baked = bakePolylineWithTail(current.points, current.strokeWidth, BAKE_TAIL_POINTS)
         if (baked === current.points) return
         current.points = baked
-        node.points = baked
-        node.meta.points = baked
-        recomputeBounds(node.meta, baked)
+
+        if (!current.nibDynamic) {
+          node.points = baked
+          node.meta.points = baked
+          recomputeBounds(node.meta, baked)
+          requestRender()
+          return
+        }
+
+        const tailCoords = BAKE_TAIL_POINTS * 2
+        const prefixLen = Math.max(0, baked.length - tailCoords)
+        const prefix = baked.slice(0, prefixLen)
+        const tail = baked.slice(Math.max(0, prefixLen - 2))
+
+        node.points = tail
+        node.meta.points = tail
+        recomputeBounds(node.meta, tail)
+
+        const segments = buildNibSegments(prefix, current.strokeWidth, 'dynamic')
+        const nextNodes: RenderNode[] = []
+        for (let i = 0; i < segments.length; i++) {
+          const seg = segments[i]
+          const existing = current.bakedNodes[i]
+          if (existing) {
+            existing.strokeWidth = seg.strokeWidth
+            existing.points = seg.points
+            existing.meta.strokeWidth = seg.strokeWidth
+            existing.meta.points = seg.points
+            recomputeBounds(existing.meta, seg.points)
+            nextNodes.push(existing)
+            continue
+          }
+          const p0x = seg.points[0] ?? 0
+          const p0y = seg.points[1] ?? 0
+          const meta: LineMeta = { role: 'stroke', strokeWidth: seg.strokeWidth, points: seg.points, minX: p0x, minY: p0y, maxX: p0x, maxY: p0y }
+          recomputeBounds(meta, seg.points)
+          const n: RenderNode = { role: 'stroke', strokeWidth: seg.strokeWidth, points: seg.points, meta, color: current.color }
+          addNodes([n])
+          nextNodes.push(n)
+        }
+
+        if (current.bakedNodes.length > nextNodes.length) {
+          removeNodes(current.bakedNodes.slice(nextNodes.length))
+        }
+        current.bakedNodes = nextNodes
+
+        removeNodes([node])
+        addNodes([node])
         requestRender()
       })
     }
@@ -1285,11 +1502,14 @@ struct VSOut {
       const { x, y } = getPoint(e)
       const session = {
         node: null as null | RenderNode,
+        bakedNodes: [] as RenderNode[],
         points: [] as number[],
         erasingStroke: toolRef.current === 'eraser' && eraserTypeRef.current === 'stroke',
         erased: [] as RenderNode[],
         erasedSet: new Set<RenderNode>(),
         strokeWidth: 6,
+        color: [0, 0, 0, 1] as [number, number, number, number],
+        nibDynamic: false,
         smoothX: x,
         smoothY: y,
         hasSmooth: false,
@@ -1322,6 +1542,8 @@ struct VSOut {
       session.strokeWidth = strokeWidth
       const opacity = typeof stroke?.opacity === 'number' ? stroke.opacity : 1
       const rgba = role === 'stroke' ? colorToRgba(stroke?.stroke ?? '#000000', opacity) : ([0, 0, 0, 1] as [number, number, number, number])
+      session.color = rgba
+      session.nibDynamic = nibModeRef.current === 'dynamic' && toolRef.current === 'pen' && penTypeRef.current === 'writing'
       const meta: LineMeta = { role, strokeWidth, points: session.points, minX: p0.x, minY: p0.y, maxX: p0.x, maxY: p0.y }
       const node: RenderNode = { role, strokeWidth, points: session.points, meta, color: rgba }
       session.node = node
@@ -1357,7 +1579,19 @@ struct VSOut {
       }
 
       if (!session.node) return
-      for (let i = 0; i + 1 < appended.length; i += 2) updateBounds(session.node.meta, appended[i], appended[i + 1])
+      if (!session.nibDynamic) {
+        for (let i = 0; i + 1 < appended.length; i += 2) updateBounds(session.node.meta, appended[i], appended[i + 1])
+        requestRender()
+        maybeScheduleBake(e.pointerId)
+        return
+      }
+
+      const tailCoords = BAKE_TAIL_POINTS * 2
+      const tailStart = session.bakedNodes.length ? Math.max(0, session.points.length - tailCoords - 2) : 0
+      const tail = session.points.slice(tailStart)
+      session.node.points = tail
+      session.node.meta.points = tail
+      recomputeBounds(session.node.meta, tail)
       requestRender()
       maybeScheduleBake(e.pointerId)
     }
@@ -1373,6 +1607,26 @@ struct VSOut {
       } catch {}
       if (erased.length) record({ kind: 'remove', nodes: erased })
       else if (active) {
+        if (session.nibDynamic) {
+          const full = inkSmoothingRef.current ? bakePolyline(session.points, session.strokeWidth) : session.points
+          const segments = buildNibSegments(full, session.strokeWidth, 'dynamic')
+          removeNodes([active, ...session.bakedNodes])
+
+          const next: RenderNode[] = []
+          for (const seg of segments) {
+            const p0x = seg.points[0] ?? 0
+            const p0y = seg.points[1] ?? 0
+            const meta: LineMeta = { role: 'stroke', strokeWidth: seg.strokeWidth, points: seg.points, minX: p0x, minY: p0y, maxX: p0x, maxY: p0y }
+            recomputeBounds(meta, seg.points)
+            const n: RenderNode = { role: 'stroke', strokeWidth: seg.strokeWidth, points: seg.points, meta, color: session.color }
+            addNodes([n])
+            next.push(n)
+          }
+          record({ kind: 'add', nodes: next })
+          requestRender()
+          return
+        }
+
         if (inkSmoothingRef.current) {
           const baked = bakePolyline(session.points, active.strokeWidth)
           active.points = baked

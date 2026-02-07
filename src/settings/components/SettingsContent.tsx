@@ -967,10 +967,111 @@ function AnnotationSettings() {
       inkSmoothing: true,
       showInkWhenPassthrough: true,
       freezeScreen: false,
-      rendererEngine: 'canvas2d'
+      rendererEngine: 'canvas2d',
+      nibMode: 'off'
     },
     { validate: isLeaferSettings }
   )
+
+  const nibPreviewRef = React.useRef<HTMLCanvasElement | null>(null)
+
+  React.useEffect(() => {
+    const canvas = nibPreviewRef.current
+    if (!canvas) return
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return
+
+    const rect = canvas.getBoundingClientRect()
+    const cssW = Math.max(1, Math.floor(rect.width))
+    const cssH = Math.max(1, Math.floor(rect.height))
+    const dpr = Math.max(1, Math.floor((globalThis.devicePixelRatio as number) || 1))
+
+    const targetW = cssW * dpr
+    const targetH = cssH * dpr
+    if (canvas.width !== targetW) canvas.width = targetW
+    if (canvas.height !== targetH) canvas.height = targetH
+
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+    ctx.clearRect(0, 0, cssW, cssH)
+
+    const clamp = (v: number, min: number, max: number) => Math.max(min, Math.min(max, v))
+    const smoothstep = (edge0: number, edge1: number, x: number) => {
+      const t = clamp((x - edge0) / (edge1 - edge0), 0, 1)
+      return t * t * (3 - 2 * t)
+    }
+
+    const points: Array<{ x: number; y: number }> = []
+    const padX = 10
+    const padY = 12
+    const w = cssW - padX * 2
+    const h = cssH - padY * 2
+    for (let i = 0; i <= 64; i++) {
+      const t = i / 64
+      const x = padX + w * t
+      const y = padY + h * (0.55 + 0.18 * Math.sin(t * Math.PI * 2.2) + 0.05 * Math.sin(t * Math.PI * 6.2))
+      points.push({ x, y })
+    }
+
+    const totalLen = (() => {
+      let len = 0
+      for (let i = 1; i < points.length; i++) {
+        const dx = points[i].x - points[i - 1].x
+        const dy = points[i].y - points[i - 1].y
+        len += Math.hypot(dx, dy)
+      }
+      return Math.max(1e-6, len)
+    })()
+
+    const nibMode = leaferSettings.nibMode ?? 'off'
+    const baseWidth = 12
+    const widths: number[] = new Array(points.length).fill(baseWidth)
+
+    if (nibMode === 'dynamic') {
+      let acc = 0
+      for (let i = 0; i < points.length; i++) {
+        if (i > 0) {
+          const dx = points[i].x - points[i - 1].x
+          const dy = points[i].y - points[i - 1].y
+          acc += Math.hypot(dx, dy)
+        }
+        const t = acc / totalLen
+        const start = smoothstep(0, 0.16, t)
+        const end = smoothstep(0, 0.16, 1 - t)
+        const taper = Math.min(start, end)
+
+        const dist = i > 0 ? Math.hypot(points[i].x - points[i - 1].x, points[i].y - points[i - 1].y) : 0
+        const speedFactor = clamp(1.15 - dist * 0.12, 0.55, 1.15)
+        const w = baseWidth * (0.35 + 0.65 * taper) * speedFactor
+        widths[i] = clamp(w, 2, 40)
+      }
+    }
+
+    ctx.lineCap = 'round'
+    ctx.lineJoin = 'round'
+    ctx.strokeStyle = 'rgba(20, 20, 20, 0.85)'
+
+    if (nibMode !== 'dynamic') {
+      ctx.lineWidth = baseWidth
+      ctx.beginPath()
+      for (let i = 0; i < points.length; i++) {
+        const p = points[i]
+        if (i === 0) ctx.moveTo(p.x, p.y)
+        else ctx.lineTo(p.x, p.y)
+      }
+      ctx.stroke()
+      return
+    }
+
+    for (let i = 1; i < points.length; i++) {
+      const w0 = widths[i - 1]
+      const w1 = widths[i]
+      ctx.lineWidth = (w0 + w1) / 2
+      ctx.beginPath()
+      ctx.moveTo(points[i - 1].x, points[i - 1].y)
+      ctx.lineTo(points[i].x, points[i].y)
+      ctx.stroke()
+    }
+  }, [leaferSettings.nibMode])
 
   const persistLeaferSettings = (next: LeaferSettings) => {
     setLeaferSettings(next)
@@ -1030,6 +1131,27 @@ function AnnotationSettings() {
                 persistLeaferSettings({ ...leaferSettings, rendererEngine: value })
               }}
             />
+          </div>
+          <div className="settingsFormGroup">
+            <div className="settingsFormTitle">笔锋</div>
+            <div className="settingsFormDescription">基于分段烘干模拟笔锋（静态模式暂未加入）</div>
+            <Select
+              value={leaferSettings.nibMode ?? 'off'}
+              data={[
+                { value: 'off', label: '关闭' },
+                { value: 'dynamic', label: '动态烘干笔锋' },
+                { value: 'static', label: '静态笔锋（暂未加入）' }
+              ]}
+              allowDeselect={false}
+              onChange={(value) => {
+                if (value !== 'off' && value !== 'dynamic' && value !== 'static') return
+                persistLeaferSettings({ ...leaferSettings, nibMode: value })
+              }}
+            />
+            <div className="settingsNibPreview">
+              <div className="settingsNibPreviewTitle">效果预览</div>
+              <canvas ref={nibPreviewRef} className="settingsNibPreviewCanvas" />
+            </div>
           </div>
           <div className="settingsSwitchList">
             <Switch

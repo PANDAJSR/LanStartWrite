@@ -44,12 +44,14 @@ export const UNDO_REV_UI_STATE_KEY = 'undoRev'
 export const REDO_REV_UI_STATE_KEY = 'redoRev'
 
 export type LeaferRendererEngine = 'canvas2d' | 'webgl' | 'webgpu'
+export type LeaferNibMode = 'off' | 'dynamic' | 'static'
 export type LeaferSettings = {
   multiTouch: boolean
   inkSmoothing: boolean
   showInkWhenPassthrough: boolean
   freezeScreen: boolean
   rendererEngine?: LeaferRendererEngine
+  nibMode?: LeaferNibMode
 }
 
 export const LEAFER_SETTINGS_KV_KEY = 'leafer-settings'
@@ -79,6 +81,7 @@ export function isLeaferSettings(v: unknown): v is LeaferSettings {
   if (!v || typeof v !== 'object') return false
   const s = v as any
   if (s.rendererEngine !== undefined && s.rendererEngine !== 'canvas2d' && s.rendererEngine !== 'webgl' && s.rendererEngine !== 'webgpu') return false
+  if (s.nibMode !== undefined && s.nibMode !== 'off' && s.nibMode !== 'dynamic' && s.nibMode !== 'static') return false
   return (
     typeof s.multiTouch === 'boolean' &&
     typeof s.inkSmoothing === 'boolean' &&
