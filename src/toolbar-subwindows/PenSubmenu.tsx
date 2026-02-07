@@ -277,11 +277,16 @@ export function PenSubmenu(props: { kind: string }) {
   }, [props.kind])
 
   // 应用笔设置
-  const applyPenSettings = () => {
+  const applyPenSettings = (next?: { type?: PenType; color?: string; thickness?: number }) => {
+    const payload = {
+      type: next?.type ?? selectedPenType,
+      color: next?.color ?? selectedColor,
+      thickness: next?.thickness ?? thickness,
+    }
     void postCommand('app.setPenSettings', {
-      type: selectedPenType,
-      color: selectedColor,
-      thickness: thickness
+      type: payload.type,
+      color: payload.color,
+      thickness: payload.thickness,
     })
   }
 
@@ -314,7 +319,7 @@ export function PenSubmenu(props: { kind: string }) {
                       isActive={selectedColor === color}
                       onClick={() => {
                         setSelectedColor(color)
-                        applyPenSettings()
+                        applyPenSettings({ color })
                       }}
                     />
                   ))}
@@ -336,7 +341,7 @@ export function PenSubmenu(props: { kind: string }) {
                     isActive={selectedPenType === pen.type}
                     onClick={() => {
                       setSelectedPenType(pen.type)
-                      applyPenSettings()
+                      applyPenSettings({ type: pen.type })
                     }}
                   />
                 ))}
@@ -349,7 +354,7 @@ export function PenSubmenu(props: { kind: string }) {
                 value={thickness} 
                 onChange={(value) => {
                   setThickness(value)
-                  applyPenSettings()
+                  applyPenSettings({ thickness: value })
                 }} 
               />
             </div>

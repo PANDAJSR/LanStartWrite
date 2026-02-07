@@ -5,6 +5,7 @@ import { deleteByPrefix, deleteValue, getValue, openLeavelDb, putValue } from '.
 import {
   ACTIVE_APP_UI_STATE_KEY,
   APP_MODE_UI_STATE_KEY,
+  CLEAR_PAGE_REV_UI_STATE_KEY,
   EFFECTIVE_WRITING_BACKEND_UI_STATE_KEY,
   ERASER_THICKNESS_UI_STATE_KEY,
   ERASER_TYPE_UI_STATE_KEY,
@@ -12,7 +13,9 @@ import {
   PEN_THICKNESS_UI_STATE_KEY,
   PEN_TYPE_UI_STATE_KEY,
   PPT_FULLSCREEN_UI_STATE_KEY,
+  REDO_REV_UI_STATE_KEY,
   UI_STATE_APP_WINDOW_ID,
+  UNDO_REV_UI_STATE_KEY,
   WRITING_FRAMEWORK_KV_KEY,
   WRITING_FRAMEWORK_UI_STATE_KEY,
   isActiveApp,
@@ -293,6 +296,9 @@ async function handleCommand(command: string, payload: unknown): Promise<Command
 
       if (action === 'clearPage') {
         const state = getOrInitUiState(UI_STATE_APP_WINDOW_ID)
+        const nextRev = (Number(state[CLEAR_PAGE_REV_UI_STATE_KEY]) || 0) + 1
+        state[CLEAR_PAGE_REV_UI_STATE_KEY] = nextRev
+        emitEvent('UI_STATE_PUT', { windowId: UI_STATE_APP_WINDOW_ID, key: CLEAR_PAGE_REV_UI_STATE_KEY, value: nextRev })
         const uiFrameworkRaw = state[WRITING_FRAMEWORK_UI_STATE_KEY]
         const uiFramework = isWritingFramework(uiFrameworkRaw) ? uiFrameworkRaw : undefined
         const writingFramework = uiFramework ?? (await getPersistedWritingFramework()) ?? 'konva'
@@ -302,6 +308,22 @@ async function handleCommand(command: string, payload: unknown): Promise<Command
         const effective = resolveEffectiveWritingBackend({ writingFramework, activeApp, pptFullscreen })
 
         emitEvent('BACKEND_FORWARD', { target: effective, command: 'clearPage', payload: {}, reason: { writingFramework, activeApp, pptFullscreen } })
+        return { ok: true }
+      }
+
+      if (action === 'undo') {
+        const state = getOrInitUiState(UI_STATE_APP_WINDOW_ID)
+        const nextRev = (Number(state[UNDO_REV_UI_STATE_KEY]) || 0) + 1
+        state[UNDO_REV_UI_STATE_KEY] = nextRev
+        emitEvent('UI_STATE_PUT', { windowId: UI_STATE_APP_WINDOW_ID, key: UNDO_REV_UI_STATE_KEY, value: nextRev })
+        return { ok: true }
+      }
+
+      if (action === 'redo') {
+        const state = getOrInitUiState(UI_STATE_APP_WINDOW_ID)
+        const nextRev = (Number(state[REDO_REV_UI_STATE_KEY]) || 0) + 1
+        state[REDO_REV_UI_STATE_KEY] = nextRev
+        emitEvent('UI_STATE_PUT', { windowId: UI_STATE_APP_WINDOW_ID, key: REDO_REV_UI_STATE_KEY, value: nextRev })
         return { ok: true }
       }
 

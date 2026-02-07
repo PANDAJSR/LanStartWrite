@@ -437,7 +437,7 @@ function FloatingToolbarInner() {
           showInToolbar={visibility.showInToolbar}
           showInFeaturePanel={visibility.showInFeaturePanel}
           onClick={() => {
-            console.log('撤销')
+            void postCommand('app.undo')
           }}
         >
           <UndoIcon />
@@ -456,7 +456,7 @@ function FloatingToolbarInner() {
           showInToolbar={visibility.showInToolbar}
           showInFeaturePanel={visibility.showInFeaturePanel}
           onClick={() => {
-            console.log('重做')
+            void postCommand('app.redo')
           }}
         >
           <RedoIcon />

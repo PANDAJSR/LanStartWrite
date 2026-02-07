@@ -33,6 +33,10 @@ export type EraserType = 'pixel' | 'stroke'
 export const ERASER_TYPE_UI_STATE_KEY = 'eraserType'
 export const ERASER_THICKNESS_UI_STATE_KEY = 'eraserThickness'
 
+export const CLEAR_PAGE_REV_UI_STATE_KEY = 'clearPageRev'
+export const UNDO_REV_UI_STATE_KEY = 'undoRev'
+export const REDO_REV_UI_STATE_KEY = 'redoRev'
+
 export function isAppearance(v: unknown): v is Appearance {
   return v === 'light' || v === 'dark'
 }

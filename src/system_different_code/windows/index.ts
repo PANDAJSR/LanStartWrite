@@ -180,9 +180,8 @@ public class LanStartWin32Z {
 $SWP_NOSIZE = 0x0001
 $SWP_NOMOVE = 0x0002
 $SWP_NOACTIVATE = 0x0010
-$SWP_SHOWWINDOW = 0x0040
 $HWND_TOPMOST = [IntPtr](-1)
-$flags = $SWP_NOSIZE -bor $SWP_NOMOVE -bor $SWP_NOACTIVATE -bor $SWP_SHOWWINDOW
+$flags = $SWP_NOSIZE -bor $SWP_NOMOVE -bor $SWP_NOACTIVATE
 $hwnds = @(${list})
 foreach ($h in $hwnds) {
   try {

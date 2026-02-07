@@ -530,20 +530,23 @@ function applyToolbarOnTopLevel(level: 'normal' | 'floating' | 'torn-off-menu' |
   const toolbar = floatingToolbarWindow
   if (toolbar && !toolbar.isDestroyed()) {
     toolbar.setAlwaysOnTop(true, level)
-    toolbar.showInactive()
-    toolbar.moveTop()
+    if (toolbar.isVisible()) {
+      toolbar.moveTop()
+    }
   }
 
   const handle = floatingToolbarHandleWindow
   if (handle && !handle.isDestroyed()) {
     handle.setAlwaysOnTop(true, level)
-    handle.showInactive()
-    handle.moveTop()
+    if (handle.isVisible()) {
+      handle.moveTop()
+    }
   }
 
   for (const item of toolbarSubwindows.values()) {
     const win = item.win
     if (win.isDestroyed()) continue
+    if (!win.isVisible()) continue
     win.setAlwaysOnTop(true, level)
     win.moveTop()
   }
@@ -1476,7 +1479,7 @@ if (hasSingleInstanceLock) {
       floatingToolbarHandleWindow = handle
       if (!stopToolbarTopmostPolling) {
         const poller = startWindowTopmostPolling({
-          intervalMs: 500,
+          intervalMs: 5000,
           getTargets: () => {
             const out: BrowserWindow[] = []
             const toolbar = floatingToolbarWindow
@@ -1495,6 +1498,7 @@ if (hasSingleInstanceLock) {
             const hwnds: bigint[] = []
             for (const w of targets) {
               if (!w || w.isDestroyed()) continue
+              if (!w.isVisible()) continue
               const hwnd = readWin32Hwnd(w)
               if (typeof hwnd === 'bigint') hwnds.push(hwnd)
             }
