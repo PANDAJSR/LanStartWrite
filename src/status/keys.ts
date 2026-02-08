@@ -43,6 +43,9 @@ export const CLEAR_PAGE_REV_UI_STATE_KEY = 'clearPageRev'
 export const UNDO_REV_UI_STATE_KEY = 'undoRev'
 export const REDO_REV_UI_STATE_KEY = 'redoRev'
 
+export const NOTES_PAGE_INDEX_UI_STATE_KEY = 'notesPageIndex'
+export const NOTES_PAGE_TOTAL_UI_STATE_KEY = 'notesPageTotal'
+
 export type LeaferRendererEngine = 'canvas2d' | 'svg' | 'webgl' | 'webgpu'
 export type LeaferNibMode = 'off' | 'dynamic' | 'static'
 export type LeaferSettings = {

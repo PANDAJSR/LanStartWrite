@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react'
 import { motion, useReducedMotion, AnimatePresence } from '../Framer_Motion'
 import { Button, MotionButton } from '../button'
-import { WindowControls } from '../settings/components/WindowControls'
+import { AppWindowTitlebar } from '../app_windows_manerger/renderer'
 import '../toolbar-subwindows/styles/subwindow.css'
 import './styles.css'
 
@@ -444,287 +444,279 @@ export function TaskWindowsWatcherWindow() {
       animate={reduceMotion ? undefined : { opacity: 1, y: 0, scale: 1 }}
       transition={reduceMotion ? undefined : { duration: 0.18, ease: [0.2, 0.8, 0.2, 1] }}
     >
-      <WindowControls windowId="watcher" />
       <div ref={cardRef} className={`subwindowCard twWatcherCard twWatcherCard--${layoutSize} animate-ls-pop-in`}>
-        <div className="subwindowMeasure">
-          {/* 标题和控制区 */}
-          <div className={`twHeader twHeader--${layoutSize}`}>
-            <div className="twTitleSection">
-              <h2 className={`twMainTitle twMainTitle--${layoutSize}`}>系统监视器</h2>
-              <div className="twStatusBadges">
-                <motion.span
-                  className={`twStatusBadge ${collecting ? 'twStatusBadge--active' : ''}`}
-                  animate={{ opacity: collecting ? [1, 0.5, 1] : 1 }}
-                  transition={{ duration: 2, repeat: Infinity }}
-                >
-                  {collecting ? (isCompact ? '●' : '● 监控中') : (isCompact ? '○' : '○ 已暂停')}
-                </motion.span>
-                {lastError && <span className="twStatusBadge twStatusBadge--error">!</span>}
-              </div>
-            </div>
-            <div className="twControls">
-              <Button
-                size="sm"
-                variant={collecting ? 'light' : 'default'}
-                onClick={start}
-                className="twControlBtn"
-              >
-                <PlayIcon />
-              </Button>
-              <Button
-                size="sm"
-                variant={!collecting ? 'light' : 'default'}
-                onClick={stop}
-                className="twControlBtn"
-              >
-                <PauseIcon />
-              </Button>
-            </div>
-          </div>
+        <div className="subwindowMeasure twWatcherMeasure">
+          <AppWindowTitlebar windowId="watcher" title="系统监视器" />
 
-          {/* 视图切换标签 */}
-          <div className={`twViewTabs twViewTabs--${layoutSize}`}>
-            <Button
-              kind="custom"
-              appRegion="no-drag"
-              ariaLabel="进程视图"
-              title="进程视图"
-              className={`twViewTab ${viewMode === 'processes' ? 'twViewTab--active' : ''}`}
-              onClick={() => setViewMode('processes')}
-            >
-              <ListIcon />
-              {!isCompact && <span>进程</span>}
-            </Button>
-            <Button
-              kind="custom"
-              appRegion="no-drag"
-              ariaLabel="窗口视图"
-              title="窗口视图"
-              className={`twViewTab ${viewMode === 'windows' ? 'twViewTab--active' : ''}`}
-              onClick={() => setViewMode('windows')}
-            >
-              <WindowIcon />
-              {!isCompact && <span>窗口</span>}
-            </Button>
-            <Button
-              kind="custom"
-              appRegion="no-drag"
-              ariaLabel="性能视图"
-              title="性能视图"
-              className={`twViewTab ${viewMode === 'performance' ? 'twViewTab--active' : ''}`}
-              onClick={() => setViewMode('performance')}
-            >
-              <ActivityIcon />
-              {!isCompact && <span>性能</span>}
-            </Button>
-          </div>
-
-          {/* 统计卡片 */}
-          <div className={`twStatsGrid twStatsGrid--${layoutSize}`}>
-            <StatCard
-              icon={<ListIcon />}
-              label={isCompact ? '进程' : '进程数'}
-              value={String(stats.totalProcesses)}
-              subValue={isCompact ? undefined : (running ? `采样 ${intervalMs}ms` : '采样停止')}
-              color="#3b82f6"
-              layoutSize={layoutSize}
-            />
-            <StatCard
-              icon={<MemoryIcon />}
-              label={isCompact ? '内存' : '总内存'}
-              value={formatBytesCompact(stats.totalMemory)}
-              subValue={isCompact ? undefined : undefined}
-              color="#10b981"
-              layoutSize={layoutSize}
-            />
-            <StatCard
-              icon={<CpuIcon />}
-              label={isCompact ? 'CPU' : '平均CPU'}
-              value={formatPct(stats.avgCpu)}
-              subValue={isCompact ? undefined : (stats.topCpuProcess ? `最高: ${stats.topCpuProcess.name}` : undefined)}
-              color="#f59e0b"
-              layoutSize={layoutSize}
-            />
-          </div>
-
-          {/* 前台窗口信息 - 紧凑模式下隐藏 */}
-          {!isCompact && (
-            <CollapsibleSection 
-              title="当前前台窗口" 
-              subtitle={foreground ? formatTime(foreground.ts) : undefined}
-              layoutSize={layoutSize}
-            >
-              <div className="twForegroundCard">
-                <div className="twForegroundItem">
-                  <span className="twForegroundLabel">
-                    <WindowIcon />
-                    窗口标题
-                  </span>
-                  <span className="twForegroundValue">{foreground?.title ?? '-'}</span>
-                </div>
-                <div className="twForegroundItem">
-                  <span className="twForegroundLabel">
-                    <CpuIcon />
-                    进程
-                  </span>
-                  <span className="twForegroundValue">
-                    {foreground?.processName ?? '-'} {foreground?.pid ? `(PID: ${foreground.pid})` : ''}
-                  </span>
-                </div>
-              </div>
-            </CollapsibleSection>
-          )}
-
-          {/* 窗口切换历史 */}
-          {viewMode === 'windows' && (
-            <CollapsibleSection 
-              title={isCompact ? '历史' : '窗口切换历史'} 
-              subtitle={isCompact ? `${history.length}` : `${history.length} 条记录`}
-              layoutSize={layoutSize}
-            >
-              <div className={`twHistoryList twHistoryList--${layoutSize}`}>
-                <AnimatePresence mode="popLayout">
-                  {history.slice(0, isCompact ? 8 : 15).map((h, index) => (
-                    <motion.div
-                      key={`${h.ts}-${h.handle ?? ''}-${h.pid ?? 0}`}
-                      className={`twHistoryItem twHistoryItem--${layoutSize}`}
-                      initial={{ opacity: 0, x: -20 }}
-                      animate={{ opacity: 1, x: 0 }}
-                      exit={{ opacity: 0, x: 20 }}
-                      transition={{ delay: index * 0.03 }}
-                      layout
+          <div className={`twWatcherColumns twWatcherColumns--${layoutSize}`}>
+            <div className={`twWatcherSidebar twWatcherSidebar--${layoutSize}`}>
+              <div className={`twSidebarHeader twSidebarHeader--${layoutSize}`}>
+                <div className="twSidebarStatus">
+                  <div className="twStatusBadges">
+                    <motion.span
+                      className={`twStatusBadge ${collecting ? 'twStatusBadge--active' : ''}`}
+                      animate={{ opacity: collecting ? [1, 0.5, 1] : 1 }}
+                      transition={{ duration: 2, repeat: Infinity }}
                     >
-                      <div className="twHistoryDot" />
-                      <span className="twHistoryTitle">{h.title}</span>
-                      <span className="twHistoryTime">
-                        {isCompact ? formatTimeCompact(h.ts) : formatTime(h.ts)}
-                      </span>
-                    </motion.div>
-                  ))}
-                </AnimatePresence>
-              </div>
-            </CollapsibleSection>
-          )}
-
-          {/* 进程列表 */}
-          {viewMode === 'processes' && (
-            <CollapsibleSection 
-              title={isCompact ? '进程' : '进程列表'} 
-              subtitle={isCompact ? `${processes.length}` : `${processes.length} 个进程`} 
-              defaultExpanded={true}
-              layoutSize={layoutSize}
-            >
-              {/* 排序按钮 */}
-              <div className={`twSortBar twSortBar--${layoutSize}`}>
-                {!isCompact && <span className="twSortLabel">排序:</span>}
-                <Button
-                  kind="custom"
-                  appRegion="no-drag"
-                  ariaLabel="按 CPU 排序"
-                  title="按 CPU 排序"
-                  className={`twSortBtn ${sortKey === 'cpu' ? 'twSortBtn--active' : ''}`}
-                  onClick={() => setSortKey('cpu')}
-                >
-                  <CpuIcon />
-                  {!isCompact && <span>CPU</span>}
-                </Button>
-                <Button
-                  kind="custom"
-                  appRegion="no-drag"
-                  ariaLabel="按内存排序"
-                  title="按内存排序"
-                  className={`twSortBtn ${sortKey === 'mem' ? 'twSortBtn--active' : ''}`}
-                  onClick={() => setSortKey('mem')}
-                >
-                  <MemoryIcon />
-                  {!isCompact && <span>内存</span>}
-                </Button>
-                {!isCompact && (
-                  <Button
-                    kind="custom"
-                    appRegion="no-drag"
-                    ariaLabel="按 PID 排序"
-                    title="按 PID 排序"
-                    className={`twSortBtn ${sortKey === 'pid' ? 'twSortBtn--active' : ''}`}
-                    onClick={() => setSortKey('pid')}
-                  >
-                    PID
+                      {collecting ? (isCompact ? '●' : '● 监控中') : (isCompact ? '○' : '○ 已暂停')}
+                    </motion.span>
+                    {lastError && <span className="twStatusBadge twStatusBadge--error">!</span>}
+                  </div>
+                </div>
+                <div className="twControls">
+                  <Button size="sm" variant={collecting ? 'light' : 'default'} onClick={start} className="twControlBtn">
+                    <PlayIcon />
                   </Button>
-                )}
+                  <Button size="sm" variant={!collecting ? 'light' : 'default'} onClick={stop} className="twControlBtn">
+                    <PauseIcon />
+                  </Button>
+                </div>
               </div>
 
-              {/* 进程表格 */}
-              <div className={`twProcessList twProcessList--${layoutSize}`}>
-                <div className={`twProcessHeader twProcessHeader--${layoutSize}`}>
-                  <span className="twProcessCol twProcessCol--name">进程</span>
-                  <span className="twProcessCol twProcessCol--cpu">CPU</span>
-                  {!isCompact && <span className="twProcessCol twProcessCol--mem">内存</span>}
-                </div>
-                <div className="twProcessBody">
-                  <AnimatePresence mode="popLayout">
-                    {sortedProcesses.slice(0, isCompact ? 20 : 50).map((p, index) => (
-                      <motion.div
-                        key={p.pid}
-                        className={`twProcessItem twProcessItem--${layoutSize}`}
-                        initial={{ opacity: 0, y: 10 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        exit={{ opacity: 0, y: -10 }}
-                        transition={{ delay: index * 0.01 }}
-                        layout
+              <div className={`twViewTabs twViewTabs--${layoutSize} twViewTabs--sidebar`}>
+                <Button
+                  kind="custom"
+                  appRegion="no-drag"
+                  ariaLabel="进程视图"
+                  title="进程视图"
+                  className={`twViewTab ${viewMode === 'processes' ? 'twViewTab--active' : ''}`}
+                  onClick={() => setViewMode('processes')}
+                >
+                  <ListIcon />
+                  <span>进程</span>
+                </Button>
+                <Button
+                  kind="custom"
+                  appRegion="no-drag"
+                  ariaLabel="窗口视图"
+                  title="窗口视图"
+                  className={`twViewTab ${viewMode === 'windows' ? 'twViewTab--active' : ''}`}
+                  onClick={() => setViewMode('windows')}
+                >
+                  <WindowIcon />
+                  <span>窗口</span>
+                </Button>
+                <Button
+                  kind="custom"
+                  appRegion="no-drag"
+                  ariaLabel="性能视图"
+                  title="性能视图"
+                  className={`twViewTab ${viewMode === 'performance' ? 'twViewTab--active' : ''}`}
+                  onClick={() => setViewMode('performance')}
+                >
+                  <ActivityIcon />
+                  <span>性能</span>
+                </Button>
+              </div>
+
+              <div className={`twStatsGrid twStatsGrid--${layoutSize} twStatsGrid--sidebar`}>
+                <StatCard
+                  icon={<ListIcon />}
+                  label={isCompact ? '进程' : '进程数'}
+                  value={String(stats.totalProcesses)}
+                  subValue={isCompact ? undefined : running ? `采样 ${intervalMs}ms` : '采样停止'}
+                  color="#3b82f6"
+                  layoutSize={layoutSize}
+                />
+                <StatCard
+                  icon={<MemoryIcon />}
+                  label={isCompact ? '内存' : '总内存'}
+                  value={formatBytesCompact(stats.totalMemory)}
+                  subValue={isCompact ? undefined : undefined}
+                  color="#10b981"
+                  layoutSize={layoutSize}
+                />
+                <StatCard
+                  icon={<CpuIcon />}
+                  label={isCompact ? 'CPU' : '平均CPU'}
+                  value={formatPct(stats.avgCpu)}
+                  subValue={isCompact ? undefined : stats.topCpuProcess ? `最高: ${stats.topCpuProcess.name}` : undefined}
+                  color="#f59e0b"
+                  layoutSize={layoutSize}
+                />
+              </div>
+
+              {!isCompact && (
+                <CollapsibleSection
+                  title="当前前台窗口"
+                  subtitle={foreground ? formatTime(foreground.ts) : undefined}
+                  layoutSize={layoutSize}
+                >
+                  <div className="twForegroundCard">
+                    <div className="twForegroundItem">
+                      <span className="twForegroundLabel">
+                        <WindowIcon />
+                        窗口标题
+                      </span>
+                      <span className="twForegroundValue">{foreground?.title ?? '-'}</span>
+                    </div>
+                    <div className="twForegroundItem">
+                      <span className="twForegroundLabel">
+                        <CpuIcon />
+                        进程
+                      </span>
+                      <span className="twForegroundValue">
+                        {foreground?.processName ?? '-'} {foreground?.pid ? `(PID: ${foreground.pid})` : ''}
+                      </span>
+                    </div>
+                  </div>
+                </CollapsibleSection>
+              )}
+            </div>
+
+            <div className={`twWatcherMain twWatcherMain--${layoutSize}`}>
+              {viewMode === 'windows' && (
+                <CollapsibleSection
+                  title={isCompact ? '历史' : '窗口切换历史'}
+                  subtitle={isCompact ? `${history.length}` : `${history.length} 条记录`}
+                  layoutSize={layoutSize}
+                >
+                  <div className={`twHistoryList twHistoryList--${layoutSize}`}>
+                    <AnimatePresence mode="popLayout">
+                      {history.slice(0, isCompact ? 8 : 15).map((h, index) => (
+                        <motion.div
+                          key={`${h.ts}-${h.handle ?? ''}-${h.pid ?? 0}`}
+                          className={`twHistoryItem twHistoryItem--${layoutSize}`}
+                          initial={{ opacity: 0, x: -20 }}
+                          animate={{ opacity: 1, x: 0 }}
+                          exit={{ opacity: 0, x: 20 }}
+                          transition={{ delay: index * 0.03 }}
+                          layout
+                        >
+                          <div className="twHistoryDot" />
+                          <span className="twHistoryTitle">{h.title}</span>
+                          <span className="twHistoryTime">{isCompact ? formatTimeCompact(h.ts) : formatTime(h.ts)}</span>
+                        </motion.div>
+                      ))}
+                    </AnimatePresence>
+                  </div>
+                </CollapsibleSection>
+              )}
+
+              {viewMode === 'processes' && (
+                <CollapsibleSection
+                  title={isCompact ? '进程' : '进程列表'}
+                  subtitle={isCompact ? `${processes.length}` : `${processes.length} 个进程`}
+                  defaultExpanded={true}
+                  layoutSize={layoutSize}
+                >
+                  <div className={`twSortBar twSortBar--${layoutSize}`}>
+                    {!isCompact && <span className="twSortLabel">排序:</span>}
+                    <Button
+                      kind="custom"
+                      appRegion="no-drag"
+                      ariaLabel="按 CPU 排序"
+                      title="按 CPU 排序"
+                      className={`twSortBtn ${sortKey === 'cpu' ? 'twSortBtn--active' : ''}`}
+                      onClick={() => setSortKey('cpu')}
+                    >
+                      <CpuIcon />
+                      {!isCompact && <span>CPU</span>}
+                    </Button>
+                    <Button
+                      kind="custom"
+                      appRegion="no-drag"
+                      ariaLabel="按内存排序"
+                      title="按内存排序"
+                      className={`twSortBtn ${sortKey === 'mem' ? 'twSortBtn--active' : ''}`}
+                      onClick={() => setSortKey('mem')}
+                    >
+                      <MemoryIcon />
+                      {!isCompact && <span>内存</span>}
+                    </Button>
+                    {!isCompact && (
+                      <Button
+                        kind="custom"
+                        appRegion="no-drag"
+                        ariaLabel="按 PID 排序"
+                        title="按 PID 排序"
+                        className={`twSortBtn ${sortKey === 'pid' ? 'twSortBtn--active' : ''}`}
+                        onClick={() => setSortKey('pid')}
                       >
-                        <div className="twProcessCol twProcessCol--name">
-                          <span className="twProcessName">{p.name}</span>
-                          <span className="twProcessPid">#{p.pid}</span>
-                        </div>
-                        <div className="twProcessCol twProcessCol--cpu">
-                          <ProgressBar
-                            value={p.cpuPercent ?? 0}
-                            max={100}
-                            color={p.cpuPercent && p.cpuPercent > 50 ? '#ef4444' : p.cpuPercent && p.cpuPercent > 20 ? '#f59e0b' : '#3b82f6'}
-                            size={isCompact ? 'sm' : 'md'}
-                          />
-                          <span className="twProcessValue">{formatPct(p.cpuPercent)}</span>
-                        </div>
-                        {!isCompact && (
-                          <div className="twProcessCol twProcessCol--mem">
-                            <span className="twProcessValue">{formatBytes(p.memoryBytes)}</span>
-                          </div>
-                        )}
-                      </motion.div>
-                    ))}
-                  </AnimatePresence>
-                </div>
-              </div>
-            </CollapsibleSection>
-          )}
+                        PID
+                      </Button>
+                    )}
+                  </div>
 
-          {/* 性能视图 */}
-          {viewMode === 'performance' && (
-            <CollapsibleSection 
-              title={isCompact ? '性能' : '性能概览'} 
-              defaultExpanded={true}
-              layoutSize={layoutSize}
-            >
-              <div className={`twPerformanceGrid twPerformanceGrid--${layoutSize}`}>
-                <div className={`twPerformanceCard twPerformanceCard--${layoutSize}`}>
-                  <div className="twPerformanceHeader">
-                    <CpuIcon />
-                    <span>{isCompact ? 'CPU' : 'CPU 使用率'}</span>
+                  <div className={`twProcessList twProcessList--${layoutSize}`}>
+                    <div className={`twProcessHeader twProcessHeader--${layoutSize}`}>
+                      <span className="twProcessCol twProcessCol--name">进程</span>
+                      <span className="twProcessCol twProcessCol--cpu">CPU</span>
+                      {!isCompact && <span className="twProcessCol twProcessCol--mem">内存</span>}
+                    </div>
+                    <div className="twProcessBody">
+                      <AnimatePresence mode="popLayout">
+                        {sortedProcesses.slice(0, isCompact ? 20 : 50).map((p, index) => (
+                          <motion.div
+                            key={p.pid}
+                            className={`twProcessItem twProcessItem--${layoutSize}`}
+                            initial={{ opacity: 0, y: 10 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            exit={{ opacity: 0, y: -10 }}
+                            transition={{ delay: index * 0.01 }}
+                            layout
+                          >
+                            <div className="twProcessCol twProcessCol--name">
+                              <span className="twProcessName">{p.name}</span>
+                              <span className="twProcessPid">#{p.pid}</span>
+                            </div>
+                            <div className="twProcessCol twProcessCol--cpu">
+                              <ProgressBar
+                                value={p.cpuPercent ?? 0}
+                                max={100}
+                                color={
+                                  p.cpuPercent && p.cpuPercent > 50
+                                    ? '#ef4444'
+                                    : p.cpuPercent && p.cpuPercent > 20
+                                      ? '#f59e0b'
+                                      : '#3b82f6'
+                                }
+                                size={isCompact ? 'sm' : 'md'}
+                              />
+                              <span className="twProcessValue">{formatPct(p.cpuPercent)}</span>
+                            </div>
+                            {!isCompact && (
+                              <div className="twProcessCol twProcessCol--mem">
+                                <span className="twProcessValue">{formatBytes(p.memoryBytes)}</span>
+                              </div>
+                            )}
+                          </motion.div>
+                        ))}
+                      </AnimatePresence>
+                    </div>
                   </div>
-                  <div className={`twPerformanceValue twPerformanceValue--${layoutSize}`}>{formatPct(stats.avgCpu)}</div>
-                  <ProgressBar value={stats.avgCpu} max={100} color="#3b82f6" size={isCompact ? 'sm' : 'md'} />
-                </div>
-                <div className={`twPerformanceCard twPerformanceCard--${layoutSize}`}>
-                  <div className="twPerformanceHeader">
-                    <MemoryIcon />
-                    <span>{isCompact ? '内存' : '内存使用'}</span>
+                </CollapsibleSection>
+              )}
+
+              {viewMode === 'performance' && (
+                <CollapsibleSection title={isCompact ? '性能' : '性能概览'} defaultExpanded={true} layoutSize={layoutSize}>
+                  <div className={`twPerformanceGrid twPerformanceGrid--${layoutSize}`}>
+                    <div className={`twPerformanceCard twPerformanceCard--${layoutSize}`}>
+                      <div className="twPerformanceHeader">
+                        <CpuIcon />
+                        <span>{isCompact ? 'CPU' : 'CPU 使用率'}</span>
+                      </div>
+                      <div className={`twPerformanceValue twPerformanceValue--${layoutSize}`}>{formatPct(stats.avgCpu)}</div>
+                      <ProgressBar value={stats.avgCpu} max={100} color="#3b82f6" size={isCompact ? 'sm' : 'md'} />
+                    </div>
+                    <div className={`twPerformanceCard twPerformanceCard--${layoutSize}`}>
+                      <div className="twPerformanceHeader">
+                        <MemoryIcon />
+                        <span>{isCompact ? '内存' : '内存使用'}</span>
+                      </div>
+                      <div className={`twPerformanceValue twPerformanceValue--${layoutSize}`}>{formatBytesCompact(stats.totalMemory)}</div>
+                      <ProgressBar
+                        value={stats.totalMemory}
+                        max={stats.totalMemory * 1.5}
+                        color="#10b981"
+                        size={isCompact ? 'sm' : 'md'}
+                      />
+                    </div>
                   </div>
-                  <div className={`twPerformanceValue twPerformanceValue--${layoutSize}`}>{formatBytesCompact(stats.totalMemory)}</div>
-                  <ProgressBar value={stats.totalMemory} max={stats.totalMemory * 1.5} color="#10b981" size={isCompact ? 'sm' : 'md'} />
-                </div>
-              </div>
-            </CollapsibleSection>
-          )}
+                </CollapsibleSection>
+              )}
+            </div>
+          </div>
         </div>
       </div>
     </motion.div>

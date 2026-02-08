@@ -1,0 +1,2 @@
+export { MultiPageControlWindow } from './MultiPageControl'
+

@@ -6,9 +6,10 @@ import { EventsMenu, FeaturePanelMenu, PenSubmenu, EraserSubmenu, SettingsMenu }
 import { NotificationSubwindow } from '../../toolbar_notice/NotificationSubwindow'
 import { TaskWindowsWatcherWindow } from '../../task_windows_watcher'
 import { AnnotationOverlayApp, PaintBoardBackgroundApp } from '../../paint_board'
+import { MultiPageControlWindow } from '../../mut_page'
 import { useHyperGlassRealtimeBlur } from '../../hyper_glass'
 import { SettingsWindow, useAppearanceSettings } from '../../settings'
-import { WindowControls } from '../../settings/components/WindowControls'
+import { AppWindowTitlebar } from '../../app_windows_manerger/renderer'
 
 function useWindowParams(): { windowId: string; kind?: string } {
   return useMemo(() => {
@@ -39,40 +40,37 @@ function ChildWindow() {
 
   return (
     <div className="childRoot">
-      <WindowControls windowId="child" />
-      <div className="childHeader">
-        <div className="childTitle">数据库</div>
-        <div className="childMeta">backend: {health}</div>
-      </div>
+      <AppWindowTitlebar windowId="child" title="数据库" subtitle={`backend: ${health}`} showMaximize={false} />
+      <div className="childContent">
+        <div className="childActions">
+          <Button
+            size="md"
+            variant="light"
+            onClick={async () => {
+              await window.lanstart?.putKv('hello', { time: Date.now(), from: 'child' })
+            }}
+          >
+            写入 LevelDB
+          </Button>
+          <Button
+            size="md"
+            variant="light"
+            onClick={async () => {
+              await window.lanstart?.getKv('hello')
+            }}
+          >
+            读取 LevelDB
+          </Button>
+        </div>
 
-      <div className="childActions">
-        <Button
-          size="md"
-          variant="light"
-          onClick={async () => {
-            await window.lanstart?.putKv('hello', { time: Date.now(), from: 'child' })
-          }}
-        >
-          写入 LevelDB
-        </Button>
-        <Button
-          size="md"
-          variant="light"
-          onClick={async () => {
-            await window.lanstart?.getKv('hello')
-          }}
-        >
-          读取 LevelDB
-        </Button>
-      </div>
-
-      <div className="childEvents">
-        {events.slice(-8).map((e) => (
-          <div key={e.id} className="childEventRow">
-            <span className="childEventType">{e.type}</span>
-            <span className="childEventId">#{e.id}</span>
-          </div>
-        ))}
+        <div className="childEvents">
+          {events.slice(-8).map((e) => (
+            <div key={e.id} className="childEventRow">
+              <span className="childEventType">{e.type}</span>
+              <span className="childEventId">#{e.id}</span>
+            </div>
+          ))}
+        </div>
       </div>
     </div>
   )
@@ -96,6 +94,7 @@ export default function App() {
   if (windowId === 'watcher') return <WithAppearance><TaskWindowsWatcherWindow /></WithAppearance>
   if (windowId === 'settings-window') return <WithAppearance><SettingsWindow /></WithAppearance>
   if (windowId === 'toolbar-notice') return <WithAppearance><NotificationSubwindow kind="notice" /></WithAppearance>
+  if (windowId === 'mut-page') return <WithAppearance><MultiPageControlWindow /></WithAppearance>
 
   if (windowId === 'toolbar-subwindow') {
     if (kind === 'events') return <WithAppearance><EventsMenu kind="events" /></WithAppearance>

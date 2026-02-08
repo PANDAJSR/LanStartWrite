@@ -19,6 +19,7 @@ const WINDOW_ID_TOOLBAR_SUBWINDOW = 'toolbar-subwindow'
 const WINDOW_ID_TOOLBAR_NOTICE = 'toolbar-notice'
 const WINDOW_ID_WATCHER = 'watcher'
 const WINDOW_ID_SETTINGS_WINDOW = 'settings-window'
+const WINDOW_ID_MUT_PAGE = 'mut-page'
 const TOOLBAR_HANDLE_GAP = 10
 const TOOLBAR_HANDLE_WIDTH = 30
 const APPEARANCE_KV_KEY = 'app-appearance'
@@ -41,7 +42,7 @@ function effectiveSurfaceBackgroundColor(appearance: Appearance): string {
 
 let currentAppearance: Appearance = 'light'
 let didApplyAppearance = false
-let toolbarUiZoom = 0
+let toolbarUiZoom = Math.log(0.8) / Math.log(1.2)
 let nativeMicaEnabled = false
 let legacyWindowImplementation = false
 let stopToolbarTopmostPolling: (() => void) | undefined
@@ -167,6 +168,7 @@ function applyLegacyWindowImplementation(enabled: boolean, opts?: { rebuild?: bo
   const windowsToClose: BrowserWindow[] = []
   if (floatingToolbarHandleWindow && !floatingToolbarHandleWindow.isDestroyed()) windowsToClose.push(floatingToolbarHandleWindow)
   if (toolbarNoticeWindow && !toolbarNoticeWindow.isDestroyed()) windowsToClose.push(toolbarNoticeWindow)
+  if (multiPageControlWindow && !multiPageControlWindow.isDestroyed()) windowsToClose.push(multiPageControlWindow)
   for (const item of toolbarSubwindows.values()) {
     if (item.win.isDestroyed()) continue
     windowsToClose.push(item.win)
@@ -230,6 +232,7 @@ function applyToolbarUiZoom(zoom: number): void {
     floatingToolbarWindow,
     floatingToolbarHandleWindow,
     toolbarNoticeWindow,
+    multiPageControlWindow,
     ...Array.from(toolbarSubwindows.values()).map((v) => v.win)
   ]
   for (const win of targets) {
@@ -255,6 +258,7 @@ let toolbarNoticeItem:
       animationTimer?: NodeJS.Timeout
     }
   | undefined
+let multiPageControlWindow: BrowserWindow | undefined
 let whiteboardBackgroundWindow: BrowserWindow | undefined
 let annotationOverlayWindow: BrowserWindow | undefined
 let screenAnnotationOverlayWindow: BrowserWindow | undefined
@@ -384,6 +388,7 @@ const appWindowsManager = new AppWindowsManager({
   rendererHtmlPath: join(__dirname, '../renderer/index.html'),
   getDevServerUrl,
   getAppearance: () => currentAppearance,
+  getUiZoomLevel: () => toolbarUiZoom,
   getNativeMicaEnabled: () => nativeMicaEnabled,
   getLegacyWindowImplementation: () => legacyWindowImplementation,
   surfaceBackgroundColor: effectiveSurfaceBackgroundColor,
@@ -735,6 +740,94 @@ function getOrCreateToolbarNoticeWindow(): BrowserWindow {
   return win
 }
 
+function repositionMultiPageControlWindow(): void {
+  const win = multiPageControlWindow
+  if (!win || win.isDestroyed()) return
+
+  const owner = whiteboardBackgroundWindow
+  const ownerBounds = owner && !owner.isDestroyed() ? owner.getBounds() : screen.getPrimaryDisplay().bounds
+  const display = screen.getDisplayMatching(ownerBounds)
+  const workArea = display.workArea
+
+  const width = 360
+  const height = 66
+  const margin = 14
+  const x = workArea.x + margin
+  const y = workArea.y + workArea.height - height - margin
+
+  try {
+    win.setBounds({ x, y, width, height }, false)
+  } catch {}
+}
+
+function getOrCreateMultiPageControlWindow(): BrowserWindow {
+  const existing = multiPageControlWindow
+  if (existing && !existing.isDestroyed()) return existing
+
+  const owner = whiteboardBackgroundWindow ?? floatingToolbarWindow
+  if (!owner || owner.isDestroyed()) throw new Error('mut_page_owner_missing')
+
+  const win = new BrowserWindow({
+    width: 360,
+    height: 66,
+    show: false,
+    frame: false,
+    titleBarStyle: 'hidden',
+    autoHideMenuBar: true,
+    transparent: !legacyWindowImplementation,
+    resizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    alwaysOnTop: true,
+    skipTaskbar: true,
+    parent: owner,
+    title: '多页控制',
+    backgroundColor: legacyWindowImplementation ? effectiveSurfaceBackgroundColor(currentAppearance) : '#00000000',
+    backgroundMaterial: legacyWindowImplementation && nativeMicaEnabled ? 'mica' : 'none',
+    webPreferences: {
+      preload: join(__dirname, '../preload/index.js'),
+      contextIsolation: true,
+      nodeIntegration: false
+    }
+  })
+
+  applyWindowsBackdrop(win)
+  try {
+    win.setMenu(null)
+  } catch {}
+  try {
+    win.setMenuBarVisibility(false)
+  } catch {}
+  try {
+    win.setAutoHideMenuBar(true)
+  } catch {}
+  win.setAlwaysOnTop(true, 'screen-saver')
+  wireWindowDebug(win, WINDOW_ID_MUT_PAGE)
+  wireWindowStatus(win, WINDOW_ID_MUT_PAGE)
+  try {
+    win.webContents.setZoomLevel(toolbarUiZoom)
+  } catch {}
+
+  const devUrl = getDevServerUrl()
+  if (devUrl) {
+    win.loadURL(`${devUrl}?window=${encodeURIComponent(WINDOW_ID_MUT_PAGE)}`)
+    if (process.env.LANSTART_OPEN_DEVTOOLS === '1') win.webContents.openDevTools({ mode: 'detach' })
+  } else {
+    win.loadFile(join(__dirname, '../renderer/index.html'), { query: { window: WINDOW_ID_MUT_PAGE } })
+  }
+
+  win.once('ready-to-show', () => {
+    repositionMultiPageControlWindow()
+  })
+  win.on('show', repositionMultiPageControlWindow)
+  win.on('closed', () => {
+    if (multiPageControlWindow === win) multiPageControlWindow = undefined
+  })
+
+  multiPageControlWindow = win
+  return win
+}
+
 function applyToolbarOnTopLevel(level: 'normal' | 'floating' | 'torn-off-menu' | 'modal-panel' | 'main-menu' | 'status' | 'pop-up-menu' | 'screen-saver') {
   const toolbar = floatingToolbarWindow
   if (toolbar && !toolbar.isDestroyed()) {
@@ -1070,6 +1163,16 @@ function createPaintBoardWindow(): BrowserWindow {
     }
 
     applyToolbarOnTopLevel('screen-saver')
+
+    const mp = multiPageControlWindow
+    if (mp && !mp.isDestroyed() && mp.isVisible()) {
+      try {
+        mp.setAlwaysOnTop(true, 'screen-saver')
+      } catch {}
+      try {
+        mp.moveTop()
+      } catch {}
+    }
   }
 
   win.once('ready-to-show', () => {
@@ -1092,8 +1195,10 @@ function createPaintBoardWindow(): BrowserWindow {
     if (!closingWhiteboardWindows) {
       closingWhiteboardWindows = true
       try {
+        if (multiPageControlWindow && !multiPageControlWindow.isDestroyed()) multiPageControlWindow.close()
         if (annotationOverlayWindow && !annotationOverlayWindow.isDestroyed()) annotationOverlayWindow.close()
       } finally {
+        multiPageControlWindow = undefined
         annotationOverlayWindow = undefined
         closingWhiteboardWindows = false
       }
@@ -1165,6 +1270,16 @@ function createAnnotationOverlayWindow(ownerWindow: BrowserWindow): BrowserWindo
     }
 
     applyToolbarOnTopLevel('screen-saver')
+
+    const mp = multiPageControlWindow
+    if (mp && !mp.isDestroyed() && mp.isVisible()) {
+      try {
+        mp.setAlwaysOnTop(true, 'screen-saver')
+      } catch {}
+      try {
+        mp.moveTop()
+      } catch {}
+    }
   }
 
   win.once('ready-to-show', () => {
@@ -1517,17 +1632,54 @@ function handleBackendControlMessage(message: any): void {
       } else {
         annotationOverlayWindow.show()
       }
+
+      const mp = getOrCreateMultiPageControlWindow()
+      repositionMultiPageControlWindow()
+      const showMutPage = () => {
+        if (mp.isDestroyed()) return
+        try {
+          if (!mp.isVisible()) mp.showInactive()
+        } catch {
+          try {
+            if (!mp.isVisible()) mp.show()
+          } catch {}
+        }
+        try {
+          mp.setAlwaysOnTop(true, 'screen-saver')
+        } catch {}
+        try {
+          mp.moveTop()
+        } catch {}
+      }
+      if (mp.webContents.isLoading()) mp.once('ready-to-show', showMutPage)
+      else showMutPage()
     } else {
-      closingWhiteboardWindows = true
-      try {
-        if (annotationOverlayWindow && !annotationOverlayWindow.isDestroyed()) annotationOverlayWindow.close()
-        if (whiteboardBackgroundWindow && !whiteboardBackgroundWindow.isDestroyed()) whiteboardBackgroundWindow.close()
-      } finally {
-        annotationOverlayWindow = undefined
-        whiteboardBackgroundWindow = undefined
-        closingWhiteboardWindows = false
+      const mp = multiPageControlWindow
+      if (mp && !mp.isDestroyed()) {
+        try {
+          if (mp.isVisible()) mp.hide()
+        } catch {}
+      }
+      const overlay = annotationOverlayWindow
+      if (overlay && !overlay.isDestroyed()) {
+        try {
+          if (overlay.isVisible()) overlay.hide()
+        } catch {}
+      }
+      const bg = whiteboardBackgroundWindow
+      if (bg && !bg.isDestroyed()) {
+        try {
+          if (bg.isVisible()) bg.hide()
+        } catch {}
       }
       applyToolbarOnTopLevel('screen-saver')
+      requestBackendRpc<Record<string, unknown>>('getUiState', { windowId: 'app' })
+        .then((state) => {
+          const toolRaw = (state as any)?.tool
+          const tool = toolRaw === 'pen' || toolRaw === 'eraser' ? toolRaw : 'mouse'
+          handleBackendControlMessage({ type: 'SET_SCREEN_ANNOTATION_VISIBLE', visible: tool !== 'mouse' })
+        })
+        .catch(() => undefined)
     }
     return
   }
@@ -1547,7 +1699,10 @@ function handleBackendControlMessage(message: any): void {
   if (message.type === 'SET_SCREEN_ANNOTATION_VISIBLE') {
     const visible = Boolean((message as any).visible)
 
-    if ((whiteboardBackgroundWindow && !whiteboardBackgroundWindow.isDestroyed()) || (annotationOverlayWindow && !annotationOverlayWindow.isDestroyed())) {
+    if (
+      (whiteboardBackgroundWindow && !whiteboardBackgroundWindow.isDestroyed() && whiteboardBackgroundWindow.isVisible()) ||
+      (annotationOverlayWindow && !annotationOverlayWindow.isDestroyed() && annotationOverlayWindow.isVisible())
+    ) {
       const overlay = screenAnnotationOverlayWindow
       if (overlay && !overlay.isDestroyed()) {
         try {

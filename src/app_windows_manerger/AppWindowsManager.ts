@@ -1,12 +1,26 @@
 import { BrowserWindow, screen, type IpcMain } from 'electron'
  
 export type AppManagedWindowKind = 'child' | 'watcher' | 'settings'
+
+const WINDOW_ID_BY_KIND: Record<AppManagedWindowKind, string> = {
+  child: 'child',
+  watcher: 'watcher',
+  settings: 'settings-window'
+}
+
+function kindFromWindowId(windowId: string): AppManagedWindowKind | undefined {
+  if (windowId === WINDOW_ID_BY_KIND.child) return 'child'
+  if (windowId === WINDOW_ID_BY_KIND.watcher) return 'watcher'
+  if (windowId === WINDOW_ID_BY_KIND.settings) return 'settings'
+  return undefined
+}
  
 export type AppWindowsManagerDeps = {
   preloadPath: string
   rendererHtmlPath: string
   getDevServerUrl: () => string | undefined
   getAppearance: () => 'light' | 'dark'
+  getUiZoomLevel: () => number
   getNativeMicaEnabled: () => boolean
   getLegacyWindowImplementation: () => boolean
   surfaceBackgroundColor: (appearance: 'light' | 'dark') => string
@@ -145,8 +159,7 @@ export class AppWindowsManager {
     if (type === 'CONTROL_APP_WINDOW') {
       const windowId = String((message as any).windowId ?? '')
       const action = String((message as any).action ?? '')
-      const kind =
-        windowId === 'child' ? 'child' : windowId === 'watcher' ? 'watcher' : windowId === 'settings-window' ? 'settings' : undefined
+      const kind = kindFromWindowId(windowId)
       if (!kind) return true
       const win = this.windows.get(kind)
       if (!win || win.isDestroyed()) return true
@@ -178,8 +191,7 @@ export class AppWindowsManager {
 
     if (type === 'SET_APP_WINDOW_BOUNDS') {
       const windowId = String((message as any).windowId ?? '')
-      const kind =
-        windowId === 'child' ? 'child' : windowId === 'watcher' ? 'watcher' : windowId === 'settings-window' ? 'settings' : undefined
+      const kind = kindFromWindowId(windowId)
       if (!kind) return true
       const width = Number((message as any).width)
       const height = Number((message as any).height)
@@ -274,82 +286,120 @@ export class AppWindowsManager {
     return this.createSettingsWindow()
   }
  
-  private createChildWindow(): BrowserWindow {
+  private createAppWindow(opts: {
+    kind: AppManagedWindowKind
+    title: string
+    windowId: string
+    width: number
+    height: number
+    x?: number
+    y?: number
+    resizable: boolean
+    frame: boolean
+    transparent: boolean
+    minimizable: boolean
+    maximizable: boolean
+    fullscreenable: boolean
+    show: boolean
+    adjustForDpi?: { baseWidth: number; baseHeight: number }
+  }): BrowserWindow {
     const appearance = this.deps.getAppearance()
-    const legacy = this.deps.getLegacyWindowImplementation()
+
     const win = new BrowserWindow({
+      width: opts.width,
+      height: opts.height,
+      x: opts.x,
+      y: opts.y,
+      title: opts.title,
+      resizable: opts.resizable,
+      minimizable: opts.minimizable,
+      maximizable: opts.maximizable,
+      fullscreenable: opts.fullscreenable,
+      show: opts.show,
+      frame: opts.frame,
+      transparent: opts.transparent,
+      backgroundColor: opts.frame ? this.deps.surfaceBackgroundColor(appearance) : '#00000000',
+      backgroundMaterial: opts.frame && this.deps.getNativeMicaEnabled() ? 'mica' : 'none',
+      webPreferences: {
+        preload: this.deps.preloadPath,
+        sandbox: false,
+        contextIsolation: true,
+        nodeIntegration: false
+      }
+    })
+
+    this.deps.applyWindowsBackdrop(win)
+    this.deps.wireWindowDebug(win, opts.windowId)
+    this.deps.wireWindowStatus(win, opts.windowId)
+    try {
+      win.webContents.setZoomLevel(this.deps.getUiZoomLevel())
+    } catch {}
+
+    const devUrl = this.deps.getDevServerUrl()
+    if (devUrl) win.loadURL(`${devUrl}?window=${encodeURIComponent(opts.windowId)}`)
+    else win.loadFile(this.deps.rendererHtmlPath, { query: { window: opts.windowId } })
+
+    if (opts.adjustForDpi) {
+      win.webContents.on('did-finish-load', () => {
+        this.deps.adjustWindowForDPI(win, opts.adjustForDpi!.baseWidth, opts.adjustForDpi!.baseHeight)
+      })
+    }
+
+    return win
+  }
+
+  private createChildWindow(): BrowserWindow {
+    const legacy = this.deps.getLegacyWindowImplementation()
+    return this.createAppWindow({
+      kind: 'child',
+      title: '数据库',
+      windowId: WINDOW_ID_BY_KIND.child,
       width: 420,
       height: 260,
       resizable: legacy,
+      minimizable: true,
+      maximizable: false,
+      fullscreenable: false,
+      show: false,
       frame: legacy,
-      transparent: !legacy,
-      title: '数据库',
-      backgroundColor: legacy ? this.deps.surfaceBackgroundColor(appearance) : '#00000000',
-      backgroundMaterial: legacy && this.deps.getNativeMicaEnabled() ? 'mica' : 'none',
-      webPreferences: {
-        preload: this.deps.preloadPath,
-        contextIsolation: true,
-        nodeIntegration: false,
-      },
+      transparent: !legacy
     })
- 
-    this.deps.applyWindowsBackdrop(win)
-    this.deps.wireWindowDebug(win, 'child-window')
-    this.deps.wireWindowStatus(win, 'child')
- 
-    const devUrl = this.deps.getDevServerUrl()
-    if (devUrl) win.loadURL(`${devUrl}?window=child`)
-    else win.loadFile(this.deps.rendererHtmlPath, { query: { window: 'child' } })
- 
-    return win
   }
  
   private createWatcherWindow(): BrowserWindow {
-    const appearance = this.deps.getAppearance()
     const legacy = this.deps.getLegacyWindowImplementation()
-    const win = new BrowserWindow({
+    return this.createAppWindow({
+      kind: 'watcher',
+      title: '系统监视器',
+      windowId: WINDOW_ID_BY_KIND.watcher,
       width: 980,
       height: 720,
       resizable: legacy,
+      minimizable: true,
+      maximizable: true,
+      fullscreenable: false,
+      show: false,
       frame: legacy,
-      transparent: !legacy,
-      title: '系统监视器',
-      backgroundColor: legacy ? this.deps.surfaceBackgroundColor(appearance) : '#00000000',
-      backgroundMaterial: legacy && this.deps.getNativeMicaEnabled() ? 'mica' : 'none',
-      webPreferences: {
-        preload: this.deps.preloadPath,
-        contextIsolation: true,
-        nodeIntegration: false,
-      },
+      transparent: !legacy
     })
- 
-    this.deps.applyWindowsBackdrop(win)
-    this.deps.wireWindowDebug(win, 'watcher-window')
-    this.deps.wireWindowStatus(win, 'watcher')
- 
-    const devUrl = this.deps.getDevServerUrl()
-    if (devUrl) win.loadURL(`${devUrl}?window=${encodeURIComponent('watcher')}`)
-    else win.loadFile(this.deps.rendererHtmlPath, { query: { window: 'watcher' } })
- 
-    return win
   }
  
   private createSettingsWindow(): BrowserWindow {
     const existing = this.windows.get('settings')
     if (existing && !existing.isDestroyed()) return existing
  
-    const appearance = this.deps.getAppearance()
     const legacy = this.deps.getLegacyWindowImplementation()
     const { width: screenWidth, height: screenHeight } = screen.getPrimaryDisplay().workAreaSize
     const winWidth = 560
     const winHeight = 380
-
-    const win = new BrowserWindow({
+    return this.createAppWindow({
+      kind: 'settings',
+      title: '设置',
+      windowId: WINDOW_ID_BY_KIND.settings,
       width: winWidth,
       height: winHeight,
       x: Math.round((screenWidth - winWidth) / 2),
       y: Math.round((screenHeight - winHeight) / 2),
-      title: '设置',
       resizable: legacy,
       minimizable: true,
       maximizable: true,
@@ -357,29 +407,8 @@ export class AppWindowsManager {
       show: false,
       frame: false,
       transparent: true,
-      backgroundColor: legacy ? this.deps.surfaceBackgroundColor(appearance) : '#00000000',
-      backgroundMaterial: legacy && this.deps.getNativeMicaEnabled() ? 'mica' : 'none',
-      webPreferences: {
-        preload: this.deps.preloadPath,
-        sandbox: false,
-        contextIsolation: true,
-        nodeIntegration: false,
-      },
+      adjustForDpi: { baseWidth: winWidth, baseHeight: winHeight }
     })
- 
-    this.deps.applyWindowsBackdrop(win)
-    this.deps.wireWindowDebug(win, 'settings-window')
-    this.deps.wireWindowStatus(win, 'settings-window')
- 
-    const devUrl = this.deps.getDevServerUrl()
-    if (devUrl) win.loadURL(`${devUrl}?window=${encodeURIComponent('settings-window')}`)
-    else win.loadFile(this.deps.rendererHtmlPath, { query: { window: 'settings-window' } })
- 
-    win.webContents.on('did-finish-load', () => {
-      this.deps.adjustWindowForDPI(win, 560, 380)
-    })
- 
-    return win
   }
 }
 

@@ -1,7 +1,7 @@
 import React from 'react'
 import { MotionButton } from '../../button'
 import { postCommand } from '../../toolbar/hooks/useBackend'
-import './WindowControls.css'
+import './AppWindowFrame.css'
 
 export function WindowControls(props: { windowId: string; showMaximize?: boolean }) {
   const showMaximize = props.showMaximize !== false
@@ -19,11 +19,11 @@ export function WindowControls(props: { windowId: string; showMaximize?: boolean
   }
 
   return (
-    <div className="windowControls">
+    <div className="lsWindowControls">
       <MotionButton
         kind="custom"
         ariaLabel="最小化"
-        className="windowControlButton windowControlButton--minimize"
+        className="lsWindowControlButton lsWindowControlButton--minimize"
         onClick={handleMinimize}
         whileHover={{ scale: 1.1 }}
         whileTap={{ scale: 0.95 }}
@@ -38,7 +38,7 @@ export function WindowControls(props: { windowId: string; showMaximize?: boolean
         <MotionButton
           kind="custom"
           ariaLabel="最大化"
-          className="windowControlButton windowControlButton--maximize"
+          className="lsWindowControlButton lsWindowControlButton--maximize"
           onClick={handleToggleMaximize}
           whileHover={{ scale: 1.1 }}
           whileTap={{ scale: 0.95 }}
@@ -53,7 +53,7 @@ export function WindowControls(props: { windowId: string; showMaximize?: boolean
       <MotionButton
         kind="custom"
         ariaLabel="关闭"
-        className="windowControlButton windowControlButton--close"
+        className="lsWindowControlButton lsWindowControlButton--close"
         onClick={handleClose}
         whileHover={{ scale: 1.1 }}
         whileTap={{ scale: 0.95 }}
@@ -67,3 +67,22 @@ export function WindowControls(props: { windowId: string; showMaximize?: boolean
     </div>
   )
 }
+
+export function AppWindowTitlebar(props: {
+  windowId: string
+  title: string
+  subtitle?: string
+  showMaximize?: boolean
+  className?: string
+}) {
+  return (
+    <>
+      <WindowControls windowId={props.windowId} showMaximize={props.showMaximize} />
+      <div className={props.className ? `lsAppWindowTitlebar ${props.className}` : 'lsAppWindowTitlebar'}>
+        <div className="lsAppWindowTitlebarTitle">{props.title}</div>
+        {props.subtitle ? <div className="lsAppWindowTitlebarSubtitle">{props.subtitle}</div> : null}
+      </div>
+    </>
+  )
+}
+

@@ -1,8 +1,8 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { motion, useReducedMotion } from '../Framer_Motion'
+import { AppWindowTitlebar } from '../app_windows_manerger/renderer'
 import { SettingsSidebar } from './components/SettingsSidebar'
 import { SettingsContent } from './components/SettingsContent'
-import { WindowControls } from './components/WindowControls'
 import type { SettingsTab } from './types'
 import './SettingsWindow.css'
 
@@ -58,11 +58,8 @@ export function SettingsWindow() {
       animate={reduceMotion ? undefined : { opacity: 1, y: 0, scale: 1 }}
       transition={reduceMotion ? undefined : { duration: 0.18, ease: [0.2, 0.8, 0.2, 1] }}
     >
-      <WindowControls windowId="settings-window" />
       <div ref={cardRef} className={`settingsWindowCard settingsWindowCard--${layoutSize} animate-ls-pop-in`}>
-        <div className="settingsWindowTitlebar">
-          <div className="settingsWindowTitle">设置</div>
-        </div>
+        <AppWindowTitlebar windowId="settings-window" title="设置" />
         <div className="settingsWindowMeasure">
           <SettingsSidebar activeTab={activeTab} onTabChange={setActiveTab} />
           <SettingsContent activeTab={activeTab} />

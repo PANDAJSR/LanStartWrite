@@ -8,6 +8,8 @@ import {
   ERASER_TYPE_UI_STATE_KEY,
   LEAFER_SETTINGS_KV_KEY,
   LEAFER_SETTINGS_UI_STATE_KEY,
+  NOTES_PAGE_INDEX_UI_STATE_KEY,
+  NOTES_PAGE_TOTAL_UI_STATE_KEY,
   PEN_COLOR_UI_STATE_KEY,
   PEN_THICKNESS_UI_STATE_KEY,
   PEN_TYPE_UI_STATE_KEY,
@@ -35,6 +37,59 @@ type LineMeta = {
   minY: number
   maxX: number
   maxY: number
+  transient?: boolean
+}
+
+type PersistedAnnotationNodeV1 = {
+  role: LineRole
+  groupId?: number
+  strokeWidth: number
+  points: number[]
+  color?: string
+  opacity?: number
+  pfh?: boolean
+}
+
+type PersistedAnnotationDocV1 = { version: 1; nodes: PersistedAnnotationNodeV1[] }
+
+type PersistedAnnotationBookV2 = { version: 2; currentPage: number; pages: PersistedAnnotationDocV1[] }
+
+const rotatedNotesKvKeys = new Set<string>()
+
+function isPersistedAnnotationDocV1(v: unknown): v is PersistedAnnotationDocV1 {
+  if (!v || typeof v !== 'object') return false
+  const d = v as any
+  if (d.version !== 1) return false
+  if (!Array.isArray(d.nodes)) return false
+  for (const n of d.nodes) {
+    if (!n || typeof n !== 'object') return false
+    if (n.role !== 'stroke' && n.role !== 'eraserPixel') return false
+    if (typeof n.strokeWidth !== 'number' || !Number.isFinite(n.strokeWidth)) return false
+    if (!Array.isArray(n.points)) return false
+    for (const p of n.points) if (typeof p !== 'number' || !Number.isFinite(p)) return false
+    if (n.color !== undefined && typeof n.color !== 'string') return false
+    if (n.opacity !== undefined && (typeof n.opacity !== 'number' || !Number.isFinite(n.opacity))) return false
+    if (n.pfh !== undefined && typeof n.pfh !== 'boolean') return false
+    if (n.groupId !== undefined && (typeof n.groupId !== 'number' || !Number.isFinite(n.groupId))) return false
+  }
+  return true
+}
+
+function isPersistedAnnotationBookV2(v: unknown): v is PersistedAnnotationBookV2 {
+  if (!v || typeof v !== 'object') return false
+  const b = v as any
+  if (b.version !== 2) return false
+  if (!Array.isArray(b.pages)) return false
+  const currentPage = Number(b.currentPage)
+  if (!Number.isFinite(currentPage)) return false
+  for (const p of b.pages) {
+    if (!isPersistedAnnotationDocV1(p)) return false
+  }
+  return true
+}
+
+function createEmptyDocV1(): PersistedAnnotationDocV1 {
+  return { version: 1, nodes: [] }
 }
 
 function updateBounds(meta: LineMeta, x: number, y: number): void {
@@ -142,7 +197,7 @@ export function AnnotationOverlayApp() {
   const nibModeRef = useRef(DEFAULT_LEAFER_SETTINGS.nibMode ?? 'off')
   const postBakeOptimizeRef = useRef(DEFAULT_LEAFER_SETTINGS.postBakeOptimize ?? false)
   const postBakeOptimizeOnceRef = useRef(DEFAULT_LEAFER_SETTINGS.postBakeOptimizeOnce ?? false)
-  const apiRef = useRef<null | { undo: () => void; redo: () => void; clear: () => void }>(null)
+  const apiRef = useRef<null | { undo: () => void; redo: () => void; clear: () => void; setPage: (index: number, total: number) => void }>(null)
   const lastUndoRevRef = useRef<number | null>(null)
   const lastRedoRevRef = useRef<number | null>(null)
   const lastClearRevRef = useRef<number | null>(null)
@@ -291,6 +346,29 @@ export function AnnotationOverlayApp() {
     lastClearRevRef.current = clearRev
     apiRef.current.clear()
   }, [clearRev])
+
+  const notesPageIndexRaw = bus.state[NOTES_PAGE_INDEX_UI_STATE_KEY]
+  const notesPageTotalRaw = bus.state[NOTES_PAGE_TOTAL_UI_STATE_KEY]
+  const notesPageIndex = typeof notesPageIndexRaw === 'number' ? notesPageIndexRaw : typeof notesPageIndexRaw === 'string' ? Number(notesPageIndexRaw) : 0
+  const notesPageTotal = typeof notesPageTotalRaw === 'number' ? notesPageTotalRaw : typeof notesPageTotalRaw === 'string' ? Number(notesPageTotalRaw) : 1
+  const lastNotesPageIndexRef = useRef<number | null>(null)
+  const lastNotesPageTotalRef = useRef<number | null>(null)
+
+  useEffect(() => {
+    if (!apiRef.current) return
+    const total = Number.isFinite(notesPageTotal) ? Math.max(1, Math.floor(notesPageTotal)) : 1
+    const index = Number.isFinite(notesPageIndex) ? Math.max(0, Math.floor(notesPageIndex)) : 0
+    if (lastNotesPageIndexRef.current === null || lastNotesPageTotalRef.current === null) {
+      lastNotesPageIndexRef.current = index
+      lastNotesPageTotalRef.current = total
+      apiRef.current.setPage(index, total)
+      return
+    }
+    if (index === lastNotesPageIndexRef.current && total === lastNotesPageTotalRef.current) return
+    lastNotesPageIndexRef.current = index
+    lastNotesPageTotalRef.current = total
+    apiRef.current.setPage(index, total)
+  }, [notesPageIndex, notesPageTotal])
 
   useEffect(() => {
     const view = containerRef.current
@@ -1090,6 +1168,47 @@ struct VSOut {
     }
 
     const disposeParentLayout = ensureParentLayout()
+    const notesKvKey = appMode === 'whiteboard' ? 'annotation-notes-whiteboard' : 'annotation-notes-toolbar'
+    const notesHistoryKvKey = `${notesKvKey}-prev`
+    let serializePersistedDoc: null | (() => PersistedAnnotationDocV1) = null
+    let persistTimer: number | null = null
+    let notesBook: PersistedAnnotationBookV2 = { version: 2, currentPage: 0, pages: [createEmptyDocV1()] }
+    let notesPageIndex = 0
+    let notesPageTotal = 1
+
+    const ensureBookShape = (nextIndex: number, nextTotal: number) => {
+      const total = Number.isFinite(nextTotal) ? Math.max(1, Math.floor(nextTotal)) : 1
+      const index = Number.isFinite(nextIndex) ? Math.max(0, Math.floor(nextIndex)) : 0
+      if (notesBook.pages.length < total) {
+        while (notesBook.pages.length < total) notesBook.pages.push(createEmptyDocV1())
+      } else if (notesBook.pages.length > total) {
+        notesBook.pages.length = total
+      }
+      const boundedIndex = Math.max(0, Math.min(total - 1, index))
+      notesPageTotal = total
+      notesPageIndex = boundedIndex
+      notesBook.currentPage = boundedIndex
+    }
+
+    const persistNow = () => {
+      if (!serializePersistedDoc) return
+      try {
+        const doc = serializePersistedDoc()
+        ensureBookShape(notesPageIndex, notesPageTotal)
+        notesBook.pages[notesPageIndex] = doc
+        notesBook.currentPage = notesPageIndex
+        putKv(notesKvKey, notesBook).catch(() => undefined)
+      } catch {}
+    }
+
+    const schedulePersist = () => {
+      if (!serializePersistedDoc) return
+      if (persistTimer !== null) window.clearTimeout(persistTimer)
+      persistTimer = window.setTimeout(() => {
+        persistTimer = null
+        persistNow()
+      }, 320)
+    }
 
     const consumePostBakeOptimizeOnce = () => {
       if (!postBakeOptimizeOnceRef.current) return
@@ -1218,6 +1337,38 @@ struct VSOut {
         ;(node as any).__lanstartMeta = meta
       }
 
+      const serializeColorFromNode = (node: any): { color?: string; opacity?: number; pfh?: boolean } => {
+        if (node instanceof Polygon) {
+          const fill = typeof node.fill === 'string' ? node.fill : undefined
+          const opacity = typeof node.opacity === 'number' && Number.isFinite(node.opacity) ? node.opacity : undefined
+          return { color: fill, opacity, pfh: true }
+        }
+        const stroke = typeof node.stroke === 'string' ? node.stroke : undefined
+        const opacity = typeof node.opacity === 'number' && Number.isFinite(node.opacity) ? node.opacity : undefined
+        return { color: stroke, opacity, pfh: false }
+      }
+
+      serializePersistedDoc = () => {
+        const nodes: PersistedAnnotationNodeV1[] = []
+        for (const node of live) {
+          const meta = getMeta(node)
+          if (!meta) continue
+          if (meta.transient) continue
+          if (!Array.isArray(meta.points) || meta.points.length < 4) continue
+          const { color, opacity, pfh } = serializeColorFromNode(node as any)
+          nodes.push({
+            role: meta.role,
+            groupId: typeof meta.groupId === 'number' && Number.isFinite(meta.groupId) ? meta.groupId : undefined,
+            strokeWidth: meta.strokeWidth,
+            points: meta.points.slice(),
+            color,
+            opacity,
+            pfh
+          })
+        }
+        return { version: 1, nodes }
+      }
+
       const addNodes = (nodes: CanvasNode[]) => {
         for (const node of nodes) {
           leafer.add(node)
@@ -1238,6 +1389,7 @@ struct VSOut {
       const record = (action: Action) => {
         history.undo.push(action)
         history.redo.length = 0
+        schedulePersist()
       }
 
       const undo = () => {
@@ -1246,6 +1398,7 @@ struct VSOut {
         if (action.kind === 'add') removeNodes(action.nodes)
         else addNodes(action.nodes)
         history.redo.push(action)
+        schedulePersist()
       }
 
       const redo = () => {
@@ -1254,6 +1407,7 @@ struct VSOut {
         if (action.kind === 'add') addNodes(action.nodes)
         else removeNodes(action.nodes)
         history.undo.push(action)
+        schedulePersist()
       }
 
       const clear = () => {
@@ -1263,9 +1417,132 @@ struct VSOut {
         record({ kind: 'remove', nodes })
       }
 
-      apiRef.current = { undo, redo, clear }
-
       let nextGroupId = 1
+      let hydrated = false
+
+      const loadDoc = (doc: PersistedAnnotationDocV1) => {
+        if (live.size) removeNodes(Array.from(live))
+        history.undo.length = 0
+        history.redo.length = 0
+
+        const add: CanvasNode[] = []
+        let maxGroupId = 0
+        for (const n of doc.nodes) {
+          if (!Array.isArray(n.points) || n.points.length < 4) continue
+          const p0x = n.points[0] ?? 0
+          const p0y = n.points[1] ?? 0
+          const meta: LineMeta = { role: n.role, groupId: n.groupId, strokeWidth: n.strokeWidth, points: n.points.slice(), minX: p0x, minY: p0y, maxX: p0x, maxY: p0y }
+          recomputeBounds(meta, meta.points)
+          if (typeof meta.groupId === 'number' && Number.isFinite(meta.groupId)) maxGroupId = Math.max(maxGroupId, meta.groupId)
+
+          if (n.role === 'eraserPixel') {
+            const line = new Line({ points: meta.points, stroke: '#000000', strokeWidth: meta.strokeWidth, blendMode: 'destination-out' as any, opacity: 1 } as any)
+            setMeta(line, meta)
+            add.push(line)
+            continue
+          }
+
+          const color = typeof n.color === 'string' ? n.color : '#000000'
+          const opacity = typeof n.opacity === 'number' && Number.isFinite(n.opacity) ? Math.max(0, Math.min(1, n.opacity)) : 1
+          if (n.pfh) {
+            const outline = getStroke(pointsToPerfectFreehandInput(meta.points), {
+              size: meta.strokeWidth,
+              thinning: 0.7,
+              smoothing: 0.6,
+              streamline: 0.5,
+              simulatePressure: true
+            })
+            if (outline.length >= 3) {
+              const polyPoints: number[] = []
+              for (const p of outline as unknown as [number, number][]) polyPoints.push(p[0], p[1])
+              const poly = new Polygon({ points: polyPoints, fill: color, opacity } as any)
+              setMeta(poly as any, meta)
+              add.push(poly)
+            } else {
+              const line = new Line({ points: meta.points, stroke: color, strokeWidth: meta.strokeWidth, opacity } as any)
+              setMeta(line, meta)
+              add.push(line)
+            }
+            continue
+          }
+
+          const line = new Line({ points: meta.points, stroke: color, strokeWidth: meta.strokeWidth, opacity } as any)
+          setMeta(line, meta)
+          add.push(line)
+        }
+        if (add.length) addNodes(add)
+        nextGroupId = Math.max(1, maxGroupId + 1)
+      }
+
+      const setPage = (index: number, total: number) => {
+        const boundedIndex = Math.max(0, Math.min(Math.max(1, Math.floor(total)) - 1, Math.floor(index)))
+        const boundedTotal = Math.max(1, Math.floor(total))
+        if (boundedIndex === notesPageIndex && boundedTotal === notesPageTotal) return
+        persistNow()
+        ensureBookShape(boundedIndex, boundedTotal)
+        loadDoc(notesBook.pages[notesPageIndex] ?? createEmptyDocV1())
+        putKv(notesKvKey, notesBook).catch(() => undefined)
+        try {
+          ;(leafer as any).forceRender?.()
+        } catch {}
+      }
+
+      apiRef.current = { undo, redo, clear, setPage }
+      lastUndoRevRef.current = undoRev
+      lastRedoRevRef.current = redoRev
+      lastClearRevRef.current = clearRev
+
+      const hydrate = async () => {
+        try {
+          if (!rotatedNotesKvKeys.has(notesKvKey)) {
+            rotatedNotesKvKeys.add(notesKvKey)
+
+            let prev: PersistedAnnotationBookV2 | null = null
+            try {
+              const loaded = await getKv<unknown>(notesKvKey)
+              if (isPersistedAnnotationBookV2(loaded)) prev = loaded
+              else if (isPersistedAnnotationDocV1(loaded)) prev = { version: 2, currentPage: 0, pages: [loaded] }
+            } catch {}
+
+            if (prev) putKv(notesHistoryKvKey, prev).catch(() => undefined)
+
+            notesBook = { version: 2, currentPage: 0, pages: [createEmptyDocV1()] }
+            ensureBookShape(0, 1)
+            loadDoc(notesBook.pages[notesPageIndex] ?? createEmptyDocV1())
+            putKv(notesKvKey, notesBook).catch(() => undefined)
+            void putUiStateKey(UI_STATE_APP_WINDOW_ID, NOTES_PAGE_TOTAL_UI_STATE_KEY, notesPageTotal)
+            void putUiStateKey(UI_STATE_APP_WINDOW_ID, NOTES_PAGE_INDEX_UI_STATE_KEY, notesPageIndex)
+            return
+          }
+
+          const loaded = await getKv<unknown>(notesKvKey)
+          if (isPersistedAnnotationBookV2(loaded)) {
+            notesBook = loaded
+          } else if (isPersistedAnnotationDocV1(loaded)) {
+            notesBook = { version: 2, currentPage: 0, pages: [loaded] }
+          } else {
+            ensureBookShape(0, 1)
+            loadDoc(notesBook.pages[notesPageIndex] ?? createEmptyDocV1())
+            return
+          }
+
+          const initialTotal = Math.max(1, notesBook.pages.length)
+          const initialIndex = Number.isFinite(notesBook.currentPage) ? notesBook.currentPage : 0
+          ensureBookShape(initialIndex, initialTotal)
+          loadDoc(notesBook.pages[notesPageIndex] ?? createEmptyDocV1())
+          putKv(notesKvKey, notesBook).catch(() => undefined)
+          void putUiStateKey(UI_STATE_APP_WINDOW_ID, NOTES_PAGE_TOTAL_UI_STATE_KEY, notesPageTotal)
+          void putUiStateKey(UI_STATE_APP_WINDOW_ID, NOTES_PAGE_INDEX_UI_STATE_KEY, notesPageIndex)
+        } catch {
+          return
+        } finally {
+          hydrated = true
+          try {
+            ;(leafer as any).forceRender?.()
+          } catch {}
+        }
+      }
+      void hydrate()
 
       const sessions = new Map<
         number,
@@ -1419,6 +1696,7 @@ struct VSOut {
       }
 
       const onPointerDown = (e: PointerEvent) => {
+        if (!hydrated) return
         if (toolRef.current === 'mouse') return
         if (!multiTouchRef.current && sessions.size > 0) return
         view.setPointerCapture(e.pointerId)
@@ -1497,8 +1775,8 @@ struct VSOut {
           const glowStroke = { ...stroke, stroke: '#ffffff', strokeWidth: strokeWidth + glowExtra, opacity: 0.28 }
           session.glowLine = new Line({ points: session.points, ...glowStroke } as any)
           session.line = new Line({ points: session.points, ...stroke } as any)
-          setMeta(session.glowLine, { role, groupId: session.groupId, strokeWidth: strokeWidth + glowExtra, points: session.points, minX: p0.x, minY: p0.y, maxX: p0.x, maxY: p0.y })
-          setMeta(session.line, { role, groupId: session.groupId, strokeWidth, points: session.points, minX: p0.x, minY: p0.y, maxX: p0.x, maxY: p0.y })
+          setMeta(session.glowLine, { role, transient: true, groupId: session.groupId, strokeWidth: strokeWidth + glowExtra, points: session.points, minX: p0.x, minY: p0.y, maxX: p0.x, maxY: p0.y })
+          setMeta(session.line, { role, transient: true, groupId: session.groupId, strokeWidth, points: session.points, minX: p0.x, minY: p0.y, maxX: p0.x, maxY: p0.y })
           addNodes([session.glowLine, session.line])
         } else {
           session.line = new Line({
@@ -1836,6 +2114,8 @@ struct VSOut {
       view.addEventListener('pointercancel', onPointerCancel)
 
       return () => {
+        if (persistTimer !== null) window.clearTimeout(persistTimer)
+        persistNow()
         ro.disconnect()
         view.removeEventListener('pointerdown', onPointerDown)
         view.removeEventListener('pointermove', onPointerMove)
@@ -1912,6 +2192,123 @@ struct VSOut {
 
     const nodeToSvgPath = useSvg ? new Map<RenderNode, SVGPathElement>() : null
     const svgDirty = useSvg ? new Set<RenderNode>() : null
+
+    let nextGroupId = 1
+    let hydrated = false
+
+    const rgbaFromHex = (hex: string, opacity: number): [number, number, number, number] => {
+      const parsed = parseHexColor(hex)
+      if (!parsed) return [0, 0, 0, Math.max(0, Math.min(1, opacity))]
+      return [parsed.r / 255, parsed.g / 255, parsed.b / 255, Math.max(0, Math.min(1, opacity))]
+    }
+
+    serializePersistedDoc = () => {
+      const nodes: PersistedAnnotationNodeV1[] = []
+      for (const n of order) {
+        if (!live.has(n)) continue
+        if (n.meta.transient) continue
+        if (!Array.isArray(n.points) || n.points.length < 4) continue
+        const r = Math.round(n.color[0] * 255)
+        const g = Math.round(n.color[1] * 255)
+        const b = Math.round(n.color[2] * 255)
+        const a = Math.max(0, Math.min(1, n.color[3]))
+        const color = `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`
+        nodes.push({
+          role: n.role,
+          groupId: typeof n.meta.groupId === 'number' && Number.isFinite(n.meta.groupId) ? n.meta.groupId : undefined,
+          strokeWidth: n.strokeWidth,
+          points: n.points.slice(),
+          color,
+          opacity: a,
+          pfh: n.pfh
+        })
+      }
+      return { version: 1, nodes }
+    }
+
+    const loadDoc = (doc: PersistedAnnotationDocV1) => {
+      if (live.size) removeNodes(Array.from(live))
+      history.undo.length = 0
+      history.redo.length = 0
+
+      let maxGroupId = 0
+      const add: RenderNode[] = []
+      for (const n of doc.nodes) {
+        if (!Array.isArray(n.points) || n.points.length < 4) continue
+        const p0x = n.points[0] ?? 0
+        const p0y = n.points[1] ?? 0
+        const meta: LineMeta = { role: n.role, groupId: n.groupId, strokeWidth: n.strokeWidth, points: n.points.slice(), minX: p0x, minY: p0y, maxX: p0x, maxY: p0y }
+        recomputeBounds(meta, meta.points)
+        if (typeof meta.groupId === 'number' && Number.isFinite(meta.groupId)) maxGroupId = Math.max(maxGroupId, meta.groupId)
+        const opacity = typeof n.opacity === 'number' && Number.isFinite(n.opacity) ? n.opacity : 1
+        const color = n.role === 'eraserPixel' ? ([0, 0, 0, 1] as [number, number, number, number]) : rgbaFromHex(typeof n.color === 'string' ? n.color : '#000000', opacity)
+        add.push({ role: n.role, pfh: !!n.pfh, strokeWidth: n.strokeWidth, points: meta.points.slice(), meta, color })
+      }
+      if (add.length) addNodes(add)
+      nextGroupId = Math.max(1, maxGroupId + 1)
+      requestRender()
+    }
+
+    const setPage = (index: number, total: number) => {
+      const boundedIndex = Math.max(0, Math.min(Math.max(1, Math.floor(total)) - 1, Math.floor(index)))
+      const boundedTotal = Math.max(1, Math.floor(total))
+      if (boundedIndex === notesPageIndex && boundedTotal === notesPageTotal) return
+      persistNow()
+      ensureBookShape(boundedIndex, boundedTotal)
+      loadDoc(notesBook.pages[notesPageIndex] ?? createEmptyDocV1())
+      putKv(notesKvKey, notesBook).catch(() => undefined)
+    }
+
+    const hydrate = async () => {
+      try {
+        if (!rotatedNotesKvKeys.has(notesKvKey)) {
+          rotatedNotesKvKeys.add(notesKvKey)
+
+          let prev: PersistedAnnotationBookV2 | null = null
+          try {
+            const loaded = await getKv<unknown>(notesKvKey)
+            if (isPersistedAnnotationBookV2(loaded)) prev = loaded
+            else if (isPersistedAnnotationDocV1(loaded)) prev = { version: 2, currentPage: 0, pages: [loaded] }
+          } catch {}
+
+          if (prev) putKv(notesHistoryKvKey, prev).catch(() => undefined)
+
+          notesBook = { version: 2, currentPage: 0, pages: [createEmptyDocV1()] }
+          ensureBookShape(0, 1)
+          loadDoc(notesBook.pages[notesPageIndex] ?? createEmptyDocV1())
+          putKv(notesKvKey, notesBook).catch(() => undefined)
+          void putUiStateKey(UI_STATE_APP_WINDOW_ID, NOTES_PAGE_TOTAL_UI_STATE_KEY, notesPageTotal)
+          void putUiStateKey(UI_STATE_APP_WINDOW_ID, NOTES_PAGE_INDEX_UI_STATE_KEY, notesPageIndex)
+          return
+        }
+
+        const loaded = await getKv<unknown>(notesKvKey)
+        if (isPersistedAnnotationBookV2(loaded)) {
+          notesBook = loaded
+        } else if (isPersistedAnnotationDocV1(loaded)) {
+          notesBook = { version: 2, currentPage: 0, pages: [loaded] }
+        } else {
+          ensureBookShape(0, 1)
+          loadDoc(notesBook.pages[notesPageIndex] ?? createEmptyDocV1())
+          return
+        }
+
+        const initialTotal = Math.max(1, notesBook.pages.length)
+        const initialIndex = Number.isFinite(notesBook.currentPage) ? notesBook.currentPage : 0
+        ensureBookShape(initialIndex, initialTotal)
+        loadDoc(notesBook.pages[notesPageIndex] ?? createEmptyDocV1())
+        putKv(notesKvKey, notesBook).catch(() => undefined)
+        void putUiStateKey(UI_STATE_APP_WINDOW_ID, NOTES_PAGE_TOTAL_UI_STATE_KEY, notesPageTotal)
+        void putUiStateKey(UI_STATE_APP_WINDOW_ID, NOTES_PAGE_INDEX_UI_STATE_KEY, notesPageIndex)
+      } catch {
+        return
+      } finally {
+        hydrated = true
+        requestRender()
+      }
+    }
+
+    void hydrate()
 
     const buildCumLen = (points: number[]) => {
       const n = Math.floor(points.length / 2)
@@ -2086,6 +2483,7 @@ struct VSOut {
     const record = (action: Action) => {
       history.undo.push(action)
       history.redo.length = 0
+      schedulePersist()
     }
 
     const undo = () => {
@@ -2095,6 +2493,7 @@ struct VSOut {
       else addNodes(action.nodes)
       history.redo.push(action)
       requestRender()
+      schedulePersist()
     }
 
     const redo = () => {
@@ -2104,6 +2503,7 @@ struct VSOut {
       else removeNodes(action.nodes)
       history.undo.push(action)
       requestRender()
+      schedulePersist()
     }
 
     const clear = () => {
@@ -2114,7 +2514,7 @@ struct VSOut {
       requestRender()
     }
 
-    apiRef.current = { undo, redo, clear }
+    apiRef.current = { undo, redo, clear, setPage }
     lastUndoRevRef.current = undoRev
     lastRedoRevRef.current = redoRev
     lastClearRevRef.current = clearRev
@@ -2283,7 +2683,6 @@ struct VSOut {
       }
       requestRender()
     }
-    void init()
 
     let scheduled = false
     const requestRender = () => {
@@ -2315,15 +2714,15 @@ struct VSOut {
         }
       })
     }
+    void init()
 
     const markSvgDirty = (n: RenderNode) => {
       if (!svgDirty) return
       svgDirty.add(n)
     }
 
-    let nextGroupId = 1
-
     const onPointerDown = (e: PointerEvent) => {
+      if (!hydrated) return
       if (toolRef.current === 'mouse') return
       if (!multiTouchRef.current && sessions.size > 0) return
       view.setPointerCapture(e.pointerId)
@@ -2401,9 +2800,9 @@ struct VSOut {
       if (session.laser && role === 'stroke') {
         const glowExtra = clamp(strokeWidth * 0.7, 4, 22)
         const glowWidth = strokeWidth + glowExtra
-        const glowMeta: LineMeta = { role, groupId: session.groupId, strokeWidth: glowWidth, points: session.points, minX: p0.x, minY: p0.y, maxX: p0.x, maxY: p0.y }
+        const glowMeta: LineMeta = { role, transient: true, groupId: session.groupId, strokeWidth: glowWidth, points: session.points, minX: p0.x, minY: p0.y, maxX: p0.x, maxY: p0.y }
         const glow: RenderNode = { role, pfh: false, strokeWidth: glowWidth, points: session.points, meta: glowMeta, color: [1, 1, 1, 0.22] }
-        const meta: LineMeta = { role, groupId: session.groupId, strokeWidth, points: session.points, minX: p0.x, minY: p0.y, maxX: p0.x, maxY: p0.y }
+        const meta: LineMeta = { role, transient: true, groupId: session.groupId, strokeWidth, points: session.points, minX: p0.x, minY: p0.y, maxX: p0.x, maxY: p0.y }
         const node: RenderNode = { role, pfh, strokeWidth, points: session.points, meta, color: rgba }
         session.glowNode = glow
         session.node = node
@@ -2654,6 +3053,8 @@ struct VSOut {
 
     return () => {
       cancelled = true
+      if (persistTimer !== null) window.clearTimeout(persistTimer)
+      persistNow()
       ro.disconnect()
       view.removeEventListener('pointerdown', onPointerDown)
       view.removeEventListener('pointermove', onPointerMove)
@@ -2665,7 +3066,7 @@ struct VSOut {
       } catch {}
       disposeParentLayout()
     }
-  }, [rendererEngine])
+  }, [rendererEngine, appMode])
 
   return (
     <div

@@ -9,6 +9,8 @@ import {
   EFFECTIVE_WRITING_BACKEND_UI_STATE_KEY,
   ERASER_THICKNESS_UI_STATE_KEY,
   ERASER_TYPE_UI_STATE_KEY,
+  NOTES_PAGE_INDEX_UI_STATE_KEY,
+  NOTES_PAGE_TOTAL_UI_STATE_KEY,
   PEN_COLOR_UI_STATE_KEY,
   PEN_THICKNESS_UI_STATE_KEY,
   PEN_TYPE_UI_STATE_KEY,
@@ -330,6 +332,51 @@ async function handleCommand(command: string, payload: unknown): Promise<Command
         const nextRev = (Number(state[REDO_REV_UI_STATE_KEY]) || 0) + 1
         state[REDO_REV_UI_STATE_KEY] = nextRev
         emitEvent('UI_STATE_PUT', { windowId: UI_STATE_APP_WINDOW_ID, key: REDO_REV_UI_STATE_KEY, value: nextRev })
+        return { ok: true }
+      }
+
+      if (action === 'prevPage') {
+        const state = getOrInitUiState(UI_STATE_APP_WINDOW_ID)
+        const totalRaw = Number(state[NOTES_PAGE_TOTAL_UI_STATE_KEY])
+        const total = Number.isFinite(totalRaw) && totalRaw >= 1 ? Math.floor(totalRaw) : 1
+        const indexRaw = Number(state[NOTES_PAGE_INDEX_UI_STATE_KEY])
+        const index = Number.isFinite(indexRaw) ? Math.floor(indexRaw) : 0
+        const nextIndex = Math.max(0, Math.min(total - 1, index - 1))
+        state[NOTES_PAGE_INDEX_UI_STATE_KEY] = nextIndex
+        if (!Number.isFinite(totalRaw) || totalRaw < 1) {
+          state[NOTES_PAGE_TOTAL_UI_STATE_KEY] = total
+          emitEvent('UI_STATE_PUT', { windowId: UI_STATE_APP_WINDOW_ID, key: NOTES_PAGE_TOTAL_UI_STATE_KEY, value: total })
+        }
+        emitEvent('UI_STATE_PUT', { windowId: UI_STATE_APP_WINDOW_ID, key: NOTES_PAGE_INDEX_UI_STATE_KEY, value: nextIndex })
+        return { ok: true }
+      }
+
+      if (action === 'nextPage') {
+        const state = getOrInitUiState(UI_STATE_APP_WINDOW_ID)
+        const totalRaw = Number(state[NOTES_PAGE_TOTAL_UI_STATE_KEY])
+        const total = Number.isFinite(totalRaw) && totalRaw >= 1 ? Math.floor(totalRaw) : 1
+        const indexRaw = Number(state[NOTES_PAGE_INDEX_UI_STATE_KEY])
+        const index = Number.isFinite(indexRaw) ? Math.floor(indexRaw) : 0
+        const nextIndex = Math.max(0, Math.min(total - 1, index + 1))
+        state[NOTES_PAGE_INDEX_UI_STATE_KEY] = nextIndex
+        if (!Number.isFinite(totalRaw) || totalRaw < 1) {
+          state[NOTES_PAGE_TOTAL_UI_STATE_KEY] = total
+          emitEvent('UI_STATE_PUT', { windowId: UI_STATE_APP_WINDOW_ID, key: NOTES_PAGE_TOTAL_UI_STATE_KEY, value: total })
+        }
+        emitEvent('UI_STATE_PUT', { windowId: UI_STATE_APP_WINDOW_ID, key: NOTES_PAGE_INDEX_UI_STATE_KEY, value: nextIndex })
+        return { ok: true }
+      }
+
+      if (action === 'newPage') {
+        const state = getOrInitUiState(UI_STATE_APP_WINDOW_ID)
+        const totalRaw = Number(state[NOTES_PAGE_TOTAL_UI_STATE_KEY])
+        const total = Number.isFinite(totalRaw) && totalRaw >= 1 ? Math.floor(totalRaw) : 1
+        const nextTotal = Math.min(2000, total + 1)
+        const nextIndex = nextTotal - 1
+        state[NOTES_PAGE_TOTAL_UI_STATE_KEY] = nextTotal
+        state[NOTES_PAGE_INDEX_UI_STATE_KEY] = nextIndex
+        emitEvent('UI_STATE_PUT', { windowId: UI_STATE_APP_WINDOW_ID, key: NOTES_PAGE_TOTAL_UI_STATE_KEY, value: nextTotal })
+        emitEvent('UI_STATE_PUT', { windowId: UI_STATE_APP_WINDOW_ID, key: NOTES_PAGE_INDEX_UI_STATE_KEY, value: nextIndex })
         return { ok: true }
       }
 
