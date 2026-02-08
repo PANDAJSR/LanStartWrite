@@ -2,15 +2,18 @@ appId: com.lanstart.write
 productName: LanStartWrite
 directories:
   output: dist
-  buildResources: build
+  buildResources: iconpack
 files:
   - out/**/*
   - package.json
+extraResources:
+  - from: iconpack/LanStartWrite.png
+    to: iconpack/LanStartWrite.png
 publish:
   provider: github
 win:
   target: nsis
-  icon: iconpack/LanStartWrite.ico
+  icon: LanStartWrite.png
 nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true

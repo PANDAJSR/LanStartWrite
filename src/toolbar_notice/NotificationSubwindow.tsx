@@ -2,9 +2,10 @@ import React, { useEffect, useRef, useState } from 'react'
 import { motion, useReducedMotion } from '../Framer_Motion'
 import { Button } from '../button'
 import { useEventsPoll } from '../toolbar/hooks/useEventsPoll'
-import { postCommand } from '../toolbar/hooks/useBackend'
+import { deleteUiStateKey, getKv, postCommand, putKv, putUiStateKey } from '../toolbar/hooks/useBackend'
 import { useZoomOnWheel } from '../toolbar/hooks/useZoomOnWheel'
 import { WatcherIcon } from '../toolbar/components/ToolbarIcons'
+import { APP_MODE_UI_STATE_KEY, NOTICE_KIND_UI_STATE_KEY, NOTES_RELOAD_REV_UI_STATE_KEY, UI_STATE_APP_WINDOW_ID, useUiStateBus } from '../status'
 import '../toolbar-subwindows/styles/subwindow.css'
 
 function formatBytes(bytes: number): string {
@@ -20,10 +21,40 @@ function formatBytes(bytes: number): string {
   return `${v.toFixed(digits)} ${units[idx]}`
 }
 
+function HistoryIcon() {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 20 20">
+      <path
+        fill="currentColor"
+        d="M10 4a6 6 0 1 1-5.982 5.538a.5.5 0 1 0-.998-.076Q3 9.73 3 10a7 7 0 1 0 2-4.899V3.5a.5.5 0 0 0-1 0v3a.5.5 0 0 0 .5.5h3a.5.5 0 0 0 0-1H5.528A5.98 5.98 0 0 1 10 4m0 2.5a.5.5 0 0 0-1 0v4a.5.5 0 0 0 .5.5h3a.5.5 0 0 0 0-1H10z"
+      />
+    </svg>
+  )
+}
+
+function CheckIcon() {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      width="18"
+      height="18"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M20 6L9 17l-5-5" />
+    </svg>
+  )
+}
+
 export function NotificationSubwindow(props: { kind: 'notice' }) {
   useZoomOnWheel()
   const reduceMotion = useReducedMotion()
   const events = useEventsPoll(800)
+  const bus = useUiStateBus(UI_STATE_APP_WINDOW_ID)
   const rootRef = useRef<HTMLDivElement | null>(null)
   const cardRef = useRef<HTMLDivElement | null>(null)
   const measureRef = useRef<HTMLDivElement | null>(null)
@@ -55,6 +86,10 @@ export function NotificationSubwindow(props: { kind: 'notice' }) {
       }
     }
   }, [events])
+
+  const noticeKindRaw = bus.state[NOTICE_KIND_UI_STATE_KEY]
+  const noticeKind = typeof noticeKindRaw === 'string' ? noticeKindRaw : ''
+  const isRestoreNotesNotice = noticeKind === 'notesRestore'
 
   useEffect(() => {
     const root = rootRef.current
@@ -98,6 +133,7 @@ export function NotificationSubwindow(props: { kind: 'notice' }) {
   }, [props.kind])
 
   const close = () => {
+    deleteUiStateKey(UI_STATE_APP_WINDOW_ID, NOTICE_KIND_UI_STATE_KEY).catch(() => undefined)
     void postCommand('win.setNoticeVisible', { visible: false })
   }
 
@@ -107,6 +143,19 @@ export function NotificationSubwindow(props: { kind: 'notice' }) {
   }
 
   const text = `内存占用 ${formatBytes(memoryTotalBytes || lastMemoryTotalBytesRef.current)}`
+
+  const restoreNotes = async () => {
+    const appModeRaw = bus.state[APP_MODE_UI_STATE_KEY]
+    const mode = appModeRaw === 'whiteboard' ? 'whiteboard' : 'toolbar'
+    const notesKvKey = mode === 'whiteboard' ? 'annotation-notes-whiteboard' : 'annotation-notes-toolbar'
+    const notesHistoryKvKey = `${notesKvKey}-prev`
+    try {
+      const prev = await getKv<unknown>(notesHistoryKvKey)
+      await putKv(notesKvKey, prev)
+      await putUiStateKey(UI_STATE_APP_WINDOW_ID, NOTES_RELOAD_REV_UI_STATE_KEY, Date.now())
+    } catch {}
+    close()
+  }
 
   return (
     <motion.div
@@ -125,16 +174,18 @@ export function NotificationSubwindow(props: { kind: 'notice' }) {
           alignItems: 'center',
           padding: outerPadding,
           gap: 12,
-          cursor: 'pointer'
+          cursor: isRestoreNotesNotice ? 'default' : 'pointer'
         }}
-        role="button"
-        tabIndex={0}
+        role={isRestoreNotesNotice ? undefined : 'button'}
+        tabIndex={isRestoreNotesNotice ? undefined : 0}
         onClick={(e) => {
+          if (isRestoreNotesNotice) return
           const target = e.target as HTMLElement | null
           if (target?.closest?.('button')) return
           openWatcher()
         }}
         onKeyDown={(e) => {
+          if (isRestoreNotesNotice) return
           if (e.key !== 'Enter' && e.key !== ' ') return
           e.preventDefault()
           openWatcher()
@@ -148,7 +199,7 @@ export function NotificationSubwindow(props: { kind: 'notice' }) {
           <div style={{ display: 'flex', alignItems: 'center', gap: 18, minWidth: 0, maxWidth: '100%' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0, maxWidth: '100%' }}>
               <div style={{ width: 18, height: 18, opacity: 0.92, flex: '0 0 auto' }} aria-hidden="true">
-                <WatcherIcon />
+                {isRestoreNotesNotice ? <HistoryIcon /> : <WatcherIcon />}
               </div>
               <div
                 style={{
@@ -160,7 +211,7 @@ export function NotificationSubwindow(props: { kind: 'notice' }) {
                   minWidth: 0
                 }}
               >
-                {text}
+                {isRestoreNotesNotice ? '是否还原笔记？' : text}
               </div>
             </div>
 
@@ -170,6 +221,7 @@ export function NotificationSubwindow(props: { kind: 'notice' }) {
               onPointerCancel={(e) => e.stopPropagation()}
               onPointerLeave={(e) => e.stopPropagation()}
               onClick={(e) => e.stopPropagation()}
+              style={{ display: 'flex', alignItems: 'center', gap: 8, flex: '0 0 auto' }}
             >
               <Button variant="default" size="sm" ariaLabel="关闭通知" title="关闭" onClick={close}>
                 <svg
@@ -187,6 +239,11 @@ export function NotificationSubwindow(props: { kind: 'notice' }) {
                   <path d="M6 6l12 12" />
                 </svg>
               </Button>
+              {isRestoreNotesNotice ? (
+                <Button variant="default" size="sm" ariaLabel="确定还原笔记" title="确定" onClick={restoreNotes}>
+                  <CheckIcon />
+                </Button>
+              ) : null}
             </div>
           </div>
         </div>

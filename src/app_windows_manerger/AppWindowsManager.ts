@@ -1,4 +1,6 @@
-import { BrowserWindow, screen, type IpcMain } from 'electron'
+import { BrowserWindow, app, screen, type IpcMain } from 'electron'
+import { existsSync } from 'node:fs'
+import { join } from 'node:path'
  
 export type AppManagedWindowKind = 'child' | 'watcher' | 'settings'
 
@@ -6,6 +8,22 @@ const WINDOW_ID_BY_KIND: Record<AppManagedWindowKind, string> = {
   child: 'child',
   watcher: 'watcher',
   settings: 'settings-window'
+}
+
+function resolveAppIconPath(): string | undefined {
+  const candidates = [
+    join(process.resourcesPath, 'iconpack', 'LanStartWrite.png'),
+    join(process.resourcesPath, 'LanStartWrite.png'),
+    join(__dirname, '../../iconpack/LanStartWrite.png'),
+    join(app.getAppPath(), 'iconpack', 'LanStartWrite.png'),
+    join(process.cwd(), 'iconpack', 'LanStartWrite.png'),
+  ]
+  for (const p of candidates) {
+    try {
+      if (existsSync(p)) return p
+    } catch {}
+  }
+  return undefined
 }
 
 function kindFromWindowId(windowId: string): AppManagedWindowKind | undefined {
@@ -304,8 +322,10 @@ export class AppWindowsManager {
     adjustForDpi?: { baseWidth: number; baseHeight: number }
   }): BrowserWindow {
     const appearance = this.deps.getAppearance()
+    const iconPath = resolveAppIconPath()
 
     const win = new BrowserWindow({
+      ...(iconPath ? { icon: iconPath } : {}),
       width: opts.width,
       height: opts.height,
       x: opts.x,

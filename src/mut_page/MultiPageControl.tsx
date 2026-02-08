@@ -36,7 +36,7 @@ export function MultiPageControlWindow() {
       }}
     >
       <div style={{ display: 'inline-flex', alignItems: 'center', gap, maxWidth: '100%' }}>
-        <div className="subwindowRoot" style={{ width: 'auto', height: 'auto' }}>
+        <div className="subwindowRoot" style={{ width: 'auto', height: 'auto', boxShadow: 'none' }}>
           <div style={{ position: 'relative', zIndex: 1, display: 'inline-flex', alignItems: 'center', gap, padding: outerPadding }}>
           <Button
             size="sm"
@@ -78,7 +78,7 @@ export function MultiPageControlWindow() {
           </div>
         </div>
 
-        <div className="subwindowRoot" style={{ width: 'auto', height: 'auto' }}>
+        <div className="subwindowRoot" style={{ width: 'auto', height: 'auto', boxShadow: 'none' }}>
           <div style={{ position: 'relative', zIndex: 1, display: 'inline-flex', alignItems: 'center', padding: outerPadding }}>
             <Button
               size="sm"

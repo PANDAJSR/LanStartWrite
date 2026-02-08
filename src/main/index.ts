@@ -1,4 +1,4 @@
-import { BrowserWindow, app, ipcMain, nativeImage, nativeTheme, screen } from 'electron'
+import { BrowserWindow, Menu, Tray, app, ipcMain, nativeImage, nativeTheme, screen } from 'electron'
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
@@ -47,6 +47,50 @@ let nativeMicaEnabled = false
 let legacyWindowImplementation = false
 let stopToolbarTopmostPolling: (() => void) | undefined
 
+function resolveAppIconPath(): string | undefined {
+  const candidates = [
+    join(process.resourcesPath, 'iconpack', 'LanStartWrite.png'),
+    join(process.resourcesPath, 'LanStartWrite.png'),
+    join(__dirname, '../../iconpack/LanStartWrite.png'),
+    join(process.cwd(), 'iconpack', 'LanStartWrite.png'),
+  ]
+  for (const p of candidates) {
+    try {
+      if (existsSync(p)) return p
+    } catch {}
+  }
+  return undefined
+}
+
+const APP_ICON_PATH = resolveAppIconPath()
+let tray: Tray | undefined
+
+const pendingFullscreenWindows = new WeakSet<BrowserWindow>()
+const lastFullscreenRequestAtMs = new WeakMap<BrowserWindow, number>()
+
+function ensureFullScreenSoon(target: BrowserWindow): void {
+  if (!target || target.isDestroyed()) return
+  try {
+    if (target.isFullScreen()) return
+  } catch {}
+
+  if (pendingFullscreenWindows.has(target)) return
+
+  const now = Date.now()
+  const last = lastFullscreenRequestAtMs.get(target) ?? 0
+  if (now - last < 800) return
+  lastFullscreenRequestAtMs.set(target, now)
+
+  pendingFullscreenWindows.add(target)
+  setTimeout(() => {
+    pendingFullscreenWindows.delete(target)
+    if (!target || target.isDestroyed()) return
+    try {
+      if (!target.isFullScreen()) target.setFullScreen(true)
+    } catch {}
+  }, 0)
+}
+
 type BackendRpcResponse =
   | { type: 'RPC_RESPONSE'; id: number; ok: true; result: unknown }
   | { type: 'RPC_RESPONSE'; id: number; ok: false; error: string }
@@ -93,7 +137,92 @@ const lanstartwriteLink = createLanstartwriteLinkController({
   }
 })
 
+if (process.platform === 'win32') {
+  try {
+    app.setAppUserModelId('com.lanstart.write')
+  } catch {}
+}
+
 const hasSingleInstanceLock = lanstartwriteLink.register(app)
+
+function focusFloatingToolbarOrAnyWindow(): void {
+  const win =
+    floatingToolbarWindow && !floatingToolbarWindow.isDestroyed()
+      ? floatingToolbarWindow
+      : BrowserWindow.getAllWindows().find((w) => !w.isDestroyed())
+  if (!win || win.isDestroyed()) return
+  try {
+    if (win.isMinimized()) win.restore()
+  } catch {}
+  try {
+    if (!win.isVisible()) win.show()
+  } catch {}
+  try {
+    win.focus()
+  } catch {}
+}
+
+function openSettingsWindow(): void {
+  const win = appWindowsManager.getOrCreate('settings')
+  if (!win || win.isDestroyed()) return
+  try {
+    if (win.isMinimized()) win.restore()
+  } catch {}
+  try {
+    if (!win.isVisible()) win.show()
+  } catch {}
+  try {
+    win.focus()
+  } catch {}
+}
+
+function ensureTray(): void {
+  if (tray) return
+  if (!APP_ICON_PATH) return
+  const base = nativeImage.createFromPath(APP_ICON_PATH)
+  const img = process.platform === 'win32' ? base.resize({ width: 16, height: 16, quality: 'best' }) : base
+  if (img.isEmpty()) return
+  tray = new Tray(img)
+  try {
+    tray.setToolTip('LanStartWrite')
+  } catch {}
+
+  const menu = Menu.buildFromTemplate([
+    { label: '打开设置', click: () => openSettingsWindow() },
+    { type: 'separator' },
+    {
+      label: '快速重启',
+      click: () => {
+        try {
+          backendProcess?.kill()
+        } catch {}
+        try {
+          app.relaunch()
+        } catch {}
+        try {
+          app.exit(0)
+        } catch {}
+      }
+    },
+    {
+      label: '退出',
+      click: () => {
+        try {
+          backendProcess?.kill()
+        } catch {}
+        try {
+          app.quit()
+        } catch {}
+      }
+    },
+  ])
+  try {
+    tray.setContextMenu(menu)
+  } catch {}
+  try {
+    tray.on('click', () => focusFloatingToolbarOrAnyWindow())
+  } catch {}
+}
 
 async function backendPutUiStateKey(windowId: string, key: string, value: unknown): Promise<void> {
   await requestBackendRpc('putUiStateKey', { windowId, key, value })
@@ -517,6 +646,7 @@ function applyWindowsBackdrop(win: BrowserWindow): void {
 
 function createFloatingToolbarWindow(): BrowserWindow {
   const win = new BrowserWindow({
+    ...(APP_ICON_PATH ? { icon: APP_ICON_PATH } : {}),
     width: 360,
     height: 160,
     frame: false,
@@ -600,6 +730,7 @@ function createFloatingToolbarWindow(): BrowserWindow {
 function createFloatingToolbarHandleWindow(owner: BrowserWindow): BrowserWindow {
   const ownerBounds = owner.getBounds()
   const win = new BrowserWindow({
+    ...(APP_ICON_PATH ? { icon: APP_ICON_PATH } : {}),
     width: TOOLBAR_HANDLE_WIDTH,
     height: ownerBounds.height,
     frame: false,
@@ -675,6 +806,7 @@ function getOrCreateToolbarNoticeWindow(): BrowserWindow {
   if (!owner || owner.isDestroyed()) throw new Error('toolbar_owner_missing')
 
   const win = new BrowserWindow({
+    ...(APP_ICON_PATH ? { icon: APP_ICON_PATH } : {}),
     width: 340,
     height: 64,
     show: false,
@@ -768,6 +900,7 @@ function getOrCreateMultiPageControlWindow(): BrowserWindow {
   if (!owner || owner.isDestroyed()) throw new Error('mut_page_owner_missing')
 
   const win = new BrowserWindow({
+    ...(APP_ICON_PATH ? { icon: APP_ICON_PATH } : {}),
     width: 360,
     height: 66,
     show: false,
@@ -1111,6 +1244,7 @@ function createPaintBoardWindow(): BrowserWindow {
   const bounds = display.bounds
 
   const win = new BrowserWindow({
+    ...(APP_ICON_PATH ? { icon: APP_ICON_PATH } : {}),
     x: bounds.x,
     y: bounds.y,
     width: bounds.width,
@@ -1119,7 +1253,7 @@ function createPaintBoardWindow(): BrowserWindow {
     transparent: false,
     resizable: false,
     maximizable: false,
-    fullscreenable: true,
+    fullscreenable: false,
     skipTaskbar: true,
     title: '白板',
     backgroundColor: '#ffffffff',
@@ -1142,24 +1276,23 @@ function createPaintBoardWindow(): BrowserWindow {
   }
 
   const applyWhiteboardZOrder = () => {
+    const ensureTop = (target: BrowserWindow, level: Parameters<BrowserWindow['setAlwaysOnTop']>[1]) => {
+      try {
+        target.setAlwaysOnTop(true, level)
+      } catch {}
+      try {
+        target.moveTop()
+      } catch {}
+    }
+
     const bg = whiteboardBackgroundWindow
     if (bg && !bg.isDestroyed()) {
-      try {
-        bg.setAlwaysOnTop(true, 'normal')
-      } catch {}
-      try {
-        bg.moveTop()
-      } catch {}
+      ensureTop(bg, 'screen-saver')
     }
 
     const overlay = annotationOverlayWindow
     if (overlay && !overlay.isDestroyed()) {
-      try {
-        overlay.setAlwaysOnTop(true, 'floating')
-      } catch {}
-      try {
-        overlay.moveTop()
-      } catch {}
+      ensureTop(overlay, 'screen-saver')
     }
 
     applyToolbarOnTopLevel('screen-saver')
@@ -1177,10 +1310,10 @@ function createPaintBoardWindow(): BrowserWindow {
 
   win.once('ready-to-show', () => {
     try {
-      win.setFullScreen(true)
+      win.setAlwaysOnTop(true, 'screen-saver')
     } catch {}
     try {
-      win.setAlwaysOnTop(true, 'normal')
+      win.setBounds(bounds, false)
     } catch {}
     win.show()
     applyWhiteboardZOrder()
@@ -1188,7 +1321,6 @@ function createPaintBoardWindow(): BrowserWindow {
 
   win.on('show', applyWhiteboardZOrder)
   win.on('focus', applyWhiteboardZOrder)
-  win.on('enter-full-screen', applyWhiteboardZOrder)
 
   win.on('closed', () => {
     if (whiteboardBackgroundWindow === win) whiteboardBackgroundWindow = undefined
@@ -1217,6 +1349,7 @@ function createAnnotationOverlayWindow(ownerWindow: BrowserWindow): BrowserWindo
   const bounds = display.bounds
 
   const win = new BrowserWindow({
+    ...(APP_ICON_PATH ? { icon: APP_ICON_PATH } : {}),
     x: bounds.x,
     y: bounds.y,
     width: bounds.width,
@@ -1225,7 +1358,7 @@ function createAnnotationOverlayWindow(ownerWindow: BrowserWindow): BrowserWindo
     transparent: true,
     resizable: false,
     maximizable: false,
-    fullscreenable: true,
+    fullscreenable: false,
     skipTaskbar: true,
     parent: ownerWindow,
     title: '批注层',
@@ -1249,24 +1382,23 @@ function createAnnotationOverlayWindow(ownerWindow: BrowserWindow): BrowserWindo
   }
 
   const applyWhiteboardZOrder = () => {
+    const ensureTop = (target: BrowserWindow, level: Parameters<BrowserWindow['setAlwaysOnTop']>[1]) => {
+      try {
+        target.setAlwaysOnTop(true, level)
+      } catch {}
+      try {
+        target.moveTop()
+      } catch {}
+    }
+
     const bg = whiteboardBackgroundWindow
     if (bg && !bg.isDestroyed()) {
-      try {
-        bg.setAlwaysOnTop(true, 'normal')
-      } catch {}
-      try {
-        bg.moveTop()
-      } catch {}
+      ensureTop(bg, 'screen-saver')
     }
 
     const overlay = annotationOverlayWindow
     if (overlay && !overlay.isDestroyed()) {
-      try {
-        overlay.setAlwaysOnTop(true, 'floating')
-      } catch {}
-      try {
-        overlay.moveTop()
-      } catch {}
+      ensureTop(overlay, 'screen-saver')
     }
 
     applyToolbarOnTopLevel('screen-saver')
@@ -1284,10 +1416,10 @@ function createAnnotationOverlayWindow(ownerWindow: BrowserWindow): BrowserWindo
 
   win.once('ready-to-show', () => {
     try {
-      win.setFullScreen(true)
+      win.setAlwaysOnTop(true, 'screen-saver')
     } catch {}
     try {
-      win.setAlwaysOnTop(true, 'floating')
+      win.setBounds(bounds, false)
     } catch {}
     try {
       win.setIgnoreMouseEvents(true, { forward: true })
@@ -1298,7 +1430,6 @@ function createAnnotationOverlayWindow(ownerWindow: BrowserWindow): BrowserWindo
 
   win.on('show', applyWhiteboardZOrder)
   win.on('focus', applyWhiteboardZOrder)
-  win.on('enter-full-screen', applyWhiteboardZOrder)
 
   win.on('closed', () => {
     if (annotationOverlayWindow === win) annotationOverlayWindow = undefined
@@ -1325,6 +1456,7 @@ function createScreenAnnotationOverlayWindow(): BrowserWindow {
   const bounds = display.bounds
 
   const win = new BrowserWindow({
+    ...(APP_ICON_PATH ? { icon: APP_ICON_PATH } : {}),
     x: bounds.x,
     y: bounds.y,
     width: bounds.width,
@@ -1334,7 +1466,7 @@ function createScreenAnnotationOverlayWindow(): BrowserWindow {
     transparent: true,
     resizable: false,
     maximizable: false,
-    fullscreenable: true,
+    fullscreenable: false,
     skipTaskbar: true,
     title: '屏幕批注层',
     backgroundColor: '#00000000',
@@ -1358,10 +1490,10 @@ function createScreenAnnotationOverlayWindow(): BrowserWindow {
 
   win.once('ready-to-show', () => {
     try {
-      win.setFullScreen(true)
+      win.setAlwaysOnTop(true, 'floating')
     } catch {}
     try {
-      win.setAlwaysOnTop(true, 'floating')
+      win.setBounds(bounds, false)
     } catch {}
     try {
       win.setIgnoreMouseEvents(true, { forward: true })
@@ -1386,6 +1518,7 @@ function getOrCreateToolbarSubwindow(kind: string, placement: 'top' | 'bottom'):
   if (!owner || owner.isDestroyed()) throw new Error('toolbar_owner_missing')
 
   const win = new BrowserWindow({
+    ...(APP_ICON_PATH ? { icon: APP_ICON_PATH } : {}),
     width: 360,
     height: 220,
     show: false,
@@ -1494,6 +1627,31 @@ function setToolbarNoticeBounds(bounds: { width: number; height: number }) {
   item.width = bounds.width
   item.height = bounds.height
   scheduleRepositionToolbarSubwindows('other')
+}
+
+async function maybeShowRestoreNotesNotice(): Promise<void> {
+  const owner = floatingToolbarWindow
+  if (!owner || owner.isDestroyed()) return
+
+  let mode: 'toolbar' | 'whiteboard' = 'toolbar'
+  try {
+    const raw = await backendGetKv('app-mode')
+    if (raw === 'whiteboard') mode = 'whiteboard'
+  } catch {}
+
+  const notesHistoryKvKey = mode === 'whiteboard' ? 'annotation-notes-whiteboard-prev' : 'annotation-notes-toolbar-prev'
+  try {
+    await backendGetKv(notesHistoryKvKey)
+  } catch (e) {
+    if (String(e).includes('kv_not_found')) return
+    return
+  }
+
+  backendPutUiStateKey('app', 'noticeKind', 'notesRestore').catch(() => undefined)
+  toolbarNoticeDesiredVisible = true
+  try {
+    showToolbarNoticeWindow()
+  } catch {}
 }
 
 function closeOtherToolbarSubwindows(exceptKind: string) {
@@ -1805,7 +1963,10 @@ function handleBackendControlMessage(message: any): void {
     const visible = Boolean((message as any).visible)
     toolbarNoticeDesiredVisible = visible
     if (visible) showToolbarNoticeWindow()
-    else hideToolbarNoticeWindow()
+    else {
+      backendPutUiStateKey('app', 'noticeKind', '').catch(() => undefined)
+      hideToolbarNoticeWindow()
+    }
     return
   }
 
@@ -1992,6 +2153,7 @@ if (hasSingleInstanceLock) {
       floatingToolbarWindow = win
       const handle = createFloatingToolbarHandleWindow(win)
       floatingToolbarHandleWindow = handle
+      ensureTray()
       if (!stopToolbarTopmostPolling) {
         const poller = startWindowTopmostPolling({
           intervalMs: 5000,
@@ -2029,6 +2191,7 @@ if (hasSingleInstanceLock) {
         scheduleRepositionToolbarSubwindows('other')
         if (!handle.isDestroyed()) handle.showInactive()
         applyToolbarOnTopLevel('screen-saver')
+        void maybeShowRestoreNotesNotice()
       })
 
       app.on('activate', () => {

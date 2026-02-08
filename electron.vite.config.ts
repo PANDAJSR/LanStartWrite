@@ -42,7 +42,7 @@ export default defineConfig({
     },
     server: {
       fs: {
-        allow: [resolve(__dirname, 'src')]
+        allow: [resolve(__dirname, 'src'), resolve(__dirname, 'iconpack')]
       }
     },
     build: {

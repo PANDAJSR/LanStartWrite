@@ -19,6 +19,7 @@ import type { SettingsTab } from '../types'
 import { AccentColorPicker } from './AccentColorPicker'
 import { TransitionSettings } from './TransitionSettings'
 import { useAppearanceSettings } from '../hooks/useAppearanceSettings'
+import LanStartLogoSvg from '../../../iconpack/3d1b23de6a48e1d67f4c637d117897cd26c5594cfbb15bc6092a3546d8cc425a(1).svg'
 import './SettingsContent.css'
 
 interface SettingsContentProps {
@@ -1290,17 +1291,7 @@ function AboutSettings() {
       
       <div className="settingsAboutCard">
         <div className="settingsAboutLogo">
-          <svg viewBox="0 0 24 24" width="64" height="64" fill="none" stroke="currentColor" strokeWidth="1.5">
-            <circle cx="12" cy="12" r="3" />
-            <path d="M12 2v4" />
-            <path d="M12 18v4" />
-            <path d="M4.93 4.93l2.83 2.83" />
-            <path d="M16.24 16.24l2.83 2.83" />
-            <path d="M2 12h4" />
-            <path d="M18 12h4" />
-            <path d="M4.93 19.07l2.83-2.83" />
-            <path d="M16.24 7.76l2.83-2.83" />
-          </svg>
+          <img src={LanStartLogoSvg} width={64} height={64} alt="LanStartWrite" />
         </div>
         <h3 className="settingsAboutAppName">LanStartWrite</h3>
         <p className="settingsAboutVersion">版本 {__APP_VERSION__}</p>

@@ -46,6 +46,10 @@ export const REDO_REV_UI_STATE_KEY = 'redoRev'
 export const NOTES_PAGE_INDEX_UI_STATE_KEY = 'notesPageIndex'
 export const NOTES_PAGE_TOTAL_UI_STATE_KEY = 'notesPageTotal'
 
+export const NOTES_RELOAD_REV_UI_STATE_KEY = 'notesReloadRev'
+
+export const NOTICE_KIND_UI_STATE_KEY = 'noticeKind'
+
 export type LeaferRendererEngine = 'canvas2d' | 'svg' | 'webgl' | 'webgpu'
 export type LeaferNibMode = 'off' | 'dynamic' | 'static'
 export type LeaferSettings = {

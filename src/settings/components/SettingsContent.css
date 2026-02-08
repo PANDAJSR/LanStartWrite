@@ -133,13 +133,12 @@
   width: 80px;
   height: 80px;
   border-radius: 20px;
-  background: var(--ls-accent-gradient, linear-gradient(135deg, #3b82f6 0%, #2563eb 100%));
-  color: white;
+  background: transparent;
   display: flex;
   align-items: center;
   justify-content: center;
   margin-bottom: 20px;
-  box-shadow: 0 8px 24px var(--ls-accent-light, rgba(59, 130, 246, 0.3));
+  box-shadow: none;
 }
 
 .settingsAboutAppName {

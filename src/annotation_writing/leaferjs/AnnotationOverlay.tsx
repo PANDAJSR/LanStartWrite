@@ -10,6 +10,7 @@ import {
   LEAFER_SETTINGS_UI_STATE_KEY,
   NOTES_PAGE_INDEX_UI_STATE_KEY,
   NOTES_PAGE_TOTAL_UI_STATE_KEY,
+  NOTES_RELOAD_REV_UI_STATE_KEY,
   PEN_COLOR_UI_STATE_KEY,
   PEN_THICKNESS_UI_STATE_KEY,
   PEN_TYPE_UI_STATE_KEY,
@@ -197,10 +198,14 @@ export function AnnotationOverlayApp() {
   const nibModeRef = useRef(DEFAULT_LEAFER_SETTINGS.nibMode ?? 'off')
   const postBakeOptimizeRef = useRef(DEFAULT_LEAFER_SETTINGS.postBakeOptimize ?? false)
   const postBakeOptimizeOnceRef = useRef(DEFAULT_LEAFER_SETTINGS.postBakeOptimizeOnce ?? false)
-  const apiRef = useRef<null | { undo: () => void; redo: () => void; clear: () => void; setPage: (index: number, total: number) => void }>(null)
+  const apiRef = useRef<
+    | null
+    | { undo: () => void; redo: () => void; clear: () => void; setPage: (index: number, total: number) => void; reloadNotes?: () => void }
+  >(null)
   const lastUndoRevRef = useRef<number | null>(null)
   const lastRedoRevRef = useRef<number | null>(null)
   const lastClearRevRef = useRef<number | null>(null)
+  const lastNotesReloadRevRef = useRef<number | null>(null)
   const leaferSettingsRef = useRef<LeaferSettings>(DEFAULT_LEAFER_SETTINGS)
 
   const [leaferSettings, setLeaferSettings] = useState<LeaferSettings>(DEFAULT_LEAFER_SETTINGS)
@@ -310,9 +315,11 @@ export function AnnotationOverlayApp() {
   const undoRevRaw = bus.state[UNDO_REV_UI_STATE_KEY]
   const redoRevRaw = bus.state[REDO_REV_UI_STATE_KEY]
   const clearRevRaw = bus.state[CLEAR_PAGE_REV_UI_STATE_KEY]
+  const notesReloadRevRaw = bus.state[NOTES_RELOAD_REV_UI_STATE_KEY]
   const undoRev = typeof undoRevRaw === 'number' ? undoRevRaw : typeof undoRevRaw === 'string' ? Number(undoRevRaw) : 0
   const redoRev = typeof redoRevRaw === 'number' ? redoRevRaw : typeof redoRevRaw === 'string' ? Number(redoRevRaw) : 0
   const clearRev = typeof clearRevRaw === 'number' ? clearRevRaw : typeof clearRevRaw === 'string' ? Number(clearRevRaw) : 0
+  const notesReloadRev = typeof notesReloadRevRaw === 'number' ? notesReloadRevRaw : typeof notesReloadRevRaw === 'string' ? Number(notesReloadRevRaw) : 0
 
   useEffect(() => {
     if (!apiRef.current) return
@@ -346,6 +353,18 @@ export function AnnotationOverlayApp() {
     lastClearRevRef.current = clearRev
     apiRef.current.clear()
   }, [clearRev])
+
+  useEffect(() => {
+    const api = apiRef.current
+    if (!api) return
+    if (lastNotesReloadRevRef.current === null) {
+      lastNotesReloadRevRef.current = notesReloadRev
+      return
+    }
+    if (!notesReloadRev || notesReloadRev === lastNotesReloadRevRef.current) return
+    lastNotesReloadRevRef.current = notesReloadRev
+    api.reloadNotes?.()
+  }, [notesReloadRev])
 
   const notesPageIndexRaw = bus.state[NOTES_PAGE_INDEX_UI_STATE_KEY]
   const notesPageTotalRaw = bus.state[NOTES_PAGE_TOTAL_UI_STATE_KEY]
@@ -1487,7 +1506,7 @@ struct VSOut {
         } catch {}
       }
 
-      apiRef.current = { undo, redo, clear, setPage }
+      apiRef.current = { undo, redo, clear, setPage, reloadNotes: () => void hydrate() }
       lastUndoRevRef.current = undoRev
       lastRedoRevRef.current = redoRev
       lastClearRevRef.current = clearRev
@@ -1543,6 +1562,7 @@ struct VSOut {
         }
       }
       void hydrate()
+      apiRef.current = { undo, redo, clear, setPage, reloadNotes: () => void hydrate() }
 
       const sessions = new Map<
         number,
@@ -2514,7 +2534,7 @@ struct VSOut {
       requestRender()
     }
 
-    apiRef.current = { undo, redo, clear, setPage }
+    apiRef.current = { undo, redo, clear, setPage, reloadNotes: () => void hydrate() }
     lastUndoRevRef.current = undoRev
     lastRedoRevRef.current = redoRev
     lastClearRevRef.current = clearRev
