@@ -26,6 +26,10 @@ import {
   TOOLBAR_STATE_UI_STATE_KEY,
   UI_STATE_APP_WINDOW_ID,
   UNDO_REV_UI_STATE_KEY,
+  WHITEBOARD_BG_COLOR_KV_KEY,
+  WHITEBOARD_BG_COLOR_UI_STATE_KEY,
+  WHITEBOARD_BG_IMAGE_URL_KV_KEY,
+  WHITEBOARD_BG_IMAGE_URL_UI_STATE_KEY,
   WRITING_FRAMEWORK_KV_KEY,
   WRITING_FRAMEWORK_UI_STATE_KEY,
   isAppearance,
@@ -33,6 +37,8 @@ import {
   isAppMode,
   isEraserSettings,
   isEffectiveWritingBackend,
+  isFileOrDataUrl,
+  isHexColor,
   isLeaferSettings,
   isPenSettings,
   isWritingFramework,
@@ -77,6 +83,10 @@ export {
   TOOLBAR_STATE_UI_STATE_KEY,
   UI_STATE_APP_WINDOW_ID,
   UNDO_REV_UI_STATE_KEY,
+  WHITEBOARD_BG_COLOR_KV_KEY,
+  WHITEBOARD_BG_COLOR_UI_STATE_KEY,
+  WHITEBOARD_BG_IMAGE_URL_KV_KEY,
+  WHITEBOARD_BG_IMAGE_URL_UI_STATE_KEY,
   WRITING_FRAMEWORK_KV_KEY,
   WRITING_FRAMEWORK_UI_STATE_KEY,
   isAppearance,
@@ -84,6 +94,8 @@ export {
   isAppMode,
   isEraserSettings,
   isEffectiveWritingBackend,
+  isFileOrDataUrl,
+  isHexColor,
   isLeaferSettings,
   isPenSettings,
   isWritingFramework,
@@ -128,6 +140,13 @@ export async function getKv<T>(key: string): Promise<T> {
 
 export async function putKv<T>(key: string, value: T): Promise<void> {
   await requireLanstart().putKv(key, value)
+}
+
+export async function selectImageFile(): Promise<{ fileUrl?: string }> {
+  const res = (await requireLanstart().apiRequest({ method: 'POST', path: '/dialog/select-image-file' })) as any
+  const body = res?.body as any
+  const fileUrl = typeof body?.fileUrl === 'string' ? body.fileUrl : undefined
+  return { fileUrl }
 }
 
 export async function getUiState(windowId: string): Promise<Record<string, unknown>> {

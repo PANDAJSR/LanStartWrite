@@ -3,6 +3,7 @@ export type SettingsTab =
   | 'toolbar'
   | 'feature-panel'
   | 'annotation'
+  | 'whiteboard'
   | 'lanstart-bar'
   | 'about'
 

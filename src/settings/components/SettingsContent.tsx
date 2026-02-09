@@ -7,9 +7,16 @@ import {
   TOOLBAR_STATE_KEY,
   TOOLBAR_STATE_UI_STATE_KEY,
   UI_STATE_APP_WINDOW_ID,
+  WHITEBOARD_BG_COLOR_KV_KEY,
+  WHITEBOARD_BG_COLOR_UI_STATE_KEY,
+  WHITEBOARD_BG_IMAGE_URL_KV_KEY,
+  WHITEBOARD_BG_IMAGE_URL_UI_STATE_KEY,
+  isFileOrDataUrl,
+  isHexColor,
   isLeaferSettings,
   putKv,
   putUiStateKey,
+  selectImageFile,
   type LeaferSettings,
   useAppAppearance,
   usePersistedState
@@ -1283,6 +1290,73 @@ function LanStartBarSettings() {
   )
 }
 
+function WhiteboardSettings() {
+  const presets = [
+    { label: '酸绿', value: '#95C459' },
+    { label: '浅灰', value: '#333333' },
+    { label: '深灰', value: '#2E2F33' },
+    { label: '希绿', value: '#0F261E' },
+    { label: 'icc绿', value: '#172A25' },
+    { label: '鸿白', value: '#FFFFFF' },
+  ] as const
+
+  const [bgColor, setBgColor] = usePersistedState(WHITEBOARD_BG_COLOR_KV_KEY, '#ffffff', { validate: isHexColor })
+  const [bgImageUrl, setBgImageUrl] = usePersistedState(WHITEBOARD_BG_IMAGE_URL_KV_KEY, '', { validate: isFileOrDataUrl })
+
+  React.useEffect(() => {
+    putUiStateKey(UI_STATE_APP_WINDOW_ID, WHITEBOARD_BG_COLOR_UI_STATE_KEY, bgColor).catch(() => undefined)
+  }, [bgColor])
+
+  React.useEffect(() => {
+    putUiStateKey(UI_STATE_APP_WINDOW_ID, WHITEBOARD_BG_IMAGE_URL_UI_STATE_KEY, bgImageUrl).catch(() => undefined)
+  }, [bgImageUrl])
+
+  const onPickBgImage = async () => {
+    try {
+      const res = await selectImageFile()
+      const url = typeof res?.fileUrl === 'string' ? res.fileUrl : ''
+      if (!url) return
+      setBgImageUrl(url)
+    } catch {
+      return
+    }
+  }
+
+  return (
+    <div className="settingsContentSection">
+      <h2 className="settingsContentTitle">白板</h2>
+      <p className="settingsContentDescription">选择白板背景颜色</p>
+
+      <div className="settingsWhiteboardColorGrid">
+        {presets.map((preset) => (
+          <div key={preset.label} className="settingsWhiteboardColorItem">
+            <Button
+              kind="custom"
+              appRegion="no-drag"
+              ariaLabel={preset.label}
+              title={`${preset.label} ${preset.value}`}
+              className={`settingsWhiteboardColorSwatch ${bgColor === preset.value ? 'settingsWhiteboardColorSwatch--active' : ''}`}
+              onClick={() => setBgColor(preset.value)}
+              style={{ background: preset.value }}
+            >
+              <span className="settingsWhiteboardColorSwatchInner" />
+            </Button>
+            <div className="settingsWhiteboardColorLabel">{preset.label}</div>
+          </div>
+        ))}
+      </div>
+
+      <div className="settingsSubSection">
+        <h3 className="settingsSubTitle">背景图</h3>
+        <p className="settingsSubDescription">选择一张图片作为白板背景（透明度 50%）</p>
+        <Button kind="text" size="md" appRegion="no-drag" ariaLabel="添加图片背景" onClick={onPickBgImage}>
+          添加图片背景
+        </Button>
+      </div>
+    </div>
+  )
+}
+
 function AboutSettings() {
   return (
     <div className="settingsContentSection">
@@ -1326,6 +1400,7 @@ const contentComponents: Record<SettingsTab, React.FC> = {
   toolbar: ToolbarSettings,
   'feature-panel': FeaturePanelSettings,
   annotation: AnnotationSettings,
+  whiteboard: WhiteboardSettings,
   'lanstart-bar': LanStartBarSettings,
   about: AboutSettings,
 }

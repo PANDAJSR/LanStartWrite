@@ -48,6 +48,12 @@ export const NOTES_PAGE_TOTAL_UI_STATE_KEY = 'notesPageTotal'
 
 export const NOTES_RELOAD_REV_UI_STATE_KEY = 'notesReloadRev'
 
+export const WHITEBOARD_BG_COLOR_KV_KEY = 'whiteboard-bg-color'
+export const WHITEBOARD_BG_COLOR_UI_STATE_KEY = 'whiteboardBgColor'
+
+export const WHITEBOARD_BG_IMAGE_URL_KV_KEY = 'whiteboard-bg-image-url'
+export const WHITEBOARD_BG_IMAGE_URL_UI_STATE_KEY = 'whiteboardBgImageUrl'
+
 export const NOTICE_KIND_UI_STATE_KEY = 'noticeKind'
 
 export type LeaferRendererEngine = 'canvas2d' | 'svg' | 'webgl' | 'webgpu'
@@ -99,6 +105,16 @@ export function isLeaferSettings(v: unknown): v is LeaferSettings {
     typeof s.showInkWhenPassthrough === 'boolean' &&
     typeof s.freezeScreen === 'boolean'
   )
+}
+
+export function isHexColor(v: unknown): v is string {
+  return typeof v === 'string' && /^#[0-9a-fA-F]{6}$/.test(v)
+}
+
+export function isFileOrDataUrl(v: unknown): v is string {
+  if (typeof v !== 'string') return false
+  if (!v) return true
+  return v.startsWith('file:') || v.startsWith('data:')
 }
 
 export function isPenSettings(v: unknown): v is PenSettings {

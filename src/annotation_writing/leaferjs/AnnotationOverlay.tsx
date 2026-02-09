@@ -3099,7 +3099,7 @@ struct VSOut {
         backgroundRepeat: frozenBackgroundUrl ? 'no-repeat' : undefined,
         backgroundPosition: frozenBackgroundUrl ? 'center' : undefined,
         backgroundColor: frozenBackgroundUrl ? '#000000' : 'transparent',
-        opacity: tool === 'mouse' && !leaferSettings.showInkWhenPassthrough ? 0 : 1,
+        opacity: appMode === 'whiteboard' ? 1 : tool === 'mouse' && !leaferSettings.showInkWhenPassthrough ? 0 : 1,
         touchAction: 'none'
       }}
     />

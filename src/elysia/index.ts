@@ -61,6 +61,24 @@ function requestMain(message: unknown): void {
   process.stdout.write(`__LANSTART__${JSON.stringify(message)}\n`)
 }
 
+let nextMainRpcId = 1
+const pendingMainRpc = new Map<
+  number,
+  { resolve: (value: unknown) => void; reject: (error: Error) => void; timer: NodeJS.Timeout }
+>()
+
+function requestMainRpc<T>(method: string, params?: unknown, timeoutMs = 30_000): Promise<T> {
+  const id = nextMainRpcId++
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      pendingMainRpc.delete(id)
+      reject(new Error('main_rpc_timeout'))
+    }, timeoutMs)
+    pendingMainRpc.set(id, { resolve: resolve as any, reject, timer })
+    requestMain({ type: 'MAIN_RPC_REQUEST', id, method, params })
+  })
+}
+
 const uiState = new Map<string, Record<string, unknown>>()
 const runtimeWindows = new Map<string, unknown>()
 const runtimeProcesses = new Map<string, unknown>()
@@ -357,6 +375,19 @@ async function handleCommand(command: string, payload: unknown): Promise<Command
         const total = Number.isFinite(totalRaw) && totalRaw >= 1 ? Math.floor(totalRaw) : 1
         const indexRaw = Number(state[NOTES_PAGE_INDEX_UI_STATE_KEY])
         const index = Number.isFinite(indexRaw) ? Math.floor(indexRaw) : 0
+        const modeRaw = state[APP_MODE_UI_STATE_KEY]
+        const mode = isAppMode(modeRaw) ? modeRaw : 'toolbar'
+
+        if (mode === 'whiteboard' && index >= total - 1) {
+          const nextTotal = Math.min(2000, total + 1)
+          const nextIndex = nextTotal - 1
+          state[NOTES_PAGE_TOTAL_UI_STATE_KEY] = nextTotal
+          state[NOTES_PAGE_INDEX_UI_STATE_KEY] = nextIndex
+          emitEvent('UI_STATE_PUT', { windowId: UI_STATE_APP_WINDOW_ID, key: NOTES_PAGE_TOTAL_UI_STATE_KEY, value: nextTotal })
+          emitEvent('UI_STATE_PUT', { windowId: UI_STATE_APP_WINDOW_ID, key: NOTES_PAGE_INDEX_UI_STATE_KEY, value: nextIndex })
+          return { ok: true }
+        }
+
         const nextIndex = Math.max(0, Math.min(total - 1, index + 1))
         state[NOTES_PAGE_INDEX_UI_STATE_KEY] = nextIndex
         if (!Number.isFinite(totalRaw) || totalRaw < 1) {
@@ -513,6 +544,22 @@ stdin.on('line', (line) => {
   try {
     const msg = JSON.parse(trimmed)
     const type = String((msg as any)?.type ?? '')
+
+    if (type === 'MAIN_RPC_RESPONSE') {
+      const id = Number((msg as any)?.id)
+      if (!Number.isFinite(id)) return
+      const pending = pendingMainRpc.get(id)
+      if (!pending) return
+      pendingMainRpc.delete(id)
+      clearTimeout(pending.timer)
+      const ok = Boolean((msg as any)?.ok)
+      if (ok) {
+        pending.resolve((msg as any)?.result)
+      } else {
+        pending.reject(new Error(String((msg as any)?.error ?? 'main_rpc_failed')))
+      }
+      return
+    }
 
     if (type === 'RPC_REQUEST') {
       const id = Number((msg as any)?.id)
@@ -738,6 +785,11 @@ const api = new Elysia({ adapter: node() })
     }
   })
   .get('/health', () => ({ ok: true, port }))
+  .post('/dialog/select-image-file', async () => {
+    const result = await requestMainRpc<{ fileUrl?: string }>('selectImageFile')
+    const fileUrl = typeof (result as any)?.fileUrl === 'string' ? (result as any).fileUrl : undefined
+    return { ok: true, fileUrl }
+  })
   .get('/watcher/docs', () => {
     return {
       ok: true,

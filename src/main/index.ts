@@ -1,8 +1,9 @@
-import { BrowserWindow, Menu, Tray, app, ipcMain, nativeImage, nativeTheme, screen } from 'electron'
+import { BrowserWindow, Menu, Tray, app, dialog, ipcMain, nativeImage, nativeTheme, screen, type OpenDialogOptions } from 'electron'
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { platform } from 'node:process'
+import { pathToFileURL } from 'node:url'
 import { AppWindowsManager, startWindowTopmostPolling } from '../app_windows_manerger'
 import { createTaskWatcherAdapter, forceTopmostWindows } from '../system_different_code'
 import { TaskWindowsWatcher } from '../task_windows_watcher/TaskWindowsWatcher'
@@ -649,8 +650,8 @@ function createFloatingToolbarWindow(): BrowserWindow {
     ...(APP_ICON_PATH ? { icon: APP_ICON_PATH } : {}),
     width: 360,
     height: 160,
+    ...(legacyWindowImplementation ? { type: 'toolbar' as const } : {}),
     frame: false,
-    titleBarStyle: 'hidden',
     autoHideMenuBar: true,
     transparent: !legacyWindowImplementation,
     resizable: false,
@@ -733,8 +734,8 @@ function createFloatingToolbarHandleWindow(owner: BrowserWindow): BrowserWindow 
     ...(APP_ICON_PATH ? { icon: APP_ICON_PATH } : {}),
     width: TOOLBAR_HANDLE_WIDTH,
     height: ownerBounds.height,
+    ...(legacyWindowImplementation ? { type: 'toolbar' as const } : {}),
     frame: false,
-    titleBarStyle: 'hidden',
     autoHideMenuBar: true,
     transparent: !legacyWindowImplementation,
     resizable: false,
@@ -810,8 +811,8 @@ function getOrCreateToolbarNoticeWindow(): BrowserWindow {
     width: 340,
     height: 64,
     show: false,
+    ...(legacyWindowImplementation ? { type: 'toolbar' as const } : {}),
     frame: false,
-    titleBarStyle: 'hidden',
     autoHideMenuBar: true,
     transparent: !legacyWindowImplementation,
     resizable: false,
@@ -876,16 +877,16 @@ function repositionMultiPageControlWindow(): void {
   const win = multiPageControlWindow
   if (!win || win.isDestroyed()) return
 
-  const owner = whiteboardBackgroundWindow
+  const owner = whiteboardBackgroundWindow ?? floatingToolbarWindow
   const ownerBounds = owner && !owner.isDestroyed() ? owner.getBounds() : screen.getPrimaryDisplay().bounds
   const display = screen.getDisplayMatching(ownerBounds)
-  const workArea = display.workArea
+  const area = owner === whiteboardBackgroundWindow && owner && !owner.isDestroyed() ? display.bounds : display.workArea
 
   const width = 360
   const height = 66
   const margin = 14
-  const x = workArea.x + margin
-  const y = workArea.y + workArea.height - height - margin
+  const x = area.x + margin
+  const y = area.y + area.height - height - margin
 
   try {
     win.setBounds({ x, y, width, height }, false)
@@ -905,7 +906,6 @@ function getOrCreateMultiPageControlWindow(): BrowserWindow {
     height: 66,
     show: false,
     frame: false,
-    titleBarStyle: 'hidden',
     autoHideMenuBar: true,
     transparent: !legacyWindowImplementation,
     resizable: false,
@@ -991,6 +991,41 @@ function applyToolbarOnTopLevel(level: 'normal' | 'floating' | 'torn-off-menu' |
     win.setAlwaysOnTop(true, level)
     win.moveTop()
   }
+}
+
+function refreshToolbarWindowsLayoutAndSurface() {
+  try {
+    repositionToolbarSubwindows(false)
+  } catch {}
+  try {
+    repositionMultiPageControlWindow()
+  } catch {}
+
+  const reapplyVisibleBounds = (win: BrowserWindow | undefined, nextBounds?: Electron.Rectangle) => {
+    if (!win || win.isDestroyed()) return
+    if (!win.isVisible()) return
+    try {
+      const b = nextBounds ?? win.getBounds()
+      win.setBounds(b, false)
+    } catch {}
+  }
+
+  reapplyVisibleBounds(floatingToolbarWindow)
+  reapplyVisibleBounds(floatingToolbarHandleWindow)
+  reapplyVisibleBounds(toolbarNoticeWindow)
+  for (const item of toolbarSubwindows.values()) {
+    reapplyVisibleBounds(item.win)
+  }
+
+  reapplyVisibleBounds(multiPageControlWindow)
+
+  const refBounds =
+    (floatingToolbarWindow && !floatingToolbarWindow.isDestroyed() ? floatingToolbarWindow.getBounds() : undefined) ??
+    screen.getPrimaryDisplay().bounds
+  const fullBounds = screen.getDisplayMatching(refBounds).bounds
+  reapplyVisibleBounds(whiteboardBackgroundWindow, fullBounds)
+  reapplyVisibleBounds(annotationOverlayWindow, fullBounds)
+  reapplyVisibleBounds(screenAnnotationOverlayWindow, fullBounds)
 }
 
 function readWin32Hwnd(win: BrowserWindow): bigint | undefined {
@@ -1276,6 +1311,10 @@ function createPaintBoardWindow(): BrowserWindow {
   }
 
   const applyWhiteboardZOrder = () => {
+    const WHITEBOARD_BG_LEVEL: Parameters<BrowserWindow['setAlwaysOnTop']>[1] = 'normal'
+    const WHITEBOARD_OVERLAY_LEVEL: Parameters<BrowserWindow['setAlwaysOnTop']>[1] = 'floating'
+    const WHITEBOARD_TOOLBAR_LEVEL: Parameters<BrowserWindow['setAlwaysOnTop']>[1] = 'screen-saver'
+
     const ensureTop = (target: BrowserWindow, level: Parameters<BrowserWindow['setAlwaysOnTop']>[1]) => {
       try {
         target.setAlwaysOnTop(true, level)
@@ -1287,20 +1326,20 @@ function createPaintBoardWindow(): BrowserWindow {
 
     const bg = whiteboardBackgroundWindow
     if (bg && !bg.isDestroyed()) {
-      ensureTop(bg, 'screen-saver')
+      ensureTop(bg, WHITEBOARD_BG_LEVEL)
     }
 
     const overlay = annotationOverlayWindow
     if (overlay && !overlay.isDestroyed()) {
-      ensureTop(overlay, 'screen-saver')
+      ensureTop(overlay, WHITEBOARD_OVERLAY_LEVEL)
     }
 
-    applyToolbarOnTopLevel('screen-saver')
+    applyToolbarOnTopLevel(WHITEBOARD_TOOLBAR_LEVEL)
 
     const mp = multiPageControlWindow
     if (mp && !mp.isDestroyed() && mp.isVisible()) {
       try {
-        mp.setAlwaysOnTop(true, 'screen-saver')
+        mp.setAlwaysOnTop(true, WHITEBOARD_TOOLBAR_LEVEL)
       } catch {}
       try {
         mp.moveTop()
@@ -1310,7 +1349,7 @@ function createPaintBoardWindow(): BrowserWindow {
 
   win.once('ready-to-show', () => {
     try {
-      win.setAlwaysOnTop(true, 'screen-saver')
+      win.setAlwaysOnTop(true, 'normal')
     } catch {}
     try {
       win.setBounds(bounds, false)
@@ -1382,6 +1421,10 @@ function createAnnotationOverlayWindow(ownerWindow: BrowserWindow): BrowserWindo
   }
 
   const applyWhiteboardZOrder = () => {
+    const WHITEBOARD_BG_LEVEL: Parameters<BrowserWindow['setAlwaysOnTop']>[1] = 'normal'
+    const WHITEBOARD_OVERLAY_LEVEL: Parameters<BrowserWindow['setAlwaysOnTop']>[1] = 'floating'
+    const WHITEBOARD_TOOLBAR_LEVEL: Parameters<BrowserWindow['setAlwaysOnTop']>[1] = 'screen-saver'
+
     const ensureTop = (target: BrowserWindow, level: Parameters<BrowserWindow['setAlwaysOnTop']>[1]) => {
       try {
         target.setAlwaysOnTop(true, level)
@@ -1393,20 +1436,20 @@ function createAnnotationOverlayWindow(ownerWindow: BrowserWindow): BrowserWindo
 
     const bg = whiteboardBackgroundWindow
     if (bg && !bg.isDestroyed()) {
-      ensureTop(bg, 'screen-saver')
+      ensureTop(bg, WHITEBOARD_BG_LEVEL)
     }
 
     const overlay = annotationOverlayWindow
     if (overlay && !overlay.isDestroyed()) {
-      ensureTop(overlay, 'screen-saver')
+      ensureTop(overlay, WHITEBOARD_OVERLAY_LEVEL)
     }
 
-    applyToolbarOnTopLevel('screen-saver')
+    applyToolbarOnTopLevel(WHITEBOARD_TOOLBAR_LEVEL)
 
     const mp = multiPageControlWindow
     if (mp && !mp.isDestroyed() && mp.isVisible()) {
       try {
-        mp.setAlwaysOnTop(true, 'screen-saver')
+        mp.setAlwaysOnTop(true, WHITEBOARD_TOOLBAR_LEVEL)
       } catch {}
       try {
         mp.moveTop()
@@ -1416,7 +1459,7 @@ function createAnnotationOverlayWindow(ownerWindow: BrowserWindow): BrowserWindo
 
   win.once('ready-to-show', () => {
     try {
-      win.setAlwaysOnTop(true, 'screen-saver')
+      win.setAlwaysOnTop(true, 'floating')
     } catch {}
     try {
       win.setBounds(bounds, false)
@@ -1523,7 +1566,6 @@ function getOrCreateToolbarSubwindow(kind: string, placement: 'top' | 'bottom'):
     height: 220,
     show: false,
     frame: false,
-    titleBarStyle: 'hidden',
     autoHideMenuBar: true,
     transparent: !legacyWindowImplementation,
     resizable: false,
@@ -1735,6 +1777,42 @@ function handleBackendControlMessage(message: any): void {
     return
   }
 
+  if (message.type === 'MAIN_RPC_REQUEST') {
+    const id = Number((message as any).id)
+    const method = String((message as any).method ?? '')
+    const params = (message as any).params as unknown
+    if (!Number.isFinite(id) || !method) return
+
+    void (async () => {
+      try {
+        if (method === 'selectImageFile') {
+          const parent =
+            BrowserWindow.getFocusedWindow() ??
+            whiteboardBackgroundWindow ??
+            annotationOverlayWindow ??
+            screenAnnotationOverlayWindow ??
+            undefined
+          const options: OpenDialogOptions = {
+            properties: ['openFile'],
+            filters: [
+              { name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'webp', 'bmp', 'gif'] },
+              { name: 'All Files', extensions: ['*'] }
+            ]
+          }
+          const res = parent ? await dialog.showOpenDialog(parent, options) : await dialog.showOpenDialog(options)
+          const fileUrl = res.canceled || !res.filePaths?.[0] ? undefined : pathToFileURL(res.filePaths[0]).toString()
+          sendToBackend({ type: 'MAIN_RPC_RESPONSE', id, ok: true, result: { fileUrl } })
+          return
+        }
+
+        throw new Error('UNKNOWN_MAIN_RPC_METHOD')
+      } catch (e) {
+        sendToBackend({ type: 'MAIN_RPC_RESPONSE', id, ok: false, error: String(e) })
+      }
+    })()
+    return
+  }
+
   if (message.type === 'SET_APPEARANCE') {
     const appearance = (message as any).appearance
     if (!isAppearance(appearance)) return
@@ -1778,7 +1856,6 @@ function handleBackendControlMessage(message: any): void {
       }
       hideAllToolbarSubwindows()
       appWindowsManager.hideAll()
-      applyToolbarOnTopLevel('screen-saver')
       if (!whiteboardBackgroundWindow || whiteboardBackgroundWindow.isDestroyed()) {
         whiteboardBackgroundWindow = createPaintBoardWindow()
       } else {
@@ -1790,6 +1867,15 @@ function handleBackendControlMessage(message: any): void {
       } else {
         annotationOverlayWindow.show()
       }
+      try {
+        const bg = whiteboardBackgroundWindow
+        if (bg && !bg.isDestroyed()) bg.setAlwaysOnTop(true, 'normal')
+      } catch {}
+      try {
+        const overlay = annotationOverlayWindow
+        if (overlay && !overlay.isDestroyed()) overlay.setAlwaysOnTop(true, 'floating')
+      } catch {}
+      applyToolbarOnTopLevel('screen-saver')
 
       const mp = getOrCreateMultiPageControlWindow()
       repositionMultiPageControlWindow()
@@ -2165,6 +2251,8 @@ if (hasSingleInstanceLock) {
             if (h && !h.isDestroyed()) out.push(h)
             const notice = toolbarNoticeWindow
             if (notice && !notice.isDestroyed()) out.push(notice)
+            const mp = multiPageControlWindow
+            if (mp && !mp.isDestroyed()) out.push(mp)
             for (const item of toolbarSubwindows.values()) {
               const sw = item.win
               if (sw && !sw.isDestroyed()) out.push(sw)
@@ -2172,6 +2260,7 @@ if (hasSingleInstanceLock) {
             return out
           },
           tick: async (targets) => {
+            refreshToolbarWindowsLayoutAndSurface()
             applyToolbarOnTopLevel('screen-saver')
             if (process.platform !== 'win32') return
             const hwnds: bigint[] = []
