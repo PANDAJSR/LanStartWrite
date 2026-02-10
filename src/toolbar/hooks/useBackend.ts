@@ -7,10 +7,50 @@ export type BackendEventItem = {
 
 let suppressCommandErrors = false
 
+function getFallbackLanstart() {
+  const w = window as any
+  if (w.__lanstartFallback) return w.__lanstartFallback as NonNullable<Window['lanstart']>
+
+  const kv = new Map<string, unknown>()
+  const uiState = new Map<string, Record<string, unknown>>()
+
+  const api: NonNullable<Window['lanstart']> = {
+    postCommand: async () => null,
+    getEvents: async (since: number) => ({ items: [], latest: since }),
+    getKv: async (key: string) => {
+      if (kv.has(key)) return kv.get(key)
+      throw new Error('kv_not_found')
+    },
+    putKv: async (key: string, value: unknown) => {
+      kv.set(key, value)
+      return null
+    },
+    getUiState: async (windowId: string) => uiState.get(windowId) ?? {},
+    putUiStateKey: async (windowId: string, key: string, value: unknown) => {
+      const prev = uiState.get(windowId) ?? {}
+      uiState.set(windowId, { ...prev, [key]: value })
+      return null
+    },
+    deleteUiStateKey: async (windowId: string, key: string) => {
+      const prev = uiState.get(windowId) ?? {}
+      if (!(key in prev)) return null
+      const next = { ...prev } as any
+      delete next[key]
+      uiState.set(windowId, next)
+      return null
+    },
+    apiRequest: async () => ({ status: 503, body: { ok: false, error: 'lanstart_unavailable' } }),
+    setZoomLevel: () => undefined,
+    getZoomLevel: () => 0
+  }
+
+  w.__lanstartFallback = api
+  return api
+}
+
 function requireLanstart() {
   const api = window.lanstart
-  if (!api) throw new Error('lanstart_unavailable')
-  return api
+  return api ?? getFallbackLanstart()
 }
 
 export function markQuitting(): void {
@@ -18,9 +58,11 @@ export function markQuitting(): void {
 }
 
 export async function postCommand(command: string, payload?: unknown): Promise<void> {
+  const realApi = window.lanstart
+  if (!realApi) return
   console.log('[useBackend] postCommand:', command, payload)
   try {
-    await requireLanstart().postCommand(command, payload)
+    await realApi.postCommand(command, payload)
     console.log('[useBackend] postCommand success:', command)
   } catch (e) {
     console.error('[useBackend] postCommand failed:', command, e)

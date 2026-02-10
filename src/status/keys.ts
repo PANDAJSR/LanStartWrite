@@ -59,6 +59,13 @@ export const WHITEBOARD_BG_IMAGE_OPACITY_UI_STATE_KEY = 'whiteboardBgImageOpacit
 
 export const WHITEBOARD_CANVAS_PAGES_KV_KEY = 'whiteboard-canvas-pages'
 
+export const VIDEO_SHOW_PAGES_KV_KEY = 'video-show-pages'
+export const VIDEO_SHOW_CAPTURE_REV_UI_STATE_KEY = 'videoShowCaptureRev'
+export const VIDEO_SHOW_LIVE_THUMB_UI_STATE_KEY = 'videoShowLiveThumb'
+export const VIDEO_SHOW_DEVICE_ID_UI_STATE_KEY = 'videoShowDeviceId'
+export const VIDEO_SHOW_QUALITY_UI_STATE_KEY = 'videoShowQuality'
+export const VIDEO_SHOW_QUALITY_PRESETS_UI_STATE_KEY = 'videoShowQualityPresets'
+
 export const NOTICE_KIND_UI_STATE_KEY = 'noticeKind'
 
 export type LeaferRendererEngine = 'canvas2d' | 'svg' | 'webgl' | 'webgpu'

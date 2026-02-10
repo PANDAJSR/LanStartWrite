@@ -1,5 +1,5 @@
 import React, { useMemo } from 'react'
-import { NOTES_PAGE_INDEX_UI_STATE_KEY, NOTES_PAGE_TOTAL_UI_STATE_KEY, UI_STATE_APP_WINDOW_ID, postCommand, useUiStateBus } from '../status'
+import { APP_MODE_UI_STATE_KEY, NOTES_PAGE_INDEX_UI_STATE_KEY, NOTES_PAGE_TOTAL_UI_STATE_KEY, UI_STATE_APP_WINDOW_ID, isAppMode, postCommand, useUiStateBus } from '../status'
 import { Button } from '../button'
 import { useZoomOnWheel } from '../toolbar/hooks/useZoomOnWheel'
 import '../toolbar-subwindows/styles/subwindow.css'
@@ -10,6 +10,8 @@ export function MultiPageControlWindow() {
 
   const pageIndexRaw = bus.state[NOTES_PAGE_INDEX_UI_STATE_KEY]
   const pageTotalRaw = bus.state[NOTES_PAGE_TOTAL_UI_STATE_KEY]
+  const appModeRaw = bus.state[APP_MODE_UI_STATE_KEY]
+  const appMode = isAppMode(appModeRaw) ? appModeRaw : 'toolbar'
 
   const { index, total } = useMemo(() => {
     const totalV = typeof pageTotalRaw === 'number' ? pageTotalRaw : typeof pageTotalRaw === 'string' ? Number(pageTotalRaw) : 1
@@ -21,6 +23,12 @@ export function MultiPageControlWindow() {
 
   const outerPadding = 10
   const gap = 10
+  const pageLabel = useMemo(() => {
+    if (appMode !== 'video-show') return `${index + 1}/${total}`
+    if (index <= 0) return 'Live'
+    const photoTotal = Math.max(0, total - 1)
+    return `${index}/${Math.max(1, photoTotal)}`
+  }, [appMode, index, total])
 
   return (
     <div
@@ -63,7 +71,7 @@ export function MultiPageControlWindow() {
               fontVariantNumeric: 'tabular-nums'
             }}
           >
-            {index + 1}/{total}
+            {pageLabel}
           </Button>
 
           <Button
@@ -84,8 +92,8 @@ export function MultiPageControlWindow() {
             <Button
               size="sm"
               kind="icon"
-              ariaLabel="新建页面"
-              title="新建页面"
+              ariaLabel={appMode === 'video-show' ? '拍摄按钮' : '新建页面'}
+              title={appMode === 'video-show' ? '拍摄按钮' : '新建页面'}
               onClick={() => postCommand('app.newPage', {}).catch(() => undefined)}
               style={{ fontSize: 16, lineHeight: 1 }}
             >

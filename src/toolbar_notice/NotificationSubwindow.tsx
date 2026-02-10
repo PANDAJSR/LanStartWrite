@@ -5,7 +5,7 @@ import { useEventsPoll } from '../toolbar/hooks/useEventsPoll'
 import { deleteUiStateKey, getKv, postCommand, putKv, putUiStateKey } from '../toolbar/hooks/useBackend'
 import { useZoomOnWheel } from '../toolbar/hooks/useZoomOnWheel'
 import { WatcherIcon } from '../toolbar/components/ToolbarIcons'
-import { APP_MODE_UI_STATE_KEY, NOTICE_KIND_UI_STATE_KEY, NOTES_RELOAD_REV_UI_STATE_KEY, UI_STATE_APP_WINDOW_ID, useUiStateBus } from '../status'
+import { APP_MODE_UI_STATE_KEY, NOTICE_KIND_UI_STATE_KEY, NOTES_RELOAD_REV_UI_STATE_KEY, UI_STATE_APP_WINDOW_ID, VIDEO_SHOW_PAGES_KV_KEY, useUiStateBus } from '../status'
 import '../toolbar-subwindows/styles/subwindow.css'
 
 function formatBytes(bytes: number): string {
@@ -146,12 +146,17 @@ export function NotificationSubwindow(props: { kind: 'notice' }) {
 
   const restoreNotes = async () => {
     const appModeRaw = bus.state[APP_MODE_UI_STATE_KEY]
-    const mode = appModeRaw === 'whiteboard' || appModeRaw === 'video-show' ? 'whiteboard' : 'toolbar'
-    const notesKvKey = mode === 'whiteboard' ? 'annotation-notes-whiteboard' : 'annotation-notes-toolbar'
+    const notesKvKey = appModeRaw === 'whiteboard' ? 'annotation-notes-whiteboard' : appModeRaw === 'video-show' ? 'annotation-notes-video-show' : 'annotation-notes-toolbar'
     const notesHistoryKvKey = `${notesKvKey}-prev`
     try {
       const prev = await getKv<unknown>(notesHistoryKvKey)
       await putKv(notesKvKey, prev)
+      if (appModeRaw === 'video-show') {
+        try {
+          const prevPages = await getKv<unknown>(`${VIDEO_SHOW_PAGES_KV_KEY}-prev`)
+          await putKv(VIDEO_SHOW_PAGES_KV_KEY, prevPages)
+        } catch {}
+      }
       await putUiStateKey(UI_STATE_APP_WINDOW_ID, NOTES_RELOAD_REV_UI_STATE_KEY, Date.now())
     } catch {}
     close()

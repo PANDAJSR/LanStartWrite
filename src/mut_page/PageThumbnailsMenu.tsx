@@ -8,6 +8,11 @@ import {
   WHITEBOARD_BG_IMAGE_URL_KV_KEY,
   WHITEBOARD_BG_IMAGE_OPACITY_KV_KEY,
   WHITEBOARD_CANVAS_PAGES_KV_KEY,
+  VIDEO_SHOW_LIVE_THUMB_UI_STATE_KEY,
+  VIDEO_SHOW_PAGES_KV_KEY,
+  VIDEO_SHOW_DEVICE_ID_UI_STATE_KEY,
+  VIDEO_SHOW_QUALITY_PRESETS_UI_STATE_KEY,
+  VIDEO_SHOW_QUALITY_UI_STATE_KEY,
   getKv,
   isFileOrDataUrl,
   isAppMode,
@@ -35,6 +40,9 @@ type PersistedAnnotationBookV2 = { version: 2; currentPage: number; pages: Persi
 type WhiteboardCanvasPageV1 = { bgColor?: string; bgImageUrl?: string; bgImageOpacity?: number }
 type WhiteboardCanvasBookV1 = { version: 1; pages: WhiteboardCanvasPageV1[] }
 
+type VideoShowPageV1 = { name?: string; imageUrl?: string; createdAt?: number }
+type VideoShowPageBookV1 = { version: 1; pages: VideoShowPageV1[] }
+
 function isPersistedAnnotationDocV1(v: unknown): v is PersistedAnnotationDocV1 {
   if (!v || typeof v !== 'object') return false
   const d = v as any
@@ -58,6 +66,22 @@ function isWhiteboardCanvasBookV1(v: unknown): v is WhiteboardCanvasBookV1 {
   if (b.version !== 1) return false
   if (!Array.isArray(b.pages)) return false
   return true
+}
+
+function isVideoShowPageBookV1(v: unknown): v is VideoShowPageBookV1 {
+  if (!v || typeof v !== 'object') return false
+  const b = v as any
+  if (b.version !== 1) return false
+  if (!Array.isArray(b.pages)) return false
+  return true
+}
+
+function normalizeVideoShowPhotoPages(pages: VideoShowPageV1[], photoTotal: number): VideoShowPageV1[] {
+  const total = Number.isFinite(photoTotal) ? Math.max(0, Math.floor(photoTotal)) : 0
+  const out = Array.isArray(pages) ? [...pages] : []
+  if (out.length > total) out.length = total
+  while (out.length < total) out.push({})
+  return out
 }
 
 function computeDocBounds(doc: PersistedAnnotationDocV1): { minX: number; minY: number; maxX: number; maxY: number } | null {
@@ -256,6 +280,61 @@ function PageThumbnailItem(props: {
   )
 }
 
+function VideoShowThumbnailItem(props: {
+  pageIndex: number
+  selected: boolean
+  name: string
+  imageUrl: string
+  onPick: () => void
+}) {
+  const { pageIndex, selected, name, imageUrl, onPick } = props
+  const pageLabel = name ? name : pageIndex <= 0 ? 'Live' : `第${pageIndex}页`
+  return (
+    <Button
+      size="sm"
+      kind="custom"
+      ariaLabel={name ? (pageIndex > 0 ? `${name}（第${pageIndex}页）` : name) : pageIndex > 0 ? `第${pageIndex}页` : 'Live'}
+      title={name ? (pageIndex > 0 ? `${name}（第${pageIndex}页）` : name) : pageIndex > 0 ? `第${pageIndex}页` : 'Live'}
+      onClick={onPick}
+      style={{
+        width: '100%',
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'stretch',
+        gap: 8,
+        padding: 10,
+        borderRadius: 12,
+        border: selected ? '1px solid var(--ls-surface-border)' : undefined,
+        background: selected ? 'rgba(255,255,255,0.12)' : undefined
+      }}
+    >
+      <div
+        style={{
+          width: '100%',
+          aspectRatio: '16 / 10',
+          borderRadius: 10,
+          overflow: 'hidden',
+          border: '1px solid rgba(0,0,0,0.12)',
+          background: 'rgba(0,0,0,0.65)'
+        }}
+      >
+        {imageUrl ? (
+          <img
+            src={imageUrl}
+            loading="lazy"
+            decoding="async"
+            style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block' }}
+          />
+        ) : null}
+      </div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 10 }}>
+        <div style={{ fontSize: 12, fontWeight: 650 }}>{pageLabel}</div>
+        {selected ? <div style={{ fontSize: 11, opacity: 0.8 }}>当前</div> : null}
+      </div>
+    </Button>
+  )
+}
+
 export function PageThumbnailsMenuWindow() {
   useZoomOnWheel()
   const bus = useUiStateBus(UI_STATE_APP_WINDOW_ID)
@@ -266,6 +345,11 @@ export function PageThumbnailsMenuWindow() {
 
   const pageIndexRaw = bus.state[NOTES_PAGE_INDEX_UI_STATE_KEY]
   const pageTotalRaw = bus.state[NOTES_PAGE_TOTAL_UI_STATE_KEY]
+  const liveThumbRaw = bus.state[VIDEO_SHOW_LIVE_THUMB_UI_STATE_KEY]
+  const liveThumbUrl = isFileOrDataUrl(liveThumbRaw) ? String(liveThumbRaw) : ''
+  const videoDeviceIdRaw = bus.state[VIDEO_SHOW_DEVICE_ID_UI_STATE_KEY]
+  const videoQualityRaw = bus.state[VIDEO_SHOW_QUALITY_UI_STATE_KEY]
+  const videoQualityPresetsRaw = bus.state[VIDEO_SHOW_QUALITY_PRESETS_UI_STATE_KEY]
 
   const { index, total } = useMemo(() => {
     const totalV = typeof pageTotalRaw === 'number' ? pageTotalRaw : typeof pageTotalRaw === 'string' ? Number(pageTotalRaw) : 1
@@ -275,10 +359,78 @@ export function PageThumbnailsMenuWindow() {
     return { index: i, total: t }
   }, [pageIndexRaw, pageTotalRaw])
 
-  const notesKvKey = appMode === 'whiteboard' || appMode === 'video-show' ? 'annotation-notes-whiteboard' : 'annotation-notes-toolbar'
+  const videoQualityIdx = useMemo(() => {
+    const v = typeof videoQualityRaw === 'string' ? videoQualityRaw : '0'
+    if (v === '0' || v === '1' || v === '2') return Number(v)
+    return 0
+  }, [videoQualityRaw])
+
+  const videoQualityPresets = useMemo(() => {
+    const raw = videoQualityPresetsRaw as any
+    const heights = Array.isArray(raw?.heights) ? raw.heights.map((v: any) => Number(v)).filter((n: any) => Number.isFinite(n) && n > 0) : []
+    const fallback = [1080, 720, 480]
+    const out =
+      heights.length >= 3 ? heights.slice(0, 3) : heights.length === 2 ? [heights[0], heights[1], fallback[2]] : heights.length === 1 ? [heights[0], fallback[1], fallback[2]] : fallback
+    const uniq = out.map((n: number) => Math.max(1, Math.floor(n)))
+    return { heights: uniq }
+  }, [videoQualityPresetsRaw])
+
+  const [videoDevices, setVideoDevices] = useState<{ deviceId: string; label: string }[]>([])
+
+  useEffect(() => {
+    if (appMode !== 'video-show') return
+    const v = typeof videoQualityRaw === 'string' ? videoQualityRaw : '0'
+    if (v !== '0' && v !== '1' && v !== '2') {
+      bus.setKey(VIDEO_SHOW_QUALITY_UI_STATE_KEY, '0').catch(() => undefined)
+    }
+  }, [appMode, bus, videoQualityRaw])
+
+  useEffect(() => {
+    if (appMode !== 'video-show') return
+    if (!navigator.mediaDevices?.enumerateDevices) return
+
+    let cancelled = false
+    const load = async () => {
+      try {
+        const list = await navigator.mediaDevices.enumerateDevices()
+        if (cancelled) return
+        const cams = list
+          .filter((d) => d.kind === 'videoinput')
+          .map((d, i) => ({
+            deviceId: d.deviceId,
+            label: d.label || `摄像头 ${i + 1}`
+          }))
+        setVideoDevices(cams)
+      } catch {
+        if (!cancelled) setVideoDevices([])
+      }
+    }
+
+    const onDeviceChange = () => void load()
+    navigator.mediaDevices.addEventListener?.('devicechange', onDeviceChange as any)
+    void load()
+    return () => {
+      cancelled = true
+      navigator.mediaDevices.removeEventListener?.('devicechange', onDeviceChange as any)
+    }
+  }, [appMode])
+
+  useEffect(() => {
+    if (appMode !== 'video-show') return
+    if (!videoDevices.length) return
+    const current = typeof videoDeviceIdRaw === 'string' ? videoDeviceIdRaw : ''
+    const ok = current && videoDevices.some((d) => d.deviceId === current)
+    if (ok) return
+    const first = videoDevices[0]?.deviceId
+    if (!first) return
+    bus.setKey(VIDEO_SHOW_DEVICE_ID_UI_STATE_KEY, first).catch(() => undefined)
+  }, [appMode, bus, videoDeviceIdRaw, videoDevices])
+
+  const notesKvKey = appMode === 'whiteboard' ? 'annotation-notes-whiteboard' : appMode === 'video-show' ? 'annotation-notes-video-show' : 'annotation-notes-toolbar'
 
   const [pages, setPages] = useState<PersistedAnnotationDocV1[]>([])
   const [canvasPages, setCanvasPages] = useState<WhiteboardCanvasPageV1[]>([])
+  const [videoPages, setVideoPages] = useState<VideoShowPageV1[]>([])
   const [defaultBg, setDefaultBg] = useState<{ color: string; imageUrl: string; imageOpacity: number }>({ color: '#ffffff', imageUrl: '', imageOpacity: 0.5 })
   const lastReloadAtRef = useRef(0)
 
@@ -304,6 +456,14 @@ export function PageThumbnailsMenuWindow() {
     }
 
     try {
+      const loaded = await getKv<unknown>(VIDEO_SHOW_PAGES_KV_KEY)
+      if (isVideoShowPageBookV1(loaded)) setVideoPages(normalizeVideoShowPhotoPages(loaded.pages, Math.max(0, total - 1)))
+      else setVideoPages([])
+    } catch {
+      setVideoPages([])
+    }
+
+    try {
       const bgColor = await getKv<unknown>(WHITEBOARD_BG_COLOR_KV_KEY)
       const bgImageUrl = await getKv<unknown>(WHITEBOARD_BG_IMAGE_URL_KV_KEY)
       const bgImageOpacity = await getKv<unknown>(WHITEBOARD_BG_IMAGE_OPACITY_KV_KEY)
@@ -324,7 +484,7 @@ export function PageThumbnailsMenuWindow() {
 
   useEffect(() => {
     void reload()
-  }, [notesKvKey])
+  }, [notesKvKey, total])
 
   useEffect(() => {
     const latest = events[events.length - 1]
@@ -335,6 +495,7 @@ export function PageThumbnailsMenuWindow() {
       typeof key !== 'string' ||
       (key !== notesKvKey &&
         key !== WHITEBOARD_CANVAS_PAGES_KV_KEY &&
+        key !== VIDEO_SHOW_PAGES_KV_KEY &&
         key !== WHITEBOARD_BG_COLOR_KV_KEY &&
         key !== WHITEBOARD_BG_IMAGE_URL_KV_KEY &&
         key !== WHITEBOARD_BG_IMAGE_OPACITY_KV_KEY)
@@ -355,34 +516,141 @@ export function PageThumbnailsMenuWindow() {
     return [...src, ...new Array(total - src.length).fill(null).map(() => ({} as WhiteboardCanvasPageV1))]
   }, [canvasPages, total])
 
+  const effectiveVideoPages = useMemo(() => {
+    const photoTotal = Math.max(0, total - 1)
+    const src = videoPages.length ? videoPages : new Array(photoTotal).fill(null).map(() => ({} as VideoShowPageV1))
+    if (src.length >= photoTotal) return src.slice(0, photoTotal)
+    return [...src, ...new Array(photoTotal - src.length).fill(null).map(() => ({} as VideoShowPageV1))]
+  }, [videoPages, total])
+
   return (
     <div style={{ width: '100%', height: '100%', padding: 10, boxSizing: 'border-box', background: 'transparent' }}>
-      <div className="subwindowRoot" style={{ width: '100%', height: '100%', boxShadow: 'none' }}>
-        <div style={{ position: 'relative', zIndex: 1, width: '100%', height: '100%', display: 'flex', flexDirection: 'column' }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: 12 }}>
-            <div style={{ fontSize: 13, fontWeight: 650 }}>页面缩略图查看菜单</div>
-            <Button size="sm" kind="text" ariaLabel="关闭" title="关闭" onClick={() => postCommand('app.togglePageThumbnailsMenu').catch(() => undefined)}>
-              关闭
-            </Button>
-          </div>
-
-          <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: 12, paddingTop: 0 }}>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 10 }}>
-              {effectivePages.map((doc, i) => (
-                <PageThumbnailItem
-                  key={i}
-                  index={i}
-                  selected={i === index}
-                  doc={doc ?? null}
-                  bgColor={effectiveCanvasPages[i]?.bgColor ?? defaultBg.color}
-                  bgImageUrl={effectiveCanvasPages[i]?.bgImageUrl ?? defaultBg.imageUrl}
-                  bgImageOpacity={effectiveCanvasPages[i]?.bgImageOpacity ?? defaultBg.imageOpacity}
-                  onPick={() => {
-                    postCommand('app.setPageIndex', { index: i }).catch(() => undefined)
-                    postCommand('app.togglePageThumbnailsMenu').catch(() => undefined)
+      <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column', gap: 10 }}>
+        {appMode === 'video-show' ? (
+          <div className="subwindowRoot" style={{ width: '100%', height: 'auto', boxShadow: 'none' }}>
+            <div style={{ position: 'relative', zIndex: 2, width: '100%', display: 'flex', alignItems: 'center', gap: 10, padding: 12 }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6, minWidth: 0, flex: 1 }}>
+                <div style={{ fontSize: 11, opacity: 0.9 }}>摄像头</div>
+                <select
+                  value={typeof videoDeviceIdRaw === 'string' ? videoDeviceIdRaw : ''}
+                  disabled={!videoDevices.length}
+                  onChange={(e) => {
+                    const v = String(e.target.value || '')
+                    if (!v) return
+                    bus.setKey(VIDEO_SHOW_DEVICE_ID_UI_STATE_KEY, v).catch(() => undefined)
                   }}
-                />
-              ))}
+                  style={{
+                    height: 30,
+                    borderRadius: 10,
+                    border: '1px solid rgba(0,0,0,0.16)',
+                    background: 'rgba(0,0,0,0.22)',
+                    color: 'rgba(255,255,255,0.92)',
+                    padding: '0 10px',
+                    outline: 'none',
+                    maxWidth: '100%'
+                  }}
+                >
+                  {videoDevices.length ? (
+                    videoDevices.map((d) => (
+                      <option key={d.deviceId} value={d.deviceId}>
+                        {d.label}
+                      </option>
+                    ))
+                  ) : (
+                    <option value="">未检测到摄像头</option>
+                  )}
+                </select>
+              </div>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6, minWidth: 0, flex: '0 0 160px' }}>
+                <div style={{ fontSize: 11, opacity: 0.9 }}>清晰度</div>
+                <select
+                  value={String(videoQualityIdx)}
+                  onChange={(e) => {
+                    const v = String(e.target.value || '0')
+                    bus.setKey(VIDEO_SHOW_QUALITY_UI_STATE_KEY, v).catch(() => undefined)
+                  }}
+                  style={{
+                    height: 30,
+                    borderRadius: 10,
+                    border: '1px solid rgba(0,0,0,0.16)',
+                    background: 'rgba(0,0,0,0.22)',
+                    color: 'rgba(255,255,255,0.92)',
+                    padding: '0 10px',
+                    outline: 'none',
+                    maxWidth: '100%'
+                  }}
+                >
+                  <option value="0">最高（{videoQualityPresets.heights[0]}p）</option>
+                  <option value="1">中等（{videoQualityPresets.heights[1]}p）</option>
+                  <option value="2">流畅（{videoQualityPresets.heights[2]}p）</option>
+                </select>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+        <div className="subwindowRoot" style={{ width: '100%', flex: 1, minHeight: 0, boxShadow: 'none' }}>
+          <div style={{ position: 'relative', zIndex: 1, width: '100%', height: '100%', display: 'flex', flexDirection: 'column' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: 12 }}>
+              <div style={{ fontSize: 13, fontWeight: 650 }}>页面缩略图查看菜单</div>
+              <Button size="sm" kind="text" ariaLabel="关闭" title="关闭" onClick={() => postCommand('app.togglePageThumbnailsMenu').catch(() => undefined)}>
+                关闭
+              </Button>
+            </div>
+
+            <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: 12, paddingTop: 0 }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 10 }}>
+                {appMode === 'video-show'
+                  ? [
+                      <VideoShowThumbnailItem
+                        key="live"
+                        pageIndex={0}
+                        selected={index === 0}
+                        name="Live"
+                        imageUrl={liveThumbUrl}
+                        onPick={() => {
+                          postCommand('app.setPageIndex', { index: 0 }).catch(() => undefined)
+                          postCommand('app.togglePageThumbnailsMenu').catch(() => undefined)
+                        }}
+                      />,
+                      ...effectiveVideoPages.map((p, photoIdx) => {
+                        const pageIndex = photoIdx + 1
+                        const frozenUrl = isFileOrDataUrl(p?.imageUrl) ? String(p?.imageUrl ?? '') : ''
+                        const name = typeof p?.name === 'string' ? String(p?.name ?? '') : `第${pageIndex}页`
+                        const createdAt =
+                          typeof p?.createdAt === 'number' ? p.createdAt : typeof p?.createdAt === 'string' ? Number(p.createdAt) : 0
+                        return (
+                          <VideoShowThumbnailItem
+                            key={`${pageIndex}-${Number.isFinite(createdAt) ? Math.floor(createdAt) : 0}`}
+                            pageIndex={pageIndex}
+                            selected={pageIndex === index}
+                            name={name}
+                            imageUrl={frozenUrl}
+                            onPick={() => {
+                              postCommand('app.setPageIndex', { index: pageIndex }).catch(() => undefined)
+                              postCommand('app.togglePageThumbnailsMenu').catch(() => undefined)
+                            }}
+                          />
+                        )
+                      })
+                    ]
+                  : effectivePages.map((doc, i) => (
+                      <PageThumbnailItem
+                        key={i}
+                        index={i}
+                        selected={i === index}
+                        doc={doc ?? null}
+                        bgColor={effectiveCanvasPages[i]?.bgColor ?? defaultBg.color}
+                        bgImageUrl={effectiveCanvasPages[i]?.bgImageUrl ?? defaultBg.imageUrl}
+                        bgImageOpacity={effectiveCanvasPages[i]?.bgImageOpacity ?? defaultBg.imageOpacity}
+                        onPick={() => {
+                          postCommand('app.setPageIndex', { index: i }).catch(() => undefined)
+                          postCommand('app.togglePageThumbnailsMenu').catch(() => undefined)
+                        }}
+                      />
+                    ))}
+              </div>
             </div>
           </div>
         </div>

@@ -33,6 +33,12 @@ import {
   WHITEBOARD_BG_IMAGE_OPACITY_KV_KEY,
   WHITEBOARD_BG_IMAGE_OPACITY_UI_STATE_KEY,
   WHITEBOARD_CANVAS_PAGES_KV_KEY,
+  VIDEO_SHOW_CAPTURE_REV_UI_STATE_KEY,
+  VIDEO_SHOW_DEVICE_ID_UI_STATE_KEY,
+  VIDEO_SHOW_LIVE_THUMB_UI_STATE_KEY,
+  VIDEO_SHOW_PAGES_KV_KEY,
+  VIDEO_SHOW_QUALITY_UI_STATE_KEY,
+  VIDEO_SHOW_QUALITY_PRESETS_UI_STATE_KEY,
   WRITING_FRAMEWORK_KV_KEY,
   WRITING_FRAMEWORK_UI_STATE_KEY,
   isAppearance,
@@ -93,6 +99,12 @@ export {
   WHITEBOARD_BG_IMAGE_OPACITY_KV_KEY,
   WHITEBOARD_BG_IMAGE_OPACITY_UI_STATE_KEY,
   WHITEBOARD_CANVAS_PAGES_KV_KEY,
+  VIDEO_SHOW_CAPTURE_REV_UI_STATE_KEY,
+  VIDEO_SHOW_DEVICE_ID_UI_STATE_KEY,
+  VIDEO_SHOW_LIVE_THUMB_UI_STATE_KEY,
+  VIDEO_SHOW_PAGES_KV_KEY,
+  VIDEO_SHOW_QUALITY_UI_STATE_KEY,
+  VIDEO_SHOW_QUALITY_PRESETS_UI_STATE_KEY,
   WRITING_FRAMEWORK_KV_KEY,
   WRITING_FRAMEWORK_UI_STATE_KEY,
   isAppearance,
@@ -126,10 +138,50 @@ export type BackendEventItem = {
   ts: number
 }
 
+function getFallbackLanstart() {
+  const w = window as any
+  if (w.__lanstartFallback) return w.__lanstartFallback as NonNullable<Window['lanstart']>
+
+  const kv = new Map<string, unknown>()
+  const uiState = new Map<string, Record<string, unknown>>()
+
+  const api: NonNullable<Window['lanstart']> = {
+    postCommand: async () => null,
+    getEvents: async (since: number) => ({ items: [], latest: since }),
+    getKv: async (key: string) => {
+      if (kv.has(key)) return kv.get(key)
+      throw new Error('kv_not_found')
+    },
+    putKv: async (key: string, value: unknown) => {
+      kv.set(key, value)
+      return null
+    },
+    getUiState: async (windowId: string) => uiState.get(windowId) ?? {},
+    putUiStateKey: async (windowId: string, key: string, value: unknown) => {
+      const prev = uiState.get(windowId) ?? {}
+      uiState.set(windowId, { ...prev, [key]: value })
+      return null
+    },
+    deleteUiStateKey: async (windowId: string, key: string) => {
+      const prev = uiState.get(windowId) ?? {}
+      if (!(key in prev)) return null
+      const next = { ...prev } as any
+      delete next[key]
+      uiState.set(windowId, next)
+      return null
+    },
+    apiRequest: async () => ({ status: 503, body: { ok: false, error: 'lanstart_unavailable' } }),
+    setZoomLevel: () => undefined,
+    getZoomLevel: () => 0
+  }
+
+  w.__lanstartFallback = api
+  return api
+}
+
 function requireLanstart() {
   const api = window.lanstart
-  if (!api) throw new Error('lanstart_unavailable')
-  return api
+  return api ?? getFallbackLanstart()
 }
 
 export async function postCommand(command: string, payload?: unknown): Promise<void> {

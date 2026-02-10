@@ -1823,7 +1823,7 @@ async function maybeShowRestoreNotesNotice(): Promise<void> {
   } catch {}
 
   const notesHistoryKvKey =
-    mode === 'whiteboard' || mode === 'video-show' ? 'annotation-notes-whiteboard-prev' : 'annotation-notes-toolbar-prev'
+    mode === 'whiteboard' ? 'annotation-notes-whiteboard-prev' : mode === 'video-show' ? 'annotation-notes-video-show-prev' : 'annotation-notes-toolbar-prev'
   try {
     await backendGetKv(notesHistoryKvKey)
   } catch (e) {

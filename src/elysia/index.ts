@@ -25,6 +25,8 @@ import {
   WHITEBOARD_BG_IMAGE_OPACITY_KV_KEY,
   WHITEBOARD_BG_IMAGE_OPACITY_UI_STATE_KEY,
   WHITEBOARD_CANVAS_PAGES_KV_KEY,
+  VIDEO_SHOW_CAPTURE_REV_UI_STATE_KEY,
+  VIDEO_SHOW_PAGES_KV_KEY,
   WRITING_FRAMEWORK_KV_KEY,
   WRITING_FRAMEWORK_UI_STATE_KEY,
   isActiveApp,
@@ -81,6 +83,37 @@ function isWhiteboardCanvasBookV1(v: unknown): v is WhiteboardCanvasBookV1 {
   return true
 }
 
+type VideoShowPageV1 = { name: string; imageUrl: string; createdAt: number }
+type VideoShowPageBookV1 = { version: 1; pages: VideoShowPageV1[] }
+
+function isVideoShowPageBookV1(v: unknown): v is VideoShowPageBookV1 {
+  if (!v || typeof v !== 'object') return false
+  const b = v as any
+  if (b.version !== 1) return false
+  if (!Array.isArray(b.pages)) return false
+  return true
+}
+
+function toCnInt(v: number): string {
+  const n = Math.floor(v)
+  if (!Number.isFinite(n) || n <= 0) return ''
+  const d = ['零', '一', '二', '三', '四', '五', '六', '七', '八', '九']
+  if (n < 10) return d[n]
+  if (n === 10) return '十'
+  if (n < 20) return `十${d[n - 10]}`
+  if (n < 100) {
+    const tens = Math.floor(n / 10)
+    const ones = n % 10
+    return `${d[tens]}十${ones ? d[ones] : ''}`
+  }
+  return String(n)
+}
+
+function videoShowPhotoPageName(pageNo: number): string {
+  const cn = toCnInt(pageNo)
+  return cn ? `第${cn}页` : `第${Math.max(1, Math.floor(pageNo))}页`
+}
+
 async function getDefaultWhiteboardBackground(): Promise<{ bgColor: string; bgImageUrl: string; bgImageOpacity: number }> {
   let bgColor = '#ffffff'
   let bgImageUrl = ''
@@ -99,6 +132,45 @@ async function getDefaultWhiteboardBackground(): Promise<{ bgColor: string; bgIm
     if (Number.isFinite(n)) bgImageOpacity = Math.max(0, Math.min(1, n))
   } catch {}
   return { bgColor, bgImageUrl, bgImageOpacity }
+}
+
+async function getOrInitVideoShowPageBook(args: {
+  photoTotal: number
+}): Promise<{ book: VideoShowPageBookV1; changed: boolean }> {
+  const total = Number.isFinite(args.photoTotal) ? Math.max(0, Math.floor(args.photoTotal)) : 0
+  let changed = false
+  let book: VideoShowPageBookV1 = { version: 1, pages: [] }
+  try {
+    const loaded = await getValue(db, VIDEO_SHOW_PAGES_KV_KEY)
+    if (isVideoShowPageBookV1(loaded)) book = loaded
+  } catch {}
+
+  const rawPages = Array.isArray(book.pages) ? book.pages : null
+  if (!rawPages) {
+    book = { version: 1, pages: [] }
+    changed = true
+  } else {
+    book = { version: 1, pages: [...rawPages] }
+  }
+
+  if (book.pages.length < total) {
+    changed = true
+    while (book.pages.length < total) book.pages.push({ name: '', imageUrl: '', createdAt: 0 })
+  } else if (book.pages.length > total) {
+    changed = true
+    book.pages.length = total
+  }
+
+  return { book, changed }
+}
+
+async function ensureVideoShowPageBookPersisted(args: { photoTotal: number }): Promise<VideoShowPageBookV1> {
+  const { book, changed } = await getOrInitVideoShowPageBook(args)
+  if (changed) {
+    await putValue(db, VIDEO_SHOW_PAGES_KV_KEY, book)
+    emitEvent('KV_PUT', { key: VIDEO_SHOW_PAGES_KV_KEY })
+  }
+  return book
 }
 
 async function getOrInitWhiteboardCanvasBook(args: {
@@ -522,6 +594,33 @@ async function handleCommand(command: string, payload: unknown): Promise<Command
       if (action === 'newPage') {
         const state = getOrInitUiState(UI_STATE_APP_WINDOW_ID)
         const { total } = coercePageIndexTotal(state)
+        const modeRaw = state[APP_MODE_UI_STATE_KEY]
+        const mode = isAppMode(modeRaw) ? modeRaw : 'toolbar'
+
+        if (mode === 'video-show') {
+          const rev = Date.now()
+          const baseTotal = Math.max(1, total)
+          const nextTotal = Math.min(2000, baseTotal + 1)
+          const nextIndex = nextTotal - 1
+          state[NOTES_PAGE_TOTAL_UI_STATE_KEY] = nextTotal
+          state[NOTES_PAGE_INDEX_UI_STATE_KEY] = nextIndex
+          emitEvent('UI_STATE_PUT', { windowId: UI_STATE_APP_WINDOW_ID, key: NOTES_PAGE_TOTAL_UI_STATE_KEY, value: nextTotal })
+          emitEvent('UI_STATE_PUT', { windowId: UI_STATE_APP_WINDOW_ID, key: NOTES_PAGE_INDEX_UI_STATE_KEY, value: nextIndex })
+
+          const photoTotal = Math.max(0, nextTotal - 1)
+          const photoIndex = Math.max(0, nextIndex - 1)
+          const name = videoShowPhotoPageName(nextIndex)
+          const book = await ensureVideoShowPageBookPersisted({ photoTotal })
+          book.pages[photoIndex] = { name, imageUrl: '', createdAt: rev }
+          await putValue(db, VIDEO_SHOW_PAGES_KV_KEY, book)
+          emitEvent('KV_PUT', { key: VIDEO_SHOW_PAGES_KV_KEY })
+
+          const capture = { rev, index: nextIndex, total: nextTotal, name }
+          state[VIDEO_SHOW_CAPTURE_REV_UI_STATE_KEY] = capture
+          emitEvent('UI_STATE_PUT', { windowId: UI_STATE_APP_WINDOW_ID, key: VIDEO_SHOW_CAPTURE_REV_UI_STATE_KEY, value: capture })
+          return { ok: true }
+        }
+
         const nextTotal = Math.min(2000, total + 1)
         const nextIndex = nextTotal - 1
         state[NOTES_PAGE_TOTAL_UI_STATE_KEY] = nextTotal

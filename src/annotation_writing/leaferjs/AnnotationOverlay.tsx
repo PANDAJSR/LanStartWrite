@@ -285,7 +285,8 @@ export function AnnotationOverlayApp() {
   }, [tool])
 
   const appModeRaw = bus.state[APP_MODE_UI_STATE_KEY]
-  const appMode = appModeRaw === 'whiteboard' || appModeRaw === 'video-show' ? 'whiteboard' : 'toolbar'
+  const appMode = appModeRaw === 'whiteboard' ? 'whiteboard' : appModeRaw === 'video-show' ? 'video-show' : 'toolbar'
+  const isWhiteboardLike = appMode === 'whiteboard' || appMode === 'video-show'
   const shouldFreezeScreen = appMode === 'toolbar' && tool !== 'mouse' && leaferSettings.freezeScreen
   const rendererEngine = leaferSettings.rendererEngine ?? 'canvas2d'
 
@@ -1187,7 +1188,7 @@ struct VSOut {
     }
 
     const disposeParentLayout = ensureParentLayout()
-    const notesKvKey = appMode === 'whiteboard' ? 'annotation-notes-whiteboard' : 'annotation-notes-toolbar'
+    const notesKvKey = appMode === 'whiteboard' ? 'annotation-notes-whiteboard' : appMode === 'video-show' ? 'annotation-notes-video-show' : 'annotation-notes-toolbar'
     const notesHistoryKvKey = `${notesKvKey}-prev`
     let serializePersistedDoc: null | (() => PersistedAnnotationDocV1) = null
     let persistTimer: number | null = null
@@ -3099,7 +3100,7 @@ struct VSOut {
         backgroundRepeat: frozenBackgroundUrl ? 'no-repeat' : undefined,
         backgroundPosition: frozenBackgroundUrl ? 'center' : undefined,
         backgroundColor: frozenBackgroundUrl ? '#000000' : 'transparent',
-        opacity: appMode === 'whiteboard' ? 1 : tool === 'mouse' && !leaferSettings.showInkWhenPassthrough ? 0 : 1,
+        opacity: isWhiteboardLike ? 1 : tool === 'mouse' && !leaferSettings.showInkWhenPassthrough ? 0 : 1,
         touchAction: 'none'
       }}
     />

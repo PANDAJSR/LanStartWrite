@@ -111,6 +111,27 @@ describe('Annotation notes partition', () => {
     b.unmount()
 
     expect(putCalls.some((c) => c.key === 'annotation-notes-toolbar')).toBe(true)
+
+    putCalls.length = 0
+
+    window.lanstart = {
+      ...window.lanstart,
+      getUiState: async () => ({
+        mode: 'video-show',
+        tool: 'pen',
+        penType: 'writing',
+        penColor: '#333333',
+        penThickness: 6,
+        eraserType: 'pixel',
+        eraserThickness: 18
+      })
+    }
+
+    const c = render(<AnnotationOverlayApp />)
+    await new Promise((r) => setTimeout(r, 30))
+    c.unmount()
+
+    expect(putCalls.some((c) => c.key === 'annotation-notes-video-show')).toBe(true)
   })
 
   it('rotates notes on startup and keeps only last history', async () => {
