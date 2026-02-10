@@ -75,6 +75,14 @@ jobs:
           node-version: 22
           cache: pnpm
 
+      - name: 缓存 electron 下载
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~\AppData\Local\electron\Cache
+            ~\AppData\Local\electron-builder\Cache
+          key: ${{ runner.os }}-electron-cache-${{ hashFiles('pnpm-lock.yaml') }}
+
       - name: 确保 pnpm store 目录存在
         shell: pwsh
         run: |
@@ -99,7 +107,18 @@ jobs:
         run: pnpm -s build
 
       - name: 打包（Windows）
-        run: pnpm exec electron-builder --publish never
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          for ($i = 1; $i -le 3; $i++) {
+            try {
+              pnpm exec electron-builder --publish never
+              break
+            } catch {
+              if ($i -ge 3) { throw }
+              Start-Sleep -Seconds 10
+            }
+          }
 
       - name: 清理 unpacked 目录
         shell: pwsh
@@ -113,7 +132,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: dist-win-${{ needs.parse.outputs.version }}
-          path: dist/**
+          path: dist/*.exe
 
   build_mac:
     needs: parse
@@ -131,6 +150,13 @@ jobs:
           node-version: 22
           cache: pnpm
 
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/electron
+            ~/.cache/electron-builder
+          key: ${{ runner.os }}-electron-cache-${{ hashFiles('pnpm-lock.yaml') }}
+
       - name: 应用版本号
         run: node scripts/ci/apply-version.mjs ${{ needs.parse.outputs.version }}
 
@@ -147,7 +173,16 @@ jobs:
         run: pnpm -s build
 
       - name: 打包（macOS）
-        run: pnpm exec electron-builder --publish never
+        shell: bash
+        run: |
+          set -euo pipefail
+          for i in 1 2 3; do
+            if pnpm exec electron-builder --publish never; then
+              exit 0
+            fi
+            sleep 10
+          done
+          exit 1
 
       - name: 清理 unpacked 目录
         shell: bash
@@ -177,6 +212,13 @@ jobs:
           node-version: 22
           cache: pnpm
 
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/electron
+            ~/.cache/electron-builder
+          key: ${{ runner.os }}-electron-cache-${{ hashFiles('pnpm-lock.yaml') }}
+
       - name: 应用版本号
         run: node scripts/ci/apply-version.mjs ${{ needs.parse.outputs.version }}
 
@@ -193,7 +235,16 @@ jobs:
         run: pnpm -s build
 
       - name: 打包（Linux）
-        run: pnpm exec electron-builder --publish never
+        shell: bash
+        run: |
+          set -euo pipefail
+          for i in 1 2 3; do
+            if pnpm exec electron-builder --publish never; then
+              exit 0
+            fi
+            sleep 10
+          done
+          exit 1
 
       - name: 清理 unpacked 目录
         shell: bash

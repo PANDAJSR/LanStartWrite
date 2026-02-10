@@ -6,14 +6,18 @@ directories:
 files:
   - out/**/*
   - package.json
+asarUnpack:
+  - "**/*.node"
+npmRebuild: false
 extraResources:
   - from: iconpack/LanStartWrite.png
     to: iconpack/LanStartWrite.png
 publish:
   provider: github
 win:
-  target: nsis
+  target:
+    - target: portable
+      arch:
+        - x64
   icon: LanStartWrite.png
-nsis:
-  oneClick: false
-  allowToChangeInstallationDirectory: true
+  signAndEditExecutable: false
