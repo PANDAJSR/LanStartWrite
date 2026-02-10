@@ -280,15 +280,15 @@ export function AnnotationOverlayApp() {
     eraserThicknessRef.current = eraserThickness
   }, [eraserThickness])
 
-  useEffect(() => {
-    void postCommand('win.setAnnotationInput', { enabled: tool !== 'mouse' })
-  }, [tool])
-
   const appModeRaw = bus.state[APP_MODE_UI_STATE_KEY]
   const appMode = appModeRaw === 'whiteboard' ? 'whiteboard' : appModeRaw === 'video-show' ? 'video-show' : 'toolbar'
   const isWhiteboardLike = appMode === 'whiteboard' || appMode === 'video-show'
   const shouldFreezeScreen = appMode === 'toolbar' && tool !== 'mouse' && leaferSettings.freezeScreen
   const rendererEngine = leaferSettings.rendererEngine ?? 'canvas2d'
+
+  useEffect(() => {
+    void postCommand('win.setAnnotationInput', { enabled: isWhiteboardLike ? true : tool !== 'mouse' })
+  }, [tool, isWhiteboardLike])
 
   useEffect(() => {
     if (!shouldFreezeScreen) {
@@ -1253,7 +1253,7 @@ struct VSOut {
 
     if (rendererEngine === 'canvas2d') {
       const rect = view.getBoundingClientRect()
-      const contextSettings = { desynchronized: true } as any
+      const contextSettings = { desynchronized: true, alpha: true } as any
       const leafer = new Leafer(
         {
           view,
@@ -1262,10 +1262,18 @@ struct VSOut {
           contextSettings
         } as any
       )
+      try {
+        const c = view.querySelector('canvas') as HTMLCanvasElement | null
+        if (c) c.style.background = 'transparent'
+      } catch {}
 
       type CanvasNode = Line | Polygon
-      type Action = { kind: 'add' | 'remove'; nodes: CanvasNode[] }
+      type Action =
+        | { kind: 'add'; nodes: CanvasNode[] }
+        | { kind: 'remove'; nodes: CanvasNode[] }
+        | { kind: 'update'; nodes: CanvasNode[]; beforePoints: number[][]; afterPoints: number[][] }
       const live = new Set<CanvasNode>()
+      const order: CanvasNode[] = []
       const history = { undo: [] as Action[], redo: [] as Action[] }
       const laserFade = new Map<CanvasNode, { startAt: number; durationMs: number; basePoints: number[]; cumLen: number[]; totalLen: number }>()
       let laserFadeScheduled = false
@@ -1368,6 +1376,33 @@ struct VSOut {
         return { color: stroke, opacity, pfh: false }
       }
 
+      const applyMetaPointsToNode = (node: CanvasNode, meta: LineMeta, points: number[]) => {
+        meta.points = points
+        recomputeBounds(meta, points)
+        if (node instanceof Polygon) {
+          const fill = typeof (node as any).fill === 'string' ? (node as any).fill : '#000000'
+          const opacity = typeof (node as any).opacity === 'number' && Number.isFinite((node as any).opacity) ? (node as any).opacity : 1
+          const outline = getStroke(pointsToPerfectFreehandInput(points), {
+            size: meta.strokeWidth,
+            thinning: 0.7,
+            smoothing: 0.6,
+            streamline: 0.5,
+            simulatePressure: true
+          })
+          if (outline.length >= 3) {
+            const polyPoints: number[] = []
+            for (const p of outline as unknown as [number, number][]) polyPoints.push(p[0], p[1])
+            ;(node as any).points = polyPoints
+            ;(node as any).fill = fill
+            ;(node as any).opacity = opacity
+          } else {
+            ;(node as any).points = points
+          }
+          return
+        }
+        ;(node as any).points = points
+      }
+
       serializePersistedDoc = () => {
         const nodes: PersistedAnnotationNodeV1[] = []
         for (const node of live) {
@@ -1393,16 +1428,21 @@ struct VSOut {
         for (const node of nodes) {
           leafer.add(node)
           live.add(node)
+          order.push(node)
         }
       }
 
       const removeNodes = (nodes: CanvasNode[]) => {
+        const set = new Set(nodes)
         for (const node of nodes) {
           try {
             ;(node as any).remove?.()
           } catch {}
           live.delete(node)
           laserFade.delete(node)
+        }
+        for (let i = order.length - 1; i >= 0; i--) {
+          if (set.has(order[i])) order.splice(i, 1)
         }
       }
 
@@ -1416,7 +1456,19 @@ struct VSOut {
         const action = history.undo.pop()
         if (!action) return
         if (action.kind === 'add') removeNodes(action.nodes)
-        else addNodes(action.nodes)
+        else if (action.kind === 'remove') addNodes(action.nodes)
+        else {
+          for (let i = 0; i < action.nodes.length; i++) {
+            const node = action.nodes[i]
+            const meta = getMeta(node)
+            const points = action.beforePoints[i]
+            if (!meta || !points) continue
+            applyMetaPointsToNode(node, meta, points.slice())
+          }
+          try {
+            ;(leafer as any).forceRender?.()
+          } catch {}
+        }
         history.redo.push(action)
         schedulePersist()
       }
@@ -1425,7 +1477,19 @@ struct VSOut {
         const action = history.redo.pop()
         if (!action) return
         if (action.kind === 'add') addNodes(action.nodes)
-        else removeNodes(action.nodes)
+        else if (action.kind === 'remove') removeNodes(action.nodes)
+        else {
+          for (let i = 0; i < action.nodes.length; i++) {
+            const node = action.nodes[i]
+            const meta = getMeta(node)
+            const points = action.afterPoints[i]
+            if (!meta || !points) continue
+            applyMetaPointsToNode(node, meta, points.slice())
+          }
+          try {
+            ;(leafer as any).forceRender?.()
+          } catch {}
+        }
         history.undo.push(action)
         schedulePersist()
       }
@@ -1593,11 +1657,472 @@ struct VSOut {
         }
       >()
 
-      const getPoint = (e: PointerEvent) => {
+      let camX = 0
+      let camY = 0
+      let camScale = 1
+
+      const applyCamera = () => {
+        ;(leafer as any).x = camX
+        ;(leafer as any).y = camY
+        ;(leafer as any).scaleX = camScale
+        ;(leafer as any).scaleY = camScale
+        try {
+          ;(leafer as any).forceRender?.()
+        } catch {}
+      }
+
+      const getClientPoint = (e: PointerEvent) => {
         const r = view.getBoundingClientRect()
-        const x = e.clientX - r.left
-        const y = e.clientY - r.top
+        const cx = e.clientX - r.left
+        const cy = e.clientY - r.top
+        return { cx, cy }
+      }
+
+      const clientToWorld = (cx: number, cy: number) => {
+        const x = (cx - camX) / Math.max(0.0001, camScale)
+        const y = (cy - camY) / Math.max(0.0001, camScale)
         return { x, y }
+      }
+
+      const getPoint = (e: PointerEvent) => {
+        const { cx, cy } = getClientPoint(e)
+        return clientToWorld(cx, cy)
+      }
+
+      type Selection = {
+        nodes: CanvasNode[]
+        bounds: { minX: number; minY: number; maxX: number; maxY: number }
+      }
+
+      let selection: Selection | null = null
+      let selectionOverlayKind: 'mouse' | 'touch' = 'mouse'
+      let selectionBox: Line | null = null
+      let selectionCurve: Line | null = null
+      let lassoPreview: Line | null = null
+
+      const removeOverlayNode = (node: any) => {
+        if (!node) return
+        try {
+          node.remove?.()
+        } catch {}
+      }
+
+      const clearSelectionOverlays = () => {
+        removeOverlayNode(selectionBox)
+        removeOverlayNode(selectionCurve)
+        selectionBox = null
+        selectionCurve = null
+      }
+
+      const clearLassoPreview = () => {
+        removeOverlayNode(lassoPreview)
+        lassoPreview = null
+      }
+
+      const computeBounds = (nodes: CanvasNode[]): Selection['bounds'] | null => {
+        let minX = Number.POSITIVE_INFINITY
+        let minY = Number.POSITIVE_INFINITY
+        let maxX = Number.NEGATIVE_INFINITY
+        let maxY = Number.NEGATIVE_INFINITY
+        for (const node of nodes) {
+          const meta = getMeta(node)
+          if (!meta) continue
+          minX = Math.min(minX, meta.minX)
+          minY = Math.min(minY, meta.minY)
+          maxX = Math.max(maxX, meta.maxX)
+          maxY = Math.max(maxY, meta.maxY)
+        }
+        if (!Number.isFinite(minX) || !Number.isFinite(minY) || !Number.isFinite(maxX) || !Number.isFinite(maxY)) return null
+        return { minX, minY, maxX, maxY }
+      }
+
+      const boundsCenter = (b: Selection['bounds']) => ({ x: (b.minX + b.maxX) * 0.5, y: (b.minY + b.maxY) * 0.5 })
+
+      const computeConvexHull = (points: number[]) => {
+        const pts: { x: number; y: number }[] = []
+        for (let i = 0; i + 1 < points.length; i += 2) pts.push({ x: points[i], y: points[i + 1] })
+        if (pts.length <= 2) return pts
+        pts.sort((a, b) => (a.x === b.x ? a.y - b.y : a.x - b.x))
+        const cross = (o: any, a: any, b: any) => (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x)
+        const lower: any[] = []
+        for (const p of pts) {
+          while (lower.length >= 2 && cross(lower[lower.length - 2], lower[lower.length - 1], p) <= 0) lower.pop()
+          lower.push(p)
+        }
+        const upper: any[] = []
+        for (let i = pts.length - 1; i >= 0; i--) {
+          const p = pts[i]
+          while (upper.length >= 2 && cross(upper[upper.length - 2], upper[upper.length - 1], p) <= 0) upper.pop()
+          upper.push(p)
+        }
+        upper.pop()
+        lower.pop()
+        return lower.concat(upper)
+      }
+
+      const updateSelectionOverlays = () => {
+        clearSelectionOverlays()
+        if (!selection) return
+        const b = selection.bounds
+        const strokeWidth = 1 / Math.max(0.2, camScale)
+        const pad = 6 / Math.max(0.2, camScale)
+
+        if (selectionOverlayKind === 'mouse') {
+          const rectPoints = [b.minX - pad, b.minY - pad, b.maxX + pad, b.minY - pad, b.maxX + pad, b.maxY + pad, b.minX - pad, b.maxY + pad, b.minX - pad, b.minY - pad]
+          selectionBox = new Line(
+            {
+              points: rectPoints,
+              stroke: '#3b82f6',
+              strokeWidth,
+              dashPattern: [6 / Math.max(0.2, camScale), 4 / Math.max(0.2, camScale)],
+              closed: true,
+              opacity: 0.95,
+              hittable: false
+            } as any
+          )
+          leafer.add(selectionBox)
+        }
+
+        const all: number[] = []
+        for (const n of selection.nodes) {
+          const m = getMeta(n)
+          if (!m) continue
+          const step = Math.max(2, Math.floor(m.points.length / 240) * 2)
+          for (let i = 0; i + 1 < m.points.length; i += step) {
+            all.push(m.points[i], m.points[i + 1])
+          }
+        }
+        const hull = computeConvexHull(all)
+        if (selectionOverlayKind === 'touch' && hull.length >= 3) {
+          const hullPoints: number[] = []
+          for (const p of hull) hullPoints.push(p.x, p.y)
+          hullPoints.push(hull[0].x, hull[0].y)
+          selectionCurve = new Line(
+            {
+              points: hullPoints,
+              stroke: '#3b82f6',
+              strokeWidth,
+              closed: true,
+              opacity: 0.9,
+              hittable: false
+            } as any
+          )
+          leafer.add(selectionCurve)
+        }
+        try {
+          ;(leafer as any).forceRender?.()
+        } catch {}
+      }
+
+      const setSelection = (nodes: CanvasNode[] | null, kind: 'mouse' | 'touch' = 'mouse') => {
+        selection = null
+        selectionOverlayKind = kind
+        clearSelectionOverlays()
+        if (!nodes || !nodes.length) return
+        const b = computeBounds(nodes)
+        if (!b) return
+        selection = { nodes, bounds: b }
+        updateSelectionOverlays()
+      }
+
+      const distancePointToSegmentSq = (px: number, py: number, ax: number, ay: number, bx: number, by: number) => {
+        const vx = bx - ax
+        const vy = by - ay
+        const wx = px - ax
+        const wy = py - ay
+        const c1 = vx * wx + vy * wy
+        if (c1 <= 0) return wx * wx + wy * wy
+        const c2 = vx * vx + vy * vy
+        if (c2 <= c1) {
+          const dx = px - bx
+          const dy = py - by
+          return dx * dx + dy * dy
+        }
+        const t = c1 / c2
+        const qx = ax + t * vx
+        const qy = ay + t * vy
+        const dx = px - qx
+        const dy = py - qy
+        return dx * dx + dy * dy
+      }
+
+      const hitDistanceToPolylineSq = (points: number[], x: number, y: number) => {
+        let best = Number.POSITIVE_INFINITY
+        for (let i = 0; i + 3 < points.length; i += 2) {
+          const d = distancePointToSegmentSq(x, y, points[i], points[i + 1], points[i + 2], points[i + 3])
+          if (d < best) best = d
+        }
+        return best
+      }
+
+      const pickNodesAtPoint = (x: number, y: number) => {
+        const r = 10 / Math.max(0.2, camScale)
+        const rSq = r * r
+        for (let i = order.length - 1; i >= 0; i--) {
+          const node = order[i]
+          const meta = getMeta(node)
+          if (!meta || meta.transient) continue
+          const pad = r + meta.strokeWidth * 0.6
+          if (x < meta.minX - pad || x > meta.maxX + pad || y < meta.minY - pad || y > meta.maxY + pad) continue
+          const dSq = hitDistanceToPolylineSq(meta.points, x, y)
+          if (dSq <= rSq + (meta.strokeWidth * 0.6) * (meta.strokeWidth * 0.6)) {
+            const gid = meta.groupId
+            if (gid === undefined) return [node]
+            const group: CanvasNode[] = []
+            for (const other of order) {
+              const om = getMeta(other)
+              if (!om || om.transient) continue
+              if (om.groupId !== gid) continue
+              group.push(other)
+            }
+            return group.length ? group : [node]
+          }
+        }
+        return []
+      }
+
+      const pointInPolygon = (poly: number[], x: number, y: number) => {
+        let inside = false
+        for (let i = 0, j = poly.length - 2; i + 1 < poly.length; j = i, i += 2) {
+          const xi = poly[i]
+          const yi = poly[i + 1]
+          const xj = poly[j]
+          const yj = poly[j + 1]
+          const intersect = yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi + 1e-9) + xi
+          if (intersect) inside = !inside
+        }
+        return inside
+      }
+
+      const pickNodesInLasso = (lasso: number[]) => {
+        const out: CanvasNode[] = []
+        if (lasso.length < 6) return out
+        for (const node of order) {
+          const meta = getMeta(node)
+          if (!meta || meta.transient) continue
+          const cx = (meta.minX + meta.maxX) * 0.5
+          const cy = (meta.minY + meta.maxY) * 0.5
+          if (!pointInPolygon(lasso, cx, cy)) continue
+          out.push(node)
+        }
+        if (!out.length) return out
+        const byGroup = new Map<number, CanvasNode[]>()
+        const singles: CanvasNode[] = []
+        for (const node of out) {
+          const meta = getMeta(node)
+          const gid = meta?.groupId
+          if (gid === undefined) singles.push(node)
+          else {
+            const list = byGroup.get(gid) ?? []
+            list.push(node)
+            byGroup.set(gid, list)
+          }
+        }
+        const merged: CanvasNode[] = [...singles]
+        for (const [gid] of byGroup) {
+          for (const node of order) {
+            const meta = getMeta(node)
+            if (!meta || meta.transient) continue
+            if (meta.groupId === gid) merged.push(node)
+          }
+        }
+        return merged
+      }
+
+      type MouseToolOp =
+        | { kind: 'pan'; pointerId: number; startCx: number; startCy: number; startX: number; startY: number }
+        | { kind: 'lasso'; pointerId: number; points: number[] }
+        | { kind: 'transform'; pointerId: number; mode: 'move' | 'scale' | 'rotate'; startX: number; startY: number; centerX: number; centerY: number; before: number[][]; baseAngle: number; baseDist: number }
+        | { kind: 'pinch'; target: 'camera'; ids: [number, number]; startDist: number; startScale: number; anchorWorldX: number; anchorWorldY: number }
+        | { kind: 'pinch'; target: 'selection'; ids: [number, number]; startDist: number; startAngle: number; startMidX: number; startMidY: number; before: number[][] }
+        | { kind: 'none' }
+      let mouseToolOp: MouseToolOp = { kind: 'none' }
+      const touchPoints = new Map<number, { cx: number; cy: number }>()
+
+      const isPointInBounds = (b: Selection['bounds'], x: number, y: number, pad: number) => x >= b.minX - pad && x <= b.maxX + pad && y >= b.minY - pad && y <= b.maxY + pad
+
+      const syncSelectionBounds = () => {
+        if (!selection) return
+        const b = computeBounds(selection.nodes)
+        if (!b) {
+          setSelection(null, selectionOverlayKind)
+          return
+        }
+        selection.bounds = b
+      }
+
+      const translatePoints = (points: number[], dx: number, dy: number) => {
+        const out = points.slice()
+        for (let i = 0; i + 1 < out.length; i += 2) {
+          out[i] += dx
+          out[i + 1] += dy
+        }
+        return out
+      }
+
+      const scalePoints = (points: number[], s: number, cx: number, cy: number) => {
+        const out = points.slice()
+        for (let i = 0; i + 1 < out.length; i += 2) {
+          out[i] = (out[i] - cx) * s + cx
+          out[i + 1] = (out[i + 1] - cy) * s + cy
+        }
+        return out
+      }
+
+      const rotatePoints = (points: number[], a: number, cx: number, cy: number) => {
+        const out = points.slice()
+        const cos = Math.cos(a)
+        const sin = Math.sin(a)
+        for (let i = 0; i + 1 < out.length; i += 2) {
+          const x = out[i] - cx
+          const y = out[i + 1] - cy
+          out[i] = x * cos - y * sin + cx
+          out[i + 1] = x * sin + y * cos + cy
+        }
+        return out
+      }
+
+      const applyMetaPointsFromList = (nodes: CanvasNode[], nextPoints: number[][]) => {
+        for (let i = 0; i < nodes.length; i++) {
+          const node = nodes[i]
+          const meta = getMeta(node)
+          const pts = nextPoints[i]
+          if (!meta || !pts) continue
+          applyMetaPointsToNode(node, meta, pts)
+        }
+        syncSelectionBounds()
+        updateSelectionOverlays()
+        try {
+          ;(leafer as any).forceRender?.()
+        } catch {}
+      }
+
+      const beginSelectionTransform = (pointerId: number, mode: 'move' | 'scale' | 'rotate', x: number, y: number) => {
+        if (!selection) return false
+        const c = boundsCenter(selection.bounds)
+        const before: number[][] = []
+        for (const node of selection.nodes) {
+          const meta = getMeta(node)
+          before.push(meta?.points ? meta.points.slice() : [])
+        }
+        const baseAngle = Math.atan2(y - c.y, x - c.x)
+        const baseDist = Math.max(1e-6, Math.hypot(x - c.x, y - c.y))
+        mouseToolOp = { kind: 'transform', pointerId, mode, startX: x, startY: y, centerX: c.x, centerY: c.y, before, baseAngle, baseDist }
+        return true
+      }
+
+      const finishSelectionTransform = () => {
+        if (mouseToolOp.kind !== 'transform') return
+        if (!selection) {
+          mouseToolOp = { kind: 'none' }
+          return
+        }
+        const nodes = selection.nodes.slice()
+        const beforePoints = mouseToolOp.before.map((p) => p.slice())
+        const afterPoints: number[][] = []
+        for (const node of nodes) {
+          const meta = getMeta(node)
+          afterPoints.push(meta?.points ? meta.points.slice() : [])
+        }
+        record({ kind: 'update', nodes, beforePoints, afterPoints })
+        mouseToolOp = { kind: 'none' }
+      }
+
+      const updateLassoPreview = (points: number[]) => {
+        const strokeWidth = 1 / Math.max(0.2, camScale)
+        if (!lassoPreview) {
+          const init = points.length >= 4 ? points.slice() : points.length >= 2 ? [points[0], points[1], points[0], points[1]] : [0, 0, 0, 0]
+          lassoPreview = new Line({ points: init, stroke: '#3b82f6', strokeWidth, opacity: 0.7, hittable: false } as any)
+          leafer.add(lassoPreview)
+          return
+        }
+        ;(lassoPreview as any).strokeWidth = strokeWidth
+        ;(lassoPreview as any).points = points.length >= 4 ? points : points.length >= 2 ? [points[0], points[1], points[0], points[1]] : [0, 0, 0, 0]
+      }
+
+      const startPinch = (ids: [number, number]) => {
+        const p1 = touchPoints.get(ids[0])
+        const p2 = touchPoints.get(ids[1])
+        if (!p1 || !p2) return
+        clearLassoPreview()
+        if (mouseToolOp.kind === 'lasso') mouseToolOp = { kind: 'none' }
+
+        const cx = (p1.cx + p2.cx) * 0.5
+        const cy = (p1.cy + p2.cy) * 0.5
+        const w1 = clientToWorld(p1.cx, p1.cy)
+        const w2 = clientToWorld(p2.cx, p2.cy)
+        const mid = clientToWorld(cx, cy)
+        const dist = Math.max(1e-6, Math.hypot(p2.cx - p1.cx, p2.cy - p1.cy))
+        const ang = Math.atan2(w2.y - w1.y, w2.x - w1.x)
+
+        if (selection) {
+          const pad = 10 / Math.max(0.2, camScale)
+          if (isPointInBounds(selection.bounds, w1.x, w1.y, pad) && isPointInBounds(selection.bounds, w2.x, w2.y, pad)) {
+            selectionOverlayKind = 'touch'
+            updateSelectionOverlays()
+            const before: number[][] = []
+            for (const node of selection.nodes) {
+              const meta = getMeta(node)
+              before.push(meta?.points ? meta.points.slice() : [])
+            }
+            mouseToolOp = { kind: 'pinch', target: 'selection', ids, startDist: dist, startAngle: ang, startMidX: mid.x, startMidY: mid.y, before }
+            return
+          }
+        }
+
+        mouseToolOp = { kind: 'pinch', target: 'camera', ids, startDist: dist, startScale: camScale, anchorWorldX: mid.x, anchorWorldY: mid.y }
+      }
+
+      const updatePinch = () => {
+        if (mouseToolOp.kind !== 'pinch') return
+        const [id1, id2] = mouseToolOp.ids
+        const p1 = touchPoints.get(id1)
+        const p2 = touchPoints.get(id2)
+        if (!p1 || !p2) return
+        const cx = (p1.cx + p2.cx) * 0.5
+        const cy = (p1.cy + p2.cy) * 0.5
+        const dist = Math.max(1e-6, Math.hypot(p2.cx - p1.cx, p2.cy - p1.cy))
+        const factor = dist / mouseToolOp.startDist
+
+        if (mouseToolOp.target === 'camera') {
+          const nextScale = clamp(mouseToolOp.startScale * factor, 0.2, 6)
+          camScale = nextScale
+          camX = cx - mouseToolOp.anchorWorldX * camScale
+          camY = cy - mouseToolOp.anchorWorldY * camScale
+          applyCamera()
+          updateSelectionOverlays()
+          try {
+            ;(leafer as any).forceRender?.()
+          } catch {}
+          return
+        }
+
+        if (!selection) return
+        const w1 = clientToWorld(p1.cx, p1.cy)
+        const w2 = clientToWorld(p2.cx, p2.cy)
+        const mid = clientToWorld(cx, cy)
+        const ang = Math.atan2(w2.y - w1.y, w2.x - w1.x)
+        const dAng = ang - mouseToolOp.startAngle
+        const dx = mid.x - mouseToolOp.startMidX
+        const dy = mid.y - mouseToolOp.startMidY
+        const cos = Math.cos(dAng)
+        const sin = Math.sin(dAng)
+        const s = clamp(factor, 0.1, 20)
+
+        const next: number[][] = []
+        for (const pts of mouseToolOp.before) {
+          const out = pts.slice()
+          for (let i = 0; i + 1 < out.length; i += 2) {
+            const rx = out[i] - mouseToolOp.startMidX
+            const ry = out[i + 1] - mouseToolOp.startMidY
+            const nx = (rx * cos - ry * sin) * s + mouseToolOp.startMidX + dx
+            const ny = (rx * sin + ry * cos) * s + mouseToolOp.startMidY + dy
+            out[i] = nx
+            out[i + 1] = ny
+          }
+          next.push(out)
+        }
+        applyMetaPointsFromList(selection.nodes, next)
       }
 
       const applySmoothing = (session: { smoothX: number; smoothY: number; hasSmooth: boolean; lastTime: number }, x: number, y: number) => {
@@ -1718,7 +2243,43 @@ struct VSOut {
 
       const onPointerDown = (e: PointerEvent) => {
         if (!hydrated) return
-        if (toolRef.current === 'mouse') return
+        if (toolRef.current === 'mouse') {
+          view.setPointerCapture(e.pointerId)
+          if (e.pointerType === 'touch') {
+            const { cx, cy } = getClientPoint(e)
+            touchPoints.set(e.pointerId, { cx, cy })
+            if (touchPoints.size === 2) {
+              const ids = Array.from(touchPoints.keys()).slice(0, 2) as [number, number]
+              startPinch(ids)
+              return
+            }
+            const { x, y } = clientToWorld(cx, cy)
+            mouseToolOp = { kind: 'lasso', pointerId: e.pointerId, points: [x, y, x, y] }
+            updateLassoPreview(mouseToolOp.points)
+            return
+          }
+
+          if ((e as any).button === 2) {
+            const { cx, cy } = getClientPoint(e)
+            mouseToolOp = { kind: 'pan', pointerId: e.pointerId, startCx: cx, startCy: cy, startX: camX, startY: camY }
+            return
+          }
+
+          if ((e as any).button === 0) {
+            const { x, y } = getPoint(e)
+            const pad = 10 / Math.max(0.2, camScale)
+            if (selection && isPointInBounds(selection.bounds, x, y, pad)) {
+              const mode: 'move' | 'scale' | 'rotate' = e.altKey ? 'rotate' : e.shiftKey ? 'scale' : 'move'
+              beginSelectionTransform(e.pointerId, mode, x, y)
+              return
+            }
+            const picked = pickNodesAtPoint(x, y)
+            if (!picked.length) setSelection(null, 'mouse')
+            else setSelection(picked, 'mouse')
+            return
+          }
+          return
+        }
         if (!multiTouchRef.current && sessions.size > 0) return
         view.setPointerCapture(e.pointerId)
         const { x, y } = getPoint(e)
@@ -1810,6 +2371,63 @@ struct VSOut {
       }
 
       const onPointerMove = (e: PointerEvent) => {
+        if (toolRef.current === 'mouse') {
+          if (e.pointerType === 'touch') {
+            const { cx, cy } = getClientPoint(e)
+            touchPoints.set(e.pointerId, { cx, cy })
+            if (mouseToolOp.kind === 'pinch') {
+              updatePinch()
+              return
+            }
+            if (touchPoints.size === 2) {
+              const ids = Array.from(touchPoints.keys()).slice(0, 2) as [number, number]
+              startPinch(ids)
+              return
+            }
+          }
+
+          if (mouseToolOp.kind === 'pan' && mouseToolOp.pointerId === e.pointerId) {
+            const { cx, cy } = getClientPoint(e)
+            camX = mouseToolOp.startX + (cx - mouseToolOp.startCx)
+            camY = mouseToolOp.startY + (cy - mouseToolOp.startCy)
+            applyCamera()
+            updateSelectionOverlays()
+            clearLassoPreview()
+            return
+          }
+
+          if (mouseToolOp.kind === 'lasso' && mouseToolOp.pointerId === e.pointerId) {
+            const { x, y } = getPoint(e)
+            mouseToolOp.points.push(x, y)
+            updateLassoPreview(mouseToolOp.points)
+            try {
+              ;(leafer as any).forceRender?.()
+            } catch {}
+            return
+          }
+
+          if (mouseToolOp.kind === 'transform' && mouseToolOp.pointerId === e.pointerId && selection) {
+            const { x, y } = getPoint(e)
+            const nodes = selection.nodes
+            const next: number[][] = []
+            if (mouseToolOp.mode === 'move') {
+              const dx = x - mouseToolOp.startX
+              const dy = y - mouseToolOp.startY
+              for (const pts of mouseToolOp.before) next.push(translatePoints(pts, dx, dy))
+            } else if (mouseToolOp.mode === 'scale') {
+              const dist = Math.max(1e-6, Math.hypot(x - mouseToolOp.centerX, y - mouseToolOp.centerY))
+              const s = clamp(dist / mouseToolOp.baseDist, 0.1, 20)
+              for (const pts of mouseToolOp.before) next.push(scalePoints(pts, s, mouseToolOp.centerX, mouseToolOp.centerY))
+            } else {
+              const ang = Math.atan2(y - mouseToolOp.centerY, x - mouseToolOp.centerX)
+              const da = ang - mouseToolOp.baseAngle
+              for (const pts of mouseToolOp.before) next.push(rotatePoints(pts, da, mouseToolOp.centerX, mouseToolOp.centerY))
+            }
+            applyMetaPointsFromList(nodes, next)
+            return
+          }
+          return
+        }
         const session = sessions.get(e.pointerId)
         if (!session) return
         const evs = typeof (e as any).getCoalescedEvents === 'function' ? (e as any).getCoalescedEvents() : [e]
@@ -2120,8 +2738,113 @@ struct VSOut {
         }
       }
 
-      const onPointerUp = (e: PointerEvent) => finish(e)
-      const onPointerCancel = (e: PointerEvent) => finish(e)
+      const onPointerUp = (e: PointerEvent) => {
+        if (sessions.has(e.pointerId)) {
+          finish(e)
+          return
+        }
+        if (mouseToolOp.kind === 'transform' && mouseToolOp.pointerId === e.pointerId) {
+          try {
+            view.releasePointerCapture(e.pointerId)
+          } catch {}
+          finishSelectionTransform()
+          return
+        }
+        if (mouseToolOp.kind === 'pan' && mouseToolOp.pointerId === e.pointerId) {
+          try {
+            view.releasePointerCapture(e.pointerId)
+          } catch {}
+          mouseToolOp = { kind: 'none' }
+          return
+        }
+        if (mouseToolOp.kind === 'lasso' && mouseToolOp.pointerId === e.pointerId) {
+          try {
+            view.releasePointerCapture(e.pointerId)
+          } catch {}
+          if (e.pointerType === 'touch') touchPoints.delete(e.pointerId)
+          const pts = mouseToolOp.points.slice()
+          mouseToolOp = { kind: 'none' }
+          clearLassoPreview()
+          if (pts.length >= 6) {
+            const closed = pts.slice()
+            closed.push(closed[0], closed[1])
+            const picked = pickNodesInLasso(closed)
+            if (picked.length) setSelection(picked, 'touch')
+            else setSelection(null, 'touch')
+          } else {
+            setSelection(null, 'touch')
+          }
+          return
+        }
+        if (e.pointerType === 'touch') {
+          touchPoints.delete(e.pointerId)
+          if (mouseToolOp.kind === 'pinch') {
+            if (!touchPoints.has(mouseToolOp.ids[0]) || !touchPoints.has(mouseToolOp.ids[1])) {
+              try {
+                view.releasePointerCapture(e.pointerId)
+              } catch {}
+              if (mouseToolOp.target === 'selection' && selection) {
+                const nodes = selection.nodes.slice()
+                const beforePoints = mouseToolOp.before.map((p) => p.slice())
+                const afterPoints: number[][] = []
+                for (const node of nodes) {
+                  const meta = getMeta(node)
+                  afterPoints.push(meta?.points ? meta.points.slice() : [])
+                }
+                record({ kind: 'update', nodes, beforePoints, afterPoints })
+              }
+              mouseToolOp = { kind: 'none' }
+            }
+          }
+        }
+      }
+
+      const onPointerCancel = (e: PointerEvent) => {
+        if (sessions.has(e.pointerId)) {
+          finish(e)
+          return
+        }
+        if (e.pointerType === 'touch') touchPoints.delete(e.pointerId)
+        clearLassoPreview()
+        if (mouseToolOp.kind === 'transform') finishSelectionTransform()
+        else if (mouseToolOp.kind === 'pinch' && mouseToolOp.target === 'selection' && selection) {
+          const nodes = selection.nodes.slice()
+          const beforePoints = mouseToolOp.before.map((p) => p.slice())
+          const afterPoints: number[][] = []
+          for (const node of nodes) {
+            const meta = getMeta(node)
+            afterPoints.push(meta?.points ? meta.points.slice() : [])
+          }
+          record({ kind: 'update', nodes, beforePoints, afterPoints })
+          mouseToolOp = { kind: 'none' }
+        }
+        else mouseToolOp = { kind: 'none' }
+        try {
+          view.releasePointerCapture(e.pointerId)
+        } catch {}
+      }
+
+      const onWheel = (e: WheelEvent) => {
+        if (!hydrated) return
+        if (toolRef.current !== 'mouse') return
+        e.preventDefault()
+        const r = view.getBoundingClientRect()
+        const cx = e.clientX - r.left
+        const cy = e.clientY - r.top
+        const w = clientToWorld(cx, cy)
+        const factor = e.deltaY > 0 ? 0.9 : 1.1
+        camScale = clamp(camScale * factor, 0.2, 6)
+        camX = cx - w.x * camScale
+        camY = cy - w.y * camScale
+        applyCamera()
+        updateSelectionOverlays()
+        clearLassoPreview()
+      }
+
+      const onContextMenu = (e: MouseEvent) => {
+        if (toolRef.current !== 'mouse') return
+        e.preventDefault()
+      }
 
       const ro = new ResizeObserver(() => {
         const r = view.getBoundingClientRect()
@@ -2133,6 +2856,8 @@ struct VSOut {
       view.addEventListener('pointermove', onPointerMove)
       view.addEventListener('pointerup', onPointerUp)
       view.addEventListener('pointercancel', onPointerCancel)
+      view.addEventListener('wheel', onWheel, { passive: false } as any)
+      view.addEventListener('contextmenu', onContextMenu)
 
       return () => {
         if (persistTimer !== null) window.clearTimeout(persistTimer)
@@ -2142,6 +2867,8 @@ struct VSOut {
         view.removeEventListener('pointermove', onPointerMove)
         view.removeEventListener('pointerup', onPointerUp)
         view.removeEventListener('pointercancel', onPointerCancel)
+        view.removeEventListener('wheel', onWheel as any)
+        view.removeEventListener('contextmenu', onContextMenu as any)
         apiRef.current = null
         try {
           view.replaceChildren()
@@ -2155,6 +2882,8 @@ struct VSOut {
     const svgNS = 'http://www.w3.org/2000/svg'
     const svg = useSvg ? document.createElementNS(svgNS, 'svg') : null
     const svgLayer = useSvg ? document.createElementNS(svgNS, 'g') : null
+    const overlaySvg = useSvg ? svg : document.createElementNS(svgNS, 'svg')
+    const overlayLayer = document.createElementNS(svgNS, 'g')
     const canvas = useSvg ? null : document.createElement('canvas')
 
     if (canvas) {
@@ -2177,14 +2906,28 @@ struct VSOut {
       ;(svg.style as any).pointerEvents = 'none'
       svg.setAttribute('preserveAspectRatio', 'none')
       svg.appendChild(svgLayer)
+      svg.appendChild(overlayLayer)
       view.appendChild(svg)
+    }
+
+    if (overlaySvg && !useSvg) {
+      overlaySvg.style.position = 'absolute'
+      overlaySvg.style.left = '0'
+      overlaySvg.style.top = '0'
+      overlaySvg.style.width = '100%'
+      overlaySvg.style.height = '100%'
+      overlaySvg.style.display = 'block'
+      ;(overlaySvg.style as any).pointerEvents = 'none'
+      overlaySvg.setAttribute('preserveAspectRatio', 'none')
+      overlaySvg.appendChild(overlayLayer)
+      view.appendChild(overlaySvg)
     }
 
     const resizeSurface = () => {
       const r = view.getBoundingClientRect()
       const cssW = Math.max(1, Math.floor(r.width))
       const cssH = Math.max(1, Math.floor(r.height))
-      if (svg) svg.setAttribute('viewBox', `0 0 ${cssW} ${cssH}`)
+      if (overlaySvg) overlaySvg.setAttribute('viewBox', `0 0 ${cssW} ${cssH}`)
       if (canvas) {
         const dpr = Math.max(1, globalThis.devicePixelRatio || 1)
         canvas.width = Math.max(1, Math.floor(cssW * dpr))
@@ -2204,7 +2947,10 @@ struct VSOut {
       fadeDurationMs?: number
     }
 
-    type Action = { kind: 'add' | 'remove'; nodes: RenderNode[] }
+    type Action =
+      | { kind: 'add'; nodes: RenderNode[] }
+      | { kind: 'remove'; nodes: RenderNode[] }
+      | { kind: 'update'; nodes: RenderNode[]; beforePoints: number[][]; afterPoints: number[][] }
     const live = new Set<RenderNode>()
     const order: RenderNode[] = []
     const history = { undo: [] as Action[], redo: [] as Action[] }
@@ -2216,6 +2962,9 @@ struct VSOut {
 
     let nextGroupId = 1
     let hydrated = false
+    let camX = 0
+    let camY = 0
+    let camScale = 1
 
     const rgbaFromHex = (hex: string, opacity: number): [number, number, number, number] => {
       const parsed = parseHexColor(hex)
@@ -2511,7 +3260,23 @@ struct VSOut {
       const action = history.undo.pop()
       if (!action) return
       if (action.kind === 'add') removeNodes(action.nodes)
-      else addNodes(action.nodes)
+      else if (action.kind === 'remove') addNodes(action.nodes)
+      else {
+        for (let i = 0; i < action.nodes.length; i++) {
+          const n = action.nodes[i]
+          if (!live.has(n)) continue
+          const pts = action.beforePoints[i] ?? []
+          n.points = pts
+          n.meta.points = pts
+          recomputeBounds(n.meta, pts)
+          markSvgDirty(n)
+        }
+        if (selection) {
+          const b = computeBounds(selection.nodes)
+          if (b) selection.bounds = b
+          updateSelectionOverlays()
+        }
+      }
       history.redo.push(action)
       requestRender()
       schedulePersist()
@@ -2521,7 +3286,23 @@ struct VSOut {
       const action = history.redo.pop()
       if (!action) return
       if (action.kind === 'add') addNodes(action.nodes)
-      else removeNodes(action.nodes)
+      else if (action.kind === 'remove') removeNodes(action.nodes)
+      else {
+        for (let i = 0; i < action.nodes.length; i++) {
+          const n = action.nodes[i]
+          if (!live.has(n)) continue
+          const pts = action.afterPoints[i] ?? []
+          n.points = pts
+          n.meta.points = pts
+          recomputeBounds(n.meta, pts)
+          markSvgDirty(n)
+        }
+        if (selection) {
+          const b = computeBounds(selection.nodes)
+          if (b) selection.bounds = b
+          updateSelectionOverlays()
+        }
+      }
       history.undo.push(action)
       requestRender()
       schedulePersist()
@@ -2568,11 +3349,22 @@ struct VSOut {
       }
     >()
 
-    const getPoint = (e: PointerEvent) => {
+    const getClientPoint = (e: PointerEvent) => {
       const r = view.getBoundingClientRect()
-      const x = e.clientX - r.left
-      const y = e.clientY - r.top
+      const cx = e.clientX - r.left
+      const cy = e.clientY - r.top
+      return { cx, cy }
+    }
+
+    const clientToWorld = (cx: number, cy: number) => {
+      const x = (cx - camX) / Math.max(0.0001, camScale)
+      const y = (cy - camY) / Math.max(0.0001, camScale)
       return { x, y }
+    }
+
+    const getPoint = (e: PointerEvent) => {
+      const { cx, cy } = getClientPoint(e)
+      return clientToWorld(cx, cy)
     }
 
     const applySmoothing = (session: { smoothX: number; smoothY: number; hasSmooth: boolean; lastTime: number }, x: number, y: number) => {
@@ -2689,7 +3481,8 @@ struct VSOut {
     }
 
     let cancelled = false
-    let webgpu: null | { configure: () => void; draw: (nodes: RenderNode[]) => void } = null
+    type DrawNode = Pick<RenderNode, 'role' | 'pfh' | 'strokeWidth' | 'points' | 'color' | 'fadeStartAt' | 'fadeDurationMs'>
+    let webgpu: null | { configure: () => void; draw: (nodes: DrawNode[]) => void } = null
     const webgl = canvas ? createWebGLRenderer(canvas) : null
 
     const init = async () => {
@@ -2719,10 +3512,22 @@ struct VSOut {
           }
           return
         }
-        const nodes = order.slice()
+        const needsCamera = camX !== 0 || camY !== 0 || camScale !== 1
+        const nodes: DrawNode[] = order.slice()
+        const screenNodes: DrawNode[] | null = needsCamera
+          ? nodes.map((n) => {
+              const pts = n.points
+              const out = new Array<number>(pts.length)
+              for (let i = 0; i + 1 < pts.length; i += 2) {
+                out[i] = pts[i] * camScale + camX
+                out[i + 1] = pts[i + 1] * camScale + camY
+              }
+              return { ...n, strokeWidth: n.strokeWidth * camScale, points: out }
+            })
+          : null
         if (webgpu) {
           try {
-            webgpu.draw(nodes)
+            webgpu.draw(screenNodes ?? nodes)
             return
           } catch {
             webgpu = null
@@ -2730,7 +3535,7 @@ struct VSOut {
         }
         if (webgl) {
           try {
-            webgl.draw(nodes)
+            webgl.draw(screenNodes ?? nodes)
           } catch {}
         }
       })
@@ -2742,9 +3547,460 @@ struct VSOut {
       svgDirty.add(n)
     }
 
+    type Selection = { nodes: RenderNode[]; bounds: { minX: number; minY: number; maxX: number; maxY: number } }
+    let selection: null | Selection = null
+    let selectionOverlayKind: 'mouse' | 'touch' = 'mouse'
+    let selectionBoxEl: null | SVGPathElement = null
+    let selectionCurveEl: null | SVGPathElement = null
+    let lassoEl: null | SVGPathElement = null
+
+    const clearSelectionOverlays = () => {
+      if (selectionBoxEl) {
+        try {
+          selectionBoxEl.remove()
+        } catch {}
+        selectionBoxEl = null
+      }
+      if (selectionCurveEl) {
+        try {
+          selectionCurveEl.remove()
+        } catch {}
+        selectionCurveEl = null
+      }
+    }
+
+    const clearLassoPreview = () => {
+      if (lassoEl) {
+        try {
+          lassoEl.remove()
+        } catch {}
+        lassoEl = null
+      }
+    }
+
+    const updateLassoPreview = (points: number[]) => {
+      const strokeWidth = 1 / Math.max(0.2, camScale)
+      if (!lassoEl) {
+        lassoEl = document.createElementNS(svgNS, 'path')
+        lassoEl.setAttribute('fill', 'none')
+        lassoEl.setAttribute('stroke', '#3b82f6')
+        lassoEl.setAttribute('stroke-opacity', '0.7')
+        lassoEl.setAttribute('stroke-linecap', 'round')
+        lassoEl.setAttribute('stroke-linejoin', 'round')
+        overlayLayer.appendChild(lassoEl)
+      }
+      lassoEl.setAttribute('stroke-width', String(strokeWidth))
+      const pathPoints = points.length >= 4 ? points : points.length >= 2 ? [points[0], points[1], points[0], points[1]] : [0, 0, 0, 0]
+      lassoEl.setAttribute('d', pointsToSvgPathD(pathPoints))
+    }
+
+    const computeBounds = (nodes: RenderNode[]) => {
+      let minX = Number.POSITIVE_INFINITY
+      let minY = Number.POSITIVE_INFINITY
+      let maxX = Number.NEGATIVE_INFINITY
+      let maxY = Number.NEGATIVE_INFINITY
+      for (const node of nodes) {
+        const meta = node.meta
+        if (!meta || meta.transient) continue
+        minX = Math.min(minX, meta.minX)
+        minY = Math.min(minY, meta.minY)
+        maxX = Math.max(maxX, meta.maxX)
+        maxY = Math.max(maxY, meta.maxY)
+      }
+      if (!Number.isFinite(minX) || !Number.isFinite(minY) || !Number.isFinite(maxX) || !Number.isFinite(maxY)) return null
+      return { minX, minY, maxX, maxY }
+    }
+
+    const computeConvexHull = (points: number[]) => {
+      const pts: { x: number; y: number }[] = []
+      for (let i = 0; i + 1 < points.length; i += 2) pts.push({ x: points[i], y: points[i + 1] })
+      if (pts.length <= 2) return pts
+      pts.sort((a, b) => (a.x === b.x ? a.y - b.y : a.x - b.x))
+      const cross = (o: any, a: any, b: any) => (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x)
+      const lower: any[] = []
+      for (const p of pts) {
+        while (lower.length >= 2 && cross(lower[lower.length - 2], lower[lower.length - 1], p) <= 0) lower.pop()
+        lower.push(p)
+      }
+      const upper: any[] = []
+      for (let i = pts.length - 1; i >= 0; i--) {
+        const p = pts[i]
+        while (upper.length >= 2 && cross(upper[upper.length - 2], upper[upper.length - 1], p) <= 0) upper.pop()
+        upper.push(p)
+      }
+      upper.pop()
+      lower.pop()
+      return lower.concat(upper)
+    }
+
+    const updateSelectionOverlays = () => {
+      clearSelectionOverlays()
+      if (!selection) return
+      const b = selection.bounds
+      const strokeWidth = 1 / Math.max(0.2, camScale)
+      const pad = 6 / Math.max(0.2, camScale)
+
+      if (selectionOverlayKind === 'mouse') {
+        const rectPoints = [b.minX - pad, b.minY - pad, b.maxX + pad, b.minY - pad, b.maxX + pad, b.maxY + pad, b.minX - pad, b.maxY + pad, b.minX - pad, b.minY - pad]
+        selectionBoxEl = document.createElementNS(svgNS, 'path')
+        selectionBoxEl.setAttribute('fill', 'none')
+        selectionBoxEl.setAttribute('stroke', '#3b82f6')
+        selectionBoxEl.setAttribute('stroke-opacity', '0.95')
+        selectionBoxEl.setAttribute('stroke-width', String(strokeWidth))
+        selectionBoxEl.setAttribute('stroke-dasharray', `${6 / Math.max(0.2, camScale)} ${4 / Math.max(0.2, camScale)}`)
+        selectionBoxEl.setAttribute('d', pointsToSvgPathD(rectPoints))
+        overlayLayer.appendChild(selectionBoxEl)
+      }
+
+      const all: number[] = []
+      for (const n of selection.nodes) {
+        const m = n.meta
+        if (!m || m.transient) continue
+        const step = Math.max(2, Math.floor(m.points.length / 240) * 2)
+        for (let i = 0; i + 1 < m.points.length; i += step) all.push(m.points[i], m.points[i + 1])
+      }
+      const hull = computeConvexHull(all)
+      if (selectionOverlayKind === 'touch' && hull.length >= 3) {
+        const hullPoints: number[] = []
+        for (const p of hull) hullPoints.push(p.x, p.y)
+        hullPoints.push(hull[0].x, hull[0].y)
+        selectionCurveEl = document.createElementNS(svgNS, 'path')
+        selectionCurveEl.setAttribute('fill', 'none')
+        selectionCurveEl.setAttribute('stroke', '#3b82f6')
+        selectionCurveEl.setAttribute('stroke-opacity', '0.9')
+        selectionCurveEl.setAttribute('stroke-width', String(strokeWidth))
+        selectionCurveEl.setAttribute('d', pointsToSvgPathD(hullPoints))
+        overlayLayer.appendChild(selectionCurveEl)
+      }
+    }
+
+    const setSelection = (nodes: RenderNode[] | null, kind: 'mouse' | 'touch' = 'mouse') => {
+      selection = null
+      selectionOverlayKind = kind
+      clearSelectionOverlays()
+      if (!nodes || !nodes.length) return
+      const b = computeBounds(nodes)
+      if (!b) return
+      selection = { nodes, bounds: b }
+      updateSelectionOverlays()
+    }
+
+    const distancePointToSegmentSq = (px: number, py: number, ax: number, ay: number, bx: number, by: number) => {
+      const vx = bx - ax
+      const vy = by - ay
+      const wx = px - ax
+      const wy = py - ay
+      const c1 = vx * wx + vy * wy
+      if (c1 <= 0) return wx * wx + wy * wy
+      const c2 = vx * vx + vy * vy
+      if (c2 <= c1) {
+        const dx = px - bx
+        const dy = py - by
+        return dx * dx + dy * dy
+      }
+      const t = c1 / c2
+      const qx = ax + t * vx
+      const qy = ay + t * vy
+      const dx = px - qx
+      const dy = py - qy
+      return dx * dx + dy * dy
+    }
+
+    const hitDistanceToPolylineSq = (points: number[], x: number, y: number) => {
+      let best = Number.POSITIVE_INFINITY
+      for (let i = 0; i + 3 < points.length; i += 2) {
+        const d = distancePointToSegmentSq(x, y, points[i], points[i + 1], points[i + 2], points[i + 3])
+        if (d < best) best = d
+      }
+      return best
+    }
+
+    const pickNodesAtPoint = (x: number, y: number) => {
+      const r = 10 / Math.max(0.2, camScale)
+      const rSq = r * r
+      for (let i = order.length - 1; i >= 0; i--) {
+        const node = order[i]
+        const meta = node.meta
+        if (!meta || meta.transient) continue
+        const pad = r + meta.strokeWidth * 0.6
+        if (x < meta.minX - pad || x > meta.maxX + pad || y < meta.minY - pad || y > meta.maxY + pad) continue
+        const dSq = hitDistanceToPolylineSq(meta.points, x, y)
+        if (dSq <= rSq + (meta.strokeWidth * 0.6) * (meta.strokeWidth * 0.6)) {
+          const gid = meta.groupId
+          if (gid === undefined) return [node]
+          const group: RenderNode[] = []
+          for (const other of order) {
+            const om = other.meta
+            if (!om || om.transient) continue
+            if (om.groupId !== gid) continue
+            group.push(other)
+          }
+          return group.length ? group : [node]
+        }
+      }
+      return []
+    }
+
+    const pointInPolygon = (poly: number[], x: number, y: number) => {
+      let inside = false
+      for (let i = 0, j = poly.length - 2; i + 1 < poly.length; j = i, i += 2) {
+        const xi = poly[i]
+        const yi = poly[i + 1]
+        const xj = poly[j]
+        const yj = poly[j + 1]
+        const intersect = yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi + 1e-9) + xi
+        if (intersect) inside = !inside
+      }
+      return inside
+    }
+
+    const pickNodesInLasso = (lasso: number[]) => {
+      const out: RenderNode[] = []
+      if (lasso.length < 6) return out
+      for (const node of order) {
+        const meta = node.meta
+        if (!meta || meta.transient) continue
+        const cx = (meta.minX + meta.maxX) * 0.5
+        const cy = (meta.minY + meta.maxY) * 0.5
+        if (!pointInPolygon(lasso, cx, cy)) continue
+        out.push(node)
+      }
+      if (!out.length) return out
+      const byGroup = new Map<number, RenderNode[]>()
+      const singles: RenderNode[] = []
+      for (const node of out) {
+        const meta = node.meta
+        const gid = meta?.groupId
+        if (gid === undefined) singles.push(node)
+        else {
+          const list = byGroup.get(gid) ?? []
+          list.push(node)
+          byGroup.set(gid, list)
+        }
+      }
+      const merged: RenderNode[] = [...singles]
+      for (const [gid] of byGroup) {
+        for (const node of order) {
+          const meta = node.meta
+          if (!meta || meta.transient) continue
+          if (meta.groupId === gid) merged.push(node)
+        }
+      }
+      return merged
+    }
+
+    type MouseToolOp =
+      | { kind: 'pan'; pointerId: number; startCx: number; startCy: number; startX: number; startY: number }
+      | { kind: 'lasso'; pointerId: number; points: number[] }
+      | { kind: 'transform'; pointerId: number; mode: 'move' | 'scale' | 'rotate'; startX: number; startY: number; centerX: number; centerY: number; before: number[][]; baseAngle: number; baseDist: number }
+      | { kind: 'pinch'; target: 'camera'; ids: [number, number]; startDist: number; startScale: number; anchorWorldX: number; anchorWorldY: number }
+      | { kind: 'pinch'; target: 'selection'; ids: [number, number]; startDist: number; startAngle: number; startMidX: number; startMidY: number; before: number[][] }
+      | { kind: 'none' }
+    let mouseToolOp: MouseToolOp = { kind: 'none' }
+    const touchPoints = new Map<number, { cx: number; cy: number }>()
+
+    const isPointInBounds = (b: Selection['bounds'], x: number, y: number, pad: number) => x >= b.minX - pad && x <= b.maxX + pad && y >= b.minY - pad && y <= b.maxY + pad
+
+    const applyCamera = () => {
+      const t = `matrix(${camScale} 0 0 ${camScale} ${camX} ${camY})`
+      if (svgLayer) svgLayer.setAttribute('transform', t)
+      overlayLayer.setAttribute('transform', t)
+      updateSelectionOverlays()
+      if (mouseToolOp.kind === 'lasso') updateLassoPreview(mouseToolOp.points)
+      requestRender()
+    }
+
+    const translatePoints = (points: number[], dx: number, dy: number) => {
+      const out = points.slice()
+      for (let i = 0; i + 1 < out.length; i += 2) {
+        out[i] += dx
+        out[i + 1] += dy
+      }
+      return out
+    }
+
+    const scalePoints = (points: number[], s: number, cx: number, cy: number) => {
+      const out = points.slice()
+      for (let i = 0; i + 1 < out.length; i += 2) {
+        out[i] = (out[i] - cx) * s + cx
+        out[i + 1] = (out[i + 1] - cy) * s + cy
+      }
+      return out
+    }
+
+    const rotatePoints = (points: number[], ang: number, cx: number, cy: number) => {
+      const cos = Math.cos(ang)
+      const sin = Math.sin(ang)
+      const out = points.slice()
+      for (let i = 0; i + 1 < out.length; i += 2) {
+        const rx = out[i] - cx
+        const ry = out[i + 1] - cy
+        out[i] = rx * cos - ry * sin + cx
+        out[i + 1] = rx * sin + ry * cos + cy
+      }
+      return out
+    }
+
+    const applyNodesPointsFromList = (nodes: RenderNode[], list: number[][]) => {
+      for (let i = 0; i < nodes.length; i++) {
+        const n = nodes[i]
+        const pts = list[i] ?? []
+        n.points = pts
+        n.meta.points = pts
+        recomputeBounds(n.meta, pts)
+        markSvgDirty(n)
+      }
+      if (selection) {
+        const b = computeBounds(selection.nodes)
+        if (b) selection.bounds = b
+        updateSelectionOverlays()
+      }
+      requestRender()
+    }
+
+    const beginSelectionTransform = (pointerId: number, mode: 'move' | 'scale' | 'rotate', x: number, y: number) => {
+      if (!selection) return
+      const b = selection.bounds
+      const centerX = (b.minX + b.maxX) * 0.5
+      const centerY = (b.minY + b.maxY) * 0.5
+      const before = selection.nodes.map((n) => n.points.slice())
+      const baseAngle = Math.atan2(y - centerY, x - centerX)
+      const baseDist = Math.max(1e-6, Math.hypot(x - centerX, y - centerY))
+      mouseToolOp = { kind: 'transform', pointerId, mode, startX: x, startY: y, centerX, centerY, before, baseAngle, baseDist }
+    }
+
+    const finishSelectionTransform = () => {
+      if (mouseToolOp.kind !== 'transform') return
+      if (!selection) {
+        mouseToolOp = { kind: 'none' }
+        return
+      }
+      const nodes = selection.nodes.slice()
+      const beforePoints = mouseToolOp.before.map((p) => p.slice())
+      const afterPoints = nodes.map((n) => n.points.slice())
+      record({ kind: 'update', nodes, beforePoints, afterPoints })
+      mouseToolOp = { kind: 'none' }
+    }
+
+    const startPinch = (ids: [number, number]) => {
+      const p1 = touchPoints.get(ids[0])
+      const p2 = touchPoints.get(ids[1])
+      if (!p1 || !p2) return
+      clearLassoPreview()
+      if (mouseToolOp.kind === 'lasso') mouseToolOp = { kind: 'none' }
+
+      const cx = (p1.cx + p2.cx) * 0.5
+      const cy = (p1.cy + p2.cy) * 0.5
+      const w1 = clientToWorld(p1.cx, p1.cy)
+      const w2 = clientToWorld(p2.cx, p2.cy)
+      const mid = clientToWorld(cx, cy)
+      const dist = Math.max(1e-6, Math.hypot(p2.cx - p1.cx, p2.cy - p1.cy))
+      const ang = Math.atan2(w2.y - w1.y, w2.x - w1.x)
+
+      if (selection) {
+        const pad = 10 / Math.max(0.2, camScale)
+        if (isPointInBounds(selection.bounds, w1.x, w1.y, pad) && isPointInBounds(selection.bounds, w2.x, w2.y, pad)) {
+          selectionOverlayKind = 'touch'
+          updateSelectionOverlays()
+          const before = selection.nodes.map((n) => n.points.slice())
+          mouseToolOp = { kind: 'pinch', target: 'selection', ids, startDist: dist, startAngle: ang, startMidX: mid.x, startMidY: mid.y, before }
+          return
+        }
+      }
+
+      mouseToolOp = { kind: 'pinch', target: 'camera', ids, startDist: dist, startScale: camScale, anchorWorldX: mid.x, anchorWorldY: mid.y }
+    }
+
+    const updatePinch = () => {
+      if (mouseToolOp.kind !== 'pinch') return
+      const [id1, id2] = mouseToolOp.ids
+      const p1 = touchPoints.get(id1)
+      const p2 = touchPoints.get(id2)
+      if (!p1 || !p2) return
+      const cx = (p1.cx + p2.cx) * 0.5
+      const cy = (p1.cy + p2.cy) * 0.5
+      const dist = Math.max(1e-6, Math.hypot(p2.cx - p1.cx, p2.cy - p1.cy))
+      const factor = dist / mouseToolOp.startDist
+
+      if (mouseToolOp.target === 'camera') {
+        const nextScale = clamp(mouseToolOp.startScale * factor, 0.2, 6)
+        camScale = nextScale
+        camX = cx - mouseToolOp.anchorWorldX * camScale
+        camY = cy - mouseToolOp.anchorWorldY * camScale
+        applyCamera()
+        return
+      }
+
+      if (!selection) return
+      const w1 = clientToWorld(p1.cx, p1.cy)
+      const w2 = clientToWorld(p2.cx, p2.cy)
+      const mid = clientToWorld(cx, cy)
+      const ang = Math.atan2(w2.y - w1.y, w2.x - w1.x)
+      const dAng = ang - mouseToolOp.startAngle
+      const dx = mid.x - mouseToolOp.startMidX
+      const dy = mid.y - mouseToolOp.startMidY
+      const cos = Math.cos(dAng)
+      const sin = Math.sin(dAng)
+      const s = clamp(factor, 0.1, 20)
+
+      const next: number[][] = []
+      for (const pts of mouseToolOp.before) {
+        const out = pts.slice()
+        for (let i = 0; i + 1 < out.length; i += 2) {
+          const rx = out[i] - mouseToolOp.startMidX
+          const ry = out[i + 1] - mouseToolOp.startMidY
+          const nx = (rx * cos - ry * sin) * s + mouseToolOp.startMidX + dx
+          const ny = (rx * sin + ry * cos) * s + mouseToolOp.startMidY + dy
+          out[i] = nx
+          out[i + 1] = ny
+        }
+        next.push(out)
+      }
+      applyNodesPointsFromList(selection.nodes, next)
+    }
+
+    applyCamera()
+
     const onPointerDown = (e: PointerEvent) => {
       if (!hydrated) return
-      if (toolRef.current === 'mouse') return
+      if (toolRef.current === 'mouse') {
+        view.setPointerCapture(e.pointerId)
+        if (e.pointerType === 'touch') {
+          const { cx, cy } = getClientPoint(e)
+          touchPoints.set(e.pointerId, { cx, cy })
+          if (touchPoints.size === 2) {
+            const ids = Array.from(touchPoints.keys()).slice(0, 2) as [number, number]
+            startPinch(ids)
+            return
+          }
+          const { x, y } = clientToWorld(cx, cy)
+          mouseToolOp = { kind: 'lasso', pointerId: e.pointerId, points: [x, y, x, y] }
+          updateLassoPreview(mouseToolOp.points)
+          return
+        }
+
+        if ((e as any).button === 2) {
+          const { cx, cy } = getClientPoint(e)
+          mouseToolOp = { kind: 'pan', pointerId: e.pointerId, startCx: cx, startCy: cy, startX: camX, startY: camY }
+          return
+        }
+
+        if ((e as any).button === 0) {
+          const { x, y } = getPoint(e)
+          const pad = 10 / Math.max(0.2, camScale)
+          if (selection && isPointInBounds(selection.bounds, x, y, pad)) {
+            const mode: 'move' | 'scale' | 'rotate' = e.altKey ? 'rotate' : e.shiftKey ? 'scale' : 'move'
+            beginSelectionTransform(e.pointerId, mode, x, y)
+            return
+          }
+          const picked = pickNodesAtPoint(x, y)
+          if (!picked.length) setSelection(null, 'mouse')
+          else setSelection(picked, 'mouse')
+          return
+        }
+
+        return
+      }
       if (!multiTouchRef.current && sessions.size > 0) return
       view.setPointerCapture(e.pointerId)
       const { x, y } = getPoint(e)
@@ -2841,6 +4097,65 @@ struct VSOut {
     }
 
     const onPointerMove = (e: PointerEvent) => {
+      if (toolRef.current === 'mouse') {
+        if (e.pointerType === 'touch') {
+          const { cx, cy } = getClientPoint(e)
+          touchPoints.set(e.pointerId, { cx, cy })
+          if (mouseToolOp.kind === 'pinch') {
+            updatePinch()
+            return
+          }
+          if (touchPoints.size === 2) {
+            const ids = Array.from(touchPoints.keys()).slice(0, 2) as [number, number]
+            startPinch(ids)
+            return
+          }
+        }
+
+        if (mouseToolOp.kind === 'pan' && mouseToolOp.pointerId === e.pointerId) {
+          const { cx, cy } = getClientPoint(e)
+          camX = mouseToolOp.startX + (cx - mouseToolOp.startCx)
+          camY = mouseToolOp.startY + (cy - mouseToolOp.startCy)
+          applyCamera()
+          clearLassoPreview()
+          return
+        }
+
+        if (mouseToolOp.kind === 'lasso' && mouseToolOp.pointerId === e.pointerId) {
+          const { x, y } = getPoint(e)
+          mouseToolOp.points.push(x, y)
+          updateLassoPreview(mouseToolOp.points)
+          return
+        }
+
+        if (mouseToolOp.kind === 'transform' && mouseToolOp.pointerId === e.pointerId && selection) {
+          const op = mouseToolOp
+          const { x, y } = getPoint(e)
+          if (op.mode === 'move') {
+            const dx = x - op.startX
+            const dy = y - op.startY
+            const next = op.before.map((pts) => translatePoints(pts, dx, dy))
+            applyNodesPointsFromList(selection.nodes, next)
+            return
+          }
+
+          if (op.mode === 'scale') {
+            const dist = Math.max(1e-6, Math.hypot(x - op.centerX, y - op.centerY))
+            const s = clamp(dist / op.baseDist, 0.1, 20)
+            const next = op.before.map((pts) => scalePoints(pts, s, op.centerX, op.centerY))
+            applyNodesPointsFromList(selection.nodes, next)
+            return
+          }
+
+          const ang = Math.atan2(y - op.centerY, x - op.centerX)
+          const dAng = ang - op.baseAngle
+          const next = op.before.map((pts) => rotatePoints(pts, dAng, op.centerX, op.centerY))
+          applyNodesPointsFromList(selection.nodes, next)
+          return
+        }
+
+        return
+      }
       const session = sessions.get(e.pointerId)
       if (!session) return
       const evs = typeof (e as any).getCoalescedEvents === 'function' ? (e as any).getCoalescedEvents() : [e]
@@ -3055,8 +4370,106 @@ struct VSOut {
       }
     }
 
-    const onPointerUp = (e: PointerEvent) => finish(e)
-    const onPointerCancel = (e: PointerEvent) => finish(e)
+    const onPointerUp = (e: PointerEvent) => {
+      if (sessions.has(e.pointerId)) {
+        finish(e)
+        return
+      }
+      if (mouseToolOp.kind === 'pan' && mouseToolOp.pointerId === e.pointerId) {
+        try {
+          view.releasePointerCapture(e.pointerId)
+        } catch {}
+        mouseToolOp = { kind: 'none' }
+        return
+      }
+      if (mouseToolOp.kind === 'transform' && mouseToolOp.pointerId === e.pointerId) {
+        try {
+          view.releasePointerCapture(e.pointerId)
+        } catch {}
+        finishSelectionTransform()
+        return
+      }
+      if (mouseToolOp.kind === 'lasso' && mouseToolOp.pointerId === e.pointerId) {
+        try {
+          view.releasePointerCapture(e.pointerId)
+        } catch {}
+        if (e.pointerType === 'touch') touchPoints.delete(e.pointerId)
+        const pts = mouseToolOp.points.slice()
+        mouseToolOp = { kind: 'none' }
+        clearLassoPreview()
+        if (pts.length >= 6) {
+          const closed = pts.slice()
+          closed.push(closed[0], closed[1])
+          const picked = pickNodesInLasso(closed)
+          if (picked.length) setSelection(picked, 'touch')
+          else setSelection(null, 'touch')
+        } else {
+          setSelection(null, 'touch')
+        }
+        return
+      }
+      if (e.pointerType === 'touch') {
+        touchPoints.delete(e.pointerId)
+        if (mouseToolOp.kind === 'pinch') {
+          if (!touchPoints.has(mouseToolOp.ids[0]) || !touchPoints.has(mouseToolOp.ids[1])) {
+            try {
+              view.releasePointerCapture(e.pointerId)
+            } catch {}
+            if (mouseToolOp.target === 'selection' && selection) {
+              const nodes = selection.nodes.slice()
+              const beforePoints = mouseToolOp.before.map((p) => p.slice())
+              const afterPoints = nodes.map((n) => n.points.slice())
+              record({ kind: 'update', nodes, beforePoints, afterPoints })
+            }
+            mouseToolOp = { kind: 'none' }
+          }
+        }
+      }
+      try {
+        view.releasePointerCapture(e.pointerId)
+      } catch {}
+    }
+
+    const onPointerCancel = (e: PointerEvent) => {
+      if (sessions.has(e.pointerId)) {
+        finish(e)
+        return
+      }
+      if (e.pointerType === 'touch') touchPoints.delete(e.pointerId)
+      clearLassoPreview()
+      if (mouseToolOp.kind === 'transform') finishSelectionTransform()
+      else if (mouseToolOp.kind === 'pinch' && mouseToolOp.target === 'selection' && selection) {
+        const nodes = selection.nodes.slice()
+        const beforePoints = mouseToolOp.before.map((p) => p.slice())
+        const afterPoints = nodes.map((n) => n.points.slice())
+        record({ kind: 'update', nodes, beforePoints, afterPoints })
+        mouseToolOp = { kind: 'none' }
+      } else mouseToolOp = { kind: 'none' }
+      try {
+        view.releasePointerCapture(e.pointerId)
+      } catch {}
+    }
+
+    const onWheel = (e: WheelEvent) => {
+      if (!hydrated) return
+      if (toolRef.current !== 'mouse') return
+      e.preventDefault()
+      const r = view.getBoundingClientRect()
+      const cx = e.clientX - r.left
+      const cy = e.clientY - r.top
+      const w = clientToWorld(cx, cy)
+      const factor = e.deltaY > 0 ? 0.9 : 1.1
+      camScale = clamp(camScale * factor, 0.2, 6)
+      camX = cx - w.x * camScale
+      camY = cy - w.y * camScale
+      applyCamera()
+      clearLassoPreview()
+    }
+
+    const onContextMenu = (e: MouseEvent) => {
+      if (toolRef.current !== 'mouse') return
+      e.preventDefault()
+    }
 
     const ro = new ResizeObserver(() => {
       resizeSurface()
@@ -3071,6 +4484,8 @@ struct VSOut {
     view.addEventListener('pointermove', onPointerMove)
     view.addEventListener('pointerup', onPointerUp)
     view.addEventListener('pointercancel', onPointerCancel)
+    view.addEventListener('wheel', onWheel, { passive: false } as any)
+    view.addEventListener('contextmenu', onContextMenu)
 
     return () => {
       cancelled = true
@@ -3081,6 +4496,8 @@ struct VSOut {
       view.removeEventListener('pointermove', onPointerMove)
       view.removeEventListener('pointerup', onPointerUp)
       view.removeEventListener('pointercancel', onPointerCancel)
+      view.removeEventListener('wheel', onWheel as any)
+      view.removeEventListener('contextmenu', onContextMenu as any)
       apiRef.current = null
       try {
         view.replaceChildren()

@@ -2091,7 +2091,8 @@ function handleBackendControlMessage(message: any): void {
     for (const win of targets) {
       if (!win || win.isDestroyed()) continue
       try {
-        win.setIgnoreMouseEvents(!enabled, { forward: true })
+        if (enabled) win.setIgnoreMouseEvents(false)
+        else win.setIgnoreMouseEvents(true, { forward: true })
       } catch {}
     }
     return
@@ -2133,7 +2134,7 @@ function handleBackendControlMessage(message: any): void {
           overlay.moveTop()
         } catch {}
         try {
-          overlay.setIgnoreMouseEvents(false, { forward: true })
+          overlay.setIgnoreMouseEvents(false)
         } catch {}
         applyToolbarOnTopLevel('screen-saver')
       }

@@ -125,7 +125,7 @@ export function SettingsSidebar({ activeTab, onTabChange }: SettingsSidebarProps
 
       {/* 底部信息 */}
       <div className="settingsSidebarFooter">
-        <span className="settingsSidebarVersion">LanStartWrite v0.0.0</span>
+        <span className="settingsSidebarVersion">LanStartWrite v{__APP_VERSION__}</span>
       </div>
     </div>
   )

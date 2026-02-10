@@ -7,7 +7,7 @@ import tailwindcss from 'tailwindcss'
 import { defineConfig } from 'electron-vite'
 
 const rootDir = dirname(fileURLToPath(import.meta.url))
-const pkg = JSON.parse(readFileSync(resolve(rootDir, 'package.json'), 'utf-8')) as { version?: unknown }
+const pkg = JSON.parse(readFileSync(resolve(rootDir, 'package.json'), 'utf-8')) as { version?: unknown; lanstartCodename?: unknown }
 
 export default defineConfig({
   main: {
@@ -32,7 +32,8 @@ export default defineConfig({
     root: resolve(rootDir, 'src/renderer'),
     plugins: [react()],
     define: {
-      __APP_VERSION__: JSON.stringify(pkg.version ?? '0.0.0')
+      __APP_VERSION__: JSON.stringify(pkg.version ?? '0.0.0'),
+      __APP_CODENAME__: JSON.stringify(typeof pkg.lanstartCodename === 'string' ? pkg.lanstartCodename : 'Doctor')
     },
     css: {
       postcss: {

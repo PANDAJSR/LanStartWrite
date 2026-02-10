@@ -1434,7 +1434,9 @@ function AboutSettings() {
           <img src={LanStartLogoSvg} width={64} height={64} alt="LanStartWrite" />
         </div>
         <h3 className="settingsAboutAppName">LanStartWrite</h3>
-        <p className="settingsAboutVersion">版本 {__APP_VERSION__}</p>
+        <p className="settingsAboutVersion">
+          版本 {__APP_VERSION__} · 代号 {__APP_CODENAME__}
+        </p>
         <p className="settingsAboutDescription">
           一款现代化的屏幕批注和演示工具，
           <br />

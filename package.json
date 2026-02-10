@@ -1,7 +1,8 @@
 {
   "name": "lanstart-write",
   "private": true,
-  "version": "0.0.0",
+  "version": "1.0.0",
+  "lanstartCodename": "Doctor",
   "main": "out/main/index.js",
   "scripts": {
     "dev": "electron-vite dev",
