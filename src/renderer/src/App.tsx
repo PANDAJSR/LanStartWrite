@@ -6,7 +6,7 @@ import { EventsMenu, FeaturePanelMenu, PenSubmenu, EraserSubmenu, SettingsMenu }
 import { NotificationSubwindow } from '../../toolbar_notice/NotificationSubwindow'
 import { TaskWindowsWatcherWindow } from '../../task_windows_watcher'
 import { AnnotationOverlayApp, PaintBoardBackgroundApp } from '../../paint_board'
-import { MultiPageControlWindow } from '../../mut_page'
+import { MultiPageControlWindow, PageThumbnailsMenuWindow } from '../../mut_page'
 import { useHyperGlassRealtimeBlur } from '../../hyper_glass'
 import { SettingsWindow, useAppearanceSettings } from '../../settings'
 import { AppWindowTitlebar } from '../../app_windows_manerger/renderer'
@@ -95,6 +95,7 @@ export default function App() {
   if (windowId === 'settings-window') return <WithAppearance><SettingsWindow /></WithAppearance>
   if (windowId === 'toolbar-notice') return <WithAppearance><NotificationSubwindow kind="notice" /></WithAppearance>
   if (windowId === 'mut-page') return <WithAppearance><MultiPageControlWindow /></WithAppearance>
+  if (windowId === 'mut-page-thumbnails-menu') return <WithAppearance><PageThumbnailsMenuWindow /></WithAppearance>
 
   if (windowId === 'toolbar-subwindow') {
     if (kind === 'events') return <WithAppearance><EventsMenu kind="events" /></WithAppearance>

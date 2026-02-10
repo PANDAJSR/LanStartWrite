@@ -21,6 +21,7 @@ const WINDOW_ID_TOOLBAR_NOTICE = 'toolbar-notice'
 const WINDOW_ID_WATCHER = 'watcher'
 const WINDOW_ID_SETTINGS_WINDOW = 'settings-window'
 const WINDOW_ID_MUT_PAGE = 'mut-page'
+const WINDOW_ID_MUT_PAGE_THUMBNAILS_MENU = 'mut-page-thumbnails-menu'
 const TOOLBAR_HANDLE_GAP = 10
 const TOOLBAR_HANDLE_WIDTH = 30
 const APPEARANCE_KV_KEY = 'app-appearance'
@@ -363,6 +364,7 @@ function applyToolbarUiZoom(zoom: number): void {
     floatingToolbarHandleWindow,
     toolbarNoticeWindow,
     multiPageControlWindow,
+    mutPageThumbnailsMenuWindow,
     ...Array.from(toolbarSubwindows.values()).map((v) => v.win)
   ]
   for (const win of targets) {
@@ -389,6 +391,7 @@ let toolbarNoticeItem:
     }
   | undefined
 let multiPageControlWindow: BrowserWindow | undefined
+let mutPageThumbnailsMenuWindow: BrowserWindow | undefined
 let whiteboardBackgroundWindow: BrowserWindow | undefined
 let annotationOverlayWindow: BrowserWindow | undefined
 let screenAnnotationOverlayWindow: BrowserWindow | undefined
@@ -891,6 +894,8 @@ function repositionMultiPageControlWindow(): void {
   try {
     win.setBounds({ x, y, width, height }, false)
   } catch {}
+  const menu = mutPageThumbnailsMenuWindow
+  if (menu && !menu.isDestroyed() && menu.isVisible()) repositionMutPageThumbnailsMenuWindow()
 }
 
 function getOrCreateMultiPageControlWindow(): BrowserWindow {
@@ -953,12 +958,145 @@ function getOrCreateMultiPageControlWindow(): BrowserWindow {
     repositionMultiPageControlWindow()
   })
   win.on('show', repositionMultiPageControlWindow)
+  win.on('hide', () => {
+    const menu = mutPageThumbnailsMenuWindow
+    if (menu && !menu.isDestroyed() && menu.isVisible()) {
+      try {
+        menu.hide()
+      } catch {}
+    }
+  })
   win.on('closed', () => {
     if (multiPageControlWindow === win) multiPageControlWindow = undefined
+    const menu = mutPageThumbnailsMenuWindow
+    if (menu && !menu.isDestroyed()) {
+      try {
+        menu.close()
+      } catch {}
+    }
+    mutPageThumbnailsMenuWindow = undefined
   })
 
   multiPageControlWindow = win
   return win
+}
+
+function repositionMutPageThumbnailsMenuWindow(): void {
+  const win = mutPageThumbnailsMenuWindow
+  const owner = multiPageControlWindow
+  if (!win || win.isDestroyed()) return
+  if (!owner || owner.isDestroyed()) return
+
+  const ownerBounds = owner.getBounds()
+  const display = screen.getDisplayMatching(ownerBounds)
+  const area = display.workArea
+
+  const width = 560
+  const height = 420
+  const gap = 10
+  const x = Math.round(ownerBounds.x + (ownerBounds.width - width) / 2)
+  const y = Math.round(ownerBounds.y - height - gap)
+
+  const clampedX = Math.max(area.x + 8, Math.min(area.x + area.width - width - 8, x))
+  const clampedY = Math.max(area.y + 8, Math.min(area.y + area.height - height - 8, y))
+
+  try {
+    win.setBounds({ x: clampedX, y: clampedY, width, height }, false)
+  } catch {}
+}
+
+function getOrCreateMutPageThumbnailsMenuWindow(owner: BrowserWindow): BrowserWindow {
+  const existing = mutPageThumbnailsMenuWindow
+  if (existing && !existing.isDestroyed()) return existing
+
+  const win = new BrowserWindow({
+    ...(APP_ICON_PATH ? { icon: APP_ICON_PATH } : {}),
+    width: 560,
+    height: 420,
+    show: false,
+    frame: false,
+    autoHideMenuBar: true,
+    transparent: !legacyWindowImplementation,
+    resizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    alwaysOnTop: true,
+    skipTaskbar: true,
+    parent: owner,
+    title: '页面缩略图查看菜单',
+    backgroundColor: legacyWindowImplementation ? effectiveSurfaceBackgroundColor(currentAppearance) : '#00000000',
+    backgroundMaterial: legacyWindowImplementation && nativeMicaEnabled ? 'mica' : 'none',
+    webPreferences: {
+      preload: join(__dirname, '../preload/index.js'),
+      contextIsolation: true,
+      nodeIntegration: false
+    }
+  })
+
+  applyWindowsBackdrop(win)
+  try {
+    win.setMenu(null)
+  } catch {}
+  try {
+    win.setMenuBarVisibility(false)
+  } catch {}
+  try {
+    win.setAutoHideMenuBar(true)
+  } catch {}
+  win.setAlwaysOnTop(true, 'screen-saver')
+  wireWindowDebug(win, WINDOW_ID_MUT_PAGE_THUMBNAILS_MENU)
+  wireWindowStatus(win, WINDOW_ID_MUT_PAGE_THUMBNAILS_MENU)
+  try {
+    win.webContents.setZoomLevel(toolbarUiZoom)
+  } catch {}
+
+  const devUrl = getDevServerUrl()
+  if (devUrl) {
+    win.loadURL(`${devUrl}?window=${encodeURIComponent(WINDOW_ID_MUT_PAGE_THUMBNAILS_MENU)}`)
+    if (process.env.LANSTART_OPEN_DEVTOOLS === '1') win.webContents.openDevTools({ mode: 'detach' })
+  } else {
+    win.loadFile(join(__dirname, '../renderer/index.html'), { query: { window: WINDOW_ID_MUT_PAGE_THUMBNAILS_MENU } })
+  }
+
+  win.on('blur', () => {
+    if (win.isDestroyed()) return
+    try {
+      if (win.isVisible()) win.hide()
+    } catch {}
+  })
+
+  win.on('closed', () => {
+    if (mutPageThumbnailsMenuWindow === win) mutPageThumbnailsMenuWindow = undefined
+  })
+
+  mutPageThumbnailsMenuWindow = win
+  return win
+}
+
+function toggleMutPageThumbnailsMenuWindow(): void {
+  const owner = multiPageControlWindow
+  if (!owner || owner.isDestroyed()) return
+
+  const existing = mutPageThumbnailsMenuWindow
+  if (existing && !existing.isDestroyed() && existing.isVisible()) {
+    try {
+      existing.hide()
+    } catch {}
+    return
+  }
+
+  const win = getOrCreateMutPageThumbnailsMenuWindow(owner)
+  const doShow = () => {
+    if (win.isDestroyed()) return
+    repositionMutPageThumbnailsMenuWindow()
+    try {
+      win.showInactive()
+    } catch {
+      win.show()
+    }
+  }
+  if (win.webContents.isLoading()) win.once('ready-to-show', doShow)
+  else doShow()
 }
 
 function applyToolbarOnTopLevel(level: 'normal' | 'floating' | 'torn-off-menu' | 'modal-panel' | 'main-menu' | 'status' | 'pop-up-menu' | 'screen-saver') {
@@ -2008,6 +2146,15 @@ function handleBackendControlMessage(message: any): void {
       applyToolbarOnTopLevel('screen-saver')
     }
 
+    return
+  }
+
+  if (message.type === 'TOGGLE_MUT_PAGE_THUMBNAILS_MENU') {
+    try {
+      toggleMutPageThumbnailsMenuWindow()
+    } catch {
+      return
+    }
     return
   }
 

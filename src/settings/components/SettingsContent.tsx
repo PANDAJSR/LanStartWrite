@@ -9,6 +9,7 @@ import {
   UI_STATE_APP_WINDOW_ID,
   WHITEBOARD_BG_COLOR_KV_KEY,
   WHITEBOARD_BG_COLOR_UI_STATE_KEY,
+  WHITEBOARD_BG_IMAGE_OPACITY_UI_STATE_KEY,
   WHITEBOARD_BG_IMAGE_URL_KV_KEY,
   WHITEBOARD_BG_IMAGE_URL_UI_STATE_KEY,
   isFileOrDataUrl,
@@ -19,7 +20,8 @@ import {
   selectImageFile,
   type LeaferSettings,
   useAppAppearance,
-  usePersistedState
+  usePersistedState,
+  useUiStateBus
 } from '../../status'
 import { Button } from '../../button'
 import type { SettingsTab } from '../types'
@@ -1300,23 +1302,25 @@ function WhiteboardSettings() {
     { label: '鸿白', value: '#FFFFFF' },
   ] as const
 
-  const [bgColor, setBgColor] = usePersistedState(WHITEBOARD_BG_COLOR_KV_KEY, '#ffffff', { validate: isHexColor })
-  const [bgImageUrl, setBgImageUrl] = usePersistedState(WHITEBOARD_BG_IMAGE_URL_KV_KEY, '', { validate: isFileOrDataUrl })
-
-  React.useEffect(() => {
-    putUiStateKey(UI_STATE_APP_WINDOW_ID, WHITEBOARD_BG_COLOR_UI_STATE_KEY, bgColor).catch(() => undefined)
-  }, [bgColor])
-
-  React.useEffect(() => {
-    putUiStateKey(UI_STATE_APP_WINDOW_ID, WHITEBOARD_BG_IMAGE_URL_UI_STATE_KEY, bgImageUrl).catch(() => undefined)
-  }, [bgImageUrl])
+  const bus = useUiStateBus(UI_STATE_APP_WINDOW_ID)
+  const uiBg = bus.state[WHITEBOARD_BG_COLOR_UI_STATE_KEY]
+  const bgColor = isHexColor(uiBg) ? uiBg : '#ffffff'
+  const uiBgImageUrl = bus.state[WHITEBOARD_BG_IMAGE_URL_UI_STATE_KEY]
+  const bgImageUrl = isFileOrDataUrl(uiBgImageUrl) ? uiBgImageUrl : ''
+  const uiOpacity = bus.state[WHITEBOARD_BG_IMAGE_OPACITY_UI_STATE_KEY]
+  const bgImageOpacity =
+    typeof uiOpacity === 'number'
+      ? Math.max(0, Math.min(1, uiOpacity))
+      : typeof uiOpacity === 'string' && Number.isFinite(Number(uiOpacity))
+        ? Math.max(0, Math.min(1, Number(uiOpacity)))
+        : 0.5
 
   const onPickBgImage = async () => {
     try {
       const res = await selectImageFile()
       const url = typeof res?.fileUrl === 'string' ? res.fileUrl : ''
       if (!url) return
-      setBgImageUrl(url)
+      await putUiStateKey(UI_STATE_APP_WINDOW_ID, WHITEBOARD_BG_IMAGE_URL_UI_STATE_KEY, url)
     } catch {
       return
     }
@@ -1336,7 +1340,7 @@ function WhiteboardSettings() {
               ariaLabel={preset.label}
               title={`${preset.label} ${preset.value}`}
               className={`settingsWhiteboardColorSwatch ${bgColor === preset.value ? 'settingsWhiteboardColorSwatch--active' : ''}`}
-              onClick={() => setBgColor(preset.value)}
+              onClick={() => putUiStateKey(UI_STATE_APP_WINDOW_ID, WHITEBOARD_BG_COLOR_UI_STATE_KEY, preset.value).catch(() => undefined)}
               style={{ background: preset.value }}
             >
               <span className="settingsWhiteboardColorSwatchInner" />
@@ -1348,10 +1352,67 @@ function WhiteboardSettings() {
 
       <div className="settingsSubSection">
         <h3 className="settingsSubTitle">背景图</h3>
-        <p className="settingsSubDescription">选择一张图片作为白板背景（透明度 50%）</p>
+        <p className="settingsSubDescription">选择一张图片作为白板背景</p>
         <Button kind="text" size="md" appRegion="no-drag" ariaLabel="添加图片背景" onClick={onPickBgImage}>
           添加图片背景
         </Button>
+        {bgImageUrl ? (
+          <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 10 }}>
+            <div
+              style={{
+                width: 240,
+                maxWidth: '100%',
+                aspectRatio: '16 / 10',
+                borderRadius: 12,
+                overflow: 'hidden',
+                border: '1px solid rgba(0,0,0,0.14)',
+                background: 'rgba(255,255,255,0.06)'
+              }}
+            >
+              <img
+                src={bgImageUrl}
+                style={{
+                  width: '100%',
+                  height: '100%',
+                  objectFit: 'cover',
+                  objectPosition: 'center',
+                  display: 'block',
+                  opacity: bgImageOpacity
+                }}
+              />
+            </div>
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+              <div style={{ fontSize: 12, opacity: 0.9, minWidth: 60 }}>透明度</div>
+              <input
+                type="range"
+                min={0}
+                max={100}
+                step={1}
+                value={Math.round(bgImageOpacity * 100)}
+                onChange={(e) => {
+                  const v = Number(e.target.value)
+                  const next = Number.isFinite(v) ? Math.max(0, Math.min(1, v / 100)) : 0.5
+                  putUiStateKey(UI_STATE_APP_WINDOW_ID, WHITEBOARD_BG_IMAGE_OPACITY_UI_STATE_KEY, next).catch(() => undefined)
+                }}
+                style={{ flex: 1 }}
+              />
+              <div style={{ fontSize: 12, opacity: 0.9, minWidth: 44, textAlign: 'right' }}>{Math.round(bgImageOpacity * 100)}%</div>
+            </div>
+
+            <div style={{ display: 'flex', gap: 10 }}>
+              <Button
+                kind="text"
+                size="md"
+                appRegion="no-drag"
+                ariaLabel="删除背景图片"
+                onClick={() => putUiStateKey(UI_STATE_APP_WINDOW_ID, WHITEBOARD_BG_IMAGE_URL_UI_STATE_KEY, '').catch(() => undefined)}
+              >
+                删除背景图片
+              </Button>
+            </div>
+          </div>
+        ) : null}
       </div>
     </div>
   )

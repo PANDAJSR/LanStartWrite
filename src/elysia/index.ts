@@ -18,10 +18,19 @@ import {
   REDO_REV_UI_STATE_KEY,
   UI_STATE_APP_WINDOW_ID,
   UNDO_REV_UI_STATE_KEY,
+  WHITEBOARD_BG_COLOR_KV_KEY,
+  WHITEBOARD_BG_COLOR_UI_STATE_KEY,
+  WHITEBOARD_BG_IMAGE_URL_KV_KEY,
+  WHITEBOARD_BG_IMAGE_URL_UI_STATE_KEY,
+  WHITEBOARD_BG_IMAGE_OPACITY_KV_KEY,
+  WHITEBOARD_BG_IMAGE_OPACITY_UI_STATE_KEY,
+  WHITEBOARD_CANVAS_PAGES_KV_KEY,
   WRITING_FRAMEWORK_KV_KEY,
   WRITING_FRAMEWORK_UI_STATE_KEY,
   isActiveApp,
   isAppMode,
+  isFileOrDataUrl,
+  isHexColor,
   isWritingFramework,
   type ActiveApp,
   type EffectiveWritingBackend,
@@ -59,6 +68,127 @@ function emitEvent(type: string, payload?: unknown): EventItem {
 
 function requestMain(message: unknown): void {
   process.stdout.write(`__LANSTART__${JSON.stringify(message)}\n`)
+}
+
+type WhiteboardCanvasPageV1 = { bgColor: string; bgImageUrl: string; bgImageOpacity: number }
+type WhiteboardCanvasBookV1 = { version: 1; pages: WhiteboardCanvasPageV1[] }
+
+function isWhiteboardCanvasBookV1(v: unknown): v is WhiteboardCanvasBookV1 {
+  if (!v || typeof v !== 'object') return false
+  const b = v as any
+  if (b.version !== 1) return false
+  if (!Array.isArray(b.pages)) return false
+  return true
+}
+
+async function getDefaultWhiteboardBackground(): Promise<{ bgColor: string; bgImageUrl: string; bgImageOpacity: number }> {
+  let bgColor = '#ffffff'
+  let bgImageUrl = ''
+  let bgImageOpacity = 0.5
+  try {
+    const v = await getValue(db, WHITEBOARD_BG_COLOR_KV_KEY)
+    if (isHexColor(v)) bgColor = v
+  } catch {}
+  try {
+    const v = await getValue(db, WHITEBOARD_BG_IMAGE_URL_KV_KEY)
+    if (isFileOrDataUrl(v)) bgImageUrl = v
+  } catch {}
+  try {
+    const v = await getValue(db, WHITEBOARD_BG_IMAGE_OPACITY_KV_KEY)
+    const n = typeof v === 'number' ? v : typeof v === 'string' ? Number(v) : NaN
+    if (Number.isFinite(n)) bgImageOpacity = Math.max(0, Math.min(1, n))
+  } catch {}
+  return { bgColor, bgImageUrl, bgImageOpacity }
+}
+
+async function getOrInitWhiteboardCanvasBook(args: {
+  total: number
+  defaultBg: { bgColor: string; bgImageUrl: string; bgImageOpacity: number }
+}): Promise<{ book: WhiteboardCanvasBookV1; changed: boolean }> {
+  const total = Number.isFinite(args.total) ? Math.max(1, Math.floor(args.total)) : 1
+  let changed = false
+  let book: WhiteboardCanvasBookV1 = { version: 1, pages: [] }
+  try {
+    const loaded = await getValue(db, WHITEBOARD_CANVAS_PAGES_KV_KEY)
+    if (isWhiteboardCanvasBookV1(loaded)) book = loaded
+  } catch {}
+
+  if (!Array.isArray(book.pages)) {
+    book = { version: 1, pages: [] }
+    changed = true
+  }
+
+  if (book.pages.length < total) {
+    changed = true
+    while (book.pages.length < total)
+      book.pages.push({
+        bgColor: args.defaultBg.bgColor,
+        bgImageUrl: args.defaultBg.bgImageUrl,
+        bgImageOpacity: args.defaultBg.bgImageOpacity
+      })
+  } else if (book.pages.length > total) {
+    changed = true
+    book.pages.length = total
+  }
+
+  return { book, changed }
+}
+
+async function ensureWhiteboardCanvasBookPersisted(args: {
+  total: number
+  defaultBg: { bgColor: string; bgImageUrl: string; bgImageOpacity: number }
+}): Promise<WhiteboardCanvasBookV1> {
+  const { book, changed } = await getOrInitWhiteboardCanvasBook(args)
+  if (changed) {
+    await putValue(db, WHITEBOARD_CANVAS_PAGES_KV_KEY, book)
+    emitEvent('KV_PUT', { key: WHITEBOARD_CANVAS_PAGES_KV_KEY })
+  }
+  return book
+}
+
+function coercePageIndexTotal(state: Record<string, any>): { index: number; total: number } {
+  const totalRaw = Number(state[NOTES_PAGE_TOTAL_UI_STATE_KEY])
+  const total = Number.isFinite(totalRaw) && totalRaw >= 1 ? Math.floor(totalRaw) : 1
+  const indexRaw = Number(state[NOTES_PAGE_INDEX_UI_STATE_KEY])
+  const index = Number.isFinite(indexRaw) ? Math.floor(indexRaw) : 0
+  const bounded = Math.max(0, Math.min(total - 1, index))
+  return { index: bounded, total }
+}
+
+function ensurePageTotalInState(state: Record<string, any>, total: number): void {
+  const totalRaw = Number(state[NOTES_PAGE_TOTAL_UI_STATE_KEY])
+  if (Number.isFinite(totalRaw) && totalRaw >= 1) return
+  state[NOTES_PAGE_TOTAL_UI_STATE_KEY] = total
+  emitEvent('UI_STATE_PUT', { windowId: UI_STATE_APP_WINDOW_ID, key: NOTES_PAGE_TOTAL_UI_STATE_KEY, value: total })
+}
+
+async function applyWhiteboardBackgroundForPage(args: { state: Record<string, any>; index: number; total: number }): Promise<void> {
+  const modeRaw = args.state[APP_MODE_UI_STATE_KEY]
+  const mode = isAppMode(modeRaw) ? modeRaw : 'toolbar'
+  if (mode !== 'whiteboard') return
+
+  const defaultBg = await getDefaultWhiteboardBackground()
+  const book = await ensureWhiteboardCanvasBookPersisted({ total: args.total, defaultBg })
+  const raw = (book.pages as any)?.[args.index] as Partial<WhiteboardCanvasPageV1> | undefined
+  const page = {
+    bgColor: typeof raw?.bgColor === 'string' ? raw.bgColor : defaultBg.bgColor,
+    bgImageUrl: isFileOrDataUrl(raw?.bgImageUrl) ? String(raw?.bgImageUrl ?? '') : defaultBg.bgImageUrl,
+    bgImageOpacity:
+      typeof raw?.bgImageOpacity === 'number' && Number.isFinite(raw.bgImageOpacity)
+        ? Math.max(0, Math.min(1, raw.bgImageOpacity))
+        : defaultBg.bgImageOpacity
+  }
+
+  args.state[WHITEBOARD_BG_COLOR_UI_STATE_KEY] = page.bgColor
+  args.state[WHITEBOARD_BG_IMAGE_URL_UI_STATE_KEY] = page.bgImageUrl
+  args.state[WHITEBOARD_BG_IMAGE_OPACITY_UI_STATE_KEY] = page.bgImageOpacity
+  emitEvent('UI_STATE_PUT', { windowId: UI_STATE_APP_WINDOW_ID, key: WHITEBOARD_BG_COLOR_UI_STATE_KEY, value: page.bgColor })
+  emitEvent('UI_STATE_PUT', { windowId: UI_STATE_APP_WINDOW_ID, key: WHITEBOARD_BG_IMAGE_URL_UI_STATE_KEY, value: page.bgImageUrl })
+  emitEvent('UI_STATE_PUT', {
+    windowId: UI_STATE_APP_WINDOW_ID,
+    key: WHITEBOARD_BG_IMAGE_OPACITY_UI_STATE_KEY,
+    value: page.bgImageOpacity
+  })
 }
 
 let nextMainRpcId = 1
@@ -355,26 +485,19 @@ async function handleCommand(command: string, payload: unknown): Promise<Command
 
       if (action === 'prevPage') {
         const state = getOrInitUiState(UI_STATE_APP_WINDOW_ID)
-        const totalRaw = Number(state[NOTES_PAGE_TOTAL_UI_STATE_KEY])
-        const total = Number.isFinite(totalRaw) && totalRaw >= 1 ? Math.floor(totalRaw) : 1
-        const indexRaw = Number(state[NOTES_PAGE_INDEX_UI_STATE_KEY])
-        const index = Number.isFinite(indexRaw) ? Math.floor(indexRaw) : 0
+        const { index, total } = coercePageIndexTotal(state)
+        ensurePageTotalInState(state, total)
         const nextIndex = Math.max(0, Math.min(total - 1, index - 1))
         state[NOTES_PAGE_INDEX_UI_STATE_KEY] = nextIndex
-        if (!Number.isFinite(totalRaw) || totalRaw < 1) {
-          state[NOTES_PAGE_TOTAL_UI_STATE_KEY] = total
-          emitEvent('UI_STATE_PUT', { windowId: UI_STATE_APP_WINDOW_ID, key: NOTES_PAGE_TOTAL_UI_STATE_KEY, value: total })
-        }
         emitEvent('UI_STATE_PUT', { windowId: UI_STATE_APP_WINDOW_ID, key: NOTES_PAGE_INDEX_UI_STATE_KEY, value: nextIndex })
+        await applyWhiteboardBackgroundForPage({ state, index: nextIndex, total })
         return { ok: true }
       }
 
       if (action === 'nextPage') {
         const state = getOrInitUiState(UI_STATE_APP_WINDOW_ID)
-        const totalRaw = Number(state[NOTES_PAGE_TOTAL_UI_STATE_KEY])
-        const total = Number.isFinite(totalRaw) && totalRaw >= 1 ? Math.floor(totalRaw) : 1
-        const indexRaw = Number(state[NOTES_PAGE_INDEX_UI_STATE_KEY])
-        const index = Number.isFinite(indexRaw) ? Math.floor(indexRaw) : 0
+        const { index, total } = coercePageIndexTotal(state)
+        ensurePageTotalInState(state, total)
         const modeRaw = state[APP_MODE_UI_STATE_KEY]
         const mode = isAppMode(modeRaw) ? modeRaw : 'toolbar'
 
@@ -385,29 +508,45 @@ async function handleCommand(command: string, payload: unknown): Promise<Command
           state[NOTES_PAGE_INDEX_UI_STATE_KEY] = nextIndex
           emitEvent('UI_STATE_PUT', { windowId: UI_STATE_APP_WINDOW_ID, key: NOTES_PAGE_TOTAL_UI_STATE_KEY, value: nextTotal })
           emitEvent('UI_STATE_PUT', { windowId: UI_STATE_APP_WINDOW_ID, key: NOTES_PAGE_INDEX_UI_STATE_KEY, value: nextIndex })
+          await applyWhiteboardBackgroundForPage({ state, index: nextIndex, total: nextTotal })
           return { ok: true }
         }
 
         const nextIndex = Math.max(0, Math.min(total - 1, index + 1))
         state[NOTES_PAGE_INDEX_UI_STATE_KEY] = nextIndex
-        if (!Number.isFinite(totalRaw) || totalRaw < 1) {
-          state[NOTES_PAGE_TOTAL_UI_STATE_KEY] = total
-          emitEvent('UI_STATE_PUT', { windowId: UI_STATE_APP_WINDOW_ID, key: NOTES_PAGE_TOTAL_UI_STATE_KEY, value: total })
-        }
         emitEvent('UI_STATE_PUT', { windowId: UI_STATE_APP_WINDOW_ID, key: NOTES_PAGE_INDEX_UI_STATE_KEY, value: nextIndex })
+        await applyWhiteboardBackgroundForPage({ state, index: nextIndex, total })
         return { ok: true }
       }
 
       if (action === 'newPage') {
         const state = getOrInitUiState(UI_STATE_APP_WINDOW_ID)
-        const totalRaw = Number(state[NOTES_PAGE_TOTAL_UI_STATE_KEY])
-        const total = Number.isFinite(totalRaw) && totalRaw >= 1 ? Math.floor(totalRaw) : 1
+        const { total } = coercePageIndexTotal(state)
         const nextTotal = Math.min(2000, total + 1)
         const nextIndex = nextTotal - 1
         state[NOTES_PAGE_TOTAL_UI_STATE_KEY] = nextTotal
         state[NOTES_PAGE_INDEX_UI_STATE_KEY] = nextIndex
         emitEvent('UI_STATE_PUT', { windowId: UI_STATE_APP_WINDOW_ID, key: NOTES_PAGE_TOTAL_UI_STATE_KEY, value: nextTotal })
         emitEvent('UI_STATE_PUT', { windowId: UI_STATE_APP_WINDOW_ID, key: NOTES_PAGE_INDEX_UI_STATE_KEY, value: nextIndex })
+        await applyWhiteboardBackgroundForPage({ state, index: nextIndex, total: nextTotal })
+        return { ok: true }
+      }
+
+      if (action === 'setPageIndex') {
+        const state = getOrInitUiState(UI_STATE_APP_WINDOW_ID)
+        const { total } = coercePageIndexTotal(state)
+        ensurePageTotalInState(state, total)
+        const desiredRaw = Number((payload as any)?.index)
+        const desired = Number.isFinite(desiredRaw) ? Math.floor(desiredRaw) : 0
+        const nextIndex = Math.max(0, Math.min(total - 1, desired))
+        state[NOTES_PAGE_INDEX_UI_STATE_KEY] = nextIndex
+        emitEvent('UI_STATE_PUT', { windowId: UI_STATE_APP_WINDOW_ID, key: NOTES_PAGE_INDEX_UI_STATE_KEY, value: nextIndex })
+        await applyWhiteboardBackgroundForPage({ state, index: nextIndex, total })
+        return { ok: true }
+      }
+
+      if (action === 'togglePageThumbnailsMenu') {
+        requestMain({ type: 'TOGGLE_MUT_PAGE_THUMBNAILS_MENU' })
         return { ok: true }
       }
 
@@ -680,6 +819,67 @@ stdin.on('line', (line) => {
             const state = getOrInitUiState(windowId)
             state[key] = params?.value
             emitEvent('UI_STATE_PUT', { windowId, key, value: params?.value })
+            if (
+              windowId === UI_STATE_APP_WINDOW_ID &&
+              (key === WHITEBOARD_BG_COLOR_UI_STATE_KEY ||
+                key === WHITEBOARD_BG_IMAGE_URL_UI_STATE_KEY ||
+                key === WHITEBOARD_BG_IMAGE_OPACITY_UI_STATE_KEY)
+            ) {
+              const modeRaw = state[APP_MODE_UI_STATE_KEY]
+              const mode = isAppMode(modeRaw) ? modeRaw : 'toolbar'
+              if (mode === 'whiteboard') {
+                const { index, total } = coercePageIndexTotal(state)
+                const defaultBg = await getDefaultWhiteboardBackground()
+                const book = await ensureWhiteboardCanvasBookPersisted({ total, defaultBg })
+                const rawPage = (book.pages as any)?.[index] as Partial<WhiteboardCanvasPageV1> | undefined
+                const page = {
+                  bgColor: typeof rawPage?.bgColor === 'string' ? rawPage.bgColor : defaultBg.bgColor,
+                  bgImageUrl: isFileOrDataUrl(rawPage?.bgImageUrl) ? String(rawPage?.bgImageUrl ?? '') : defaultBg.bgImageUrl,
+                  bgImageOpacity:
+                    typeof rawPage?.bgImageOpacity === 'number' && Number.isFinite(rawPage.bgImageOpacity)
+                      ? Math.max(0, Math.min(1, rawPage.bgImageOpacity))
+                      : defaultBg.bgImageOpacity
+                }
+
+                const nextColor =
+                  key === WHITEBOARD_BG_COLOR_UI_STATE_KEY && isHexColor(params?.value) ? String(params?.value) : page.bgColor
+
+                const nextImageUrl =
+                  key === WHITEBOARD_BG_IMAGE_URL_UI_STATE_KEY && isFileOrDataUrl(params?.value) ? String(params?.value) : page.bgImageUrl
+
+                const nextOpacity = (() => {
+                  if (key !== WHITEBOARD_BG_IMAGE_OPACITY_UI_STATE_KEY) return page.bgImageOpacity
+                  const raw = params?.value
+                  const n = typeof raw === 'number' ? raw : typeof raw === 'string' ? Number(raw) : NaN
+                  if (!Number.isFinite(n)) return page.bgImageOpacity
+                  return Math.max(0, Math.min(1, n))
+                })()
+
+                if (nextColor !== page.bgColor || nextImageUrl !== page.bgImageUrl || nextOpacity !== page.bgImageOpacity) {
+                  book.pages[index] = { bgColor: nextColor, bgImageUrl: nextImageUrl, bgImageOpacity: nextOpacity }
+                  await putValue(db, WHITEBOARD_CANVAS_PAGES_KV_KEY, book)
+                  emitEvent('KV_PUT', { key: WHITEBOARD_CANVAS_PAGES_KV_KEY })
+                }
+
+                if (key === WHITEBOARD_BG_COLOR_UI_STATE_KEY && isHexColor(params?.value)) {
+                  await putValue(db, WHITEBOARD_BG_COLOR_KV_KEY, String(params?.value))
+                  emitEvent('KV_PUT', { key: WHITEBOARD_BG_COLOR_KV_KEY })
+                }
+                if (key === WHITEBOARD_BG_IMAGE_URL_UI_STATE_KEY && isFileOrDataUrl(params?.value)) {
+                  await putValue(db, WHITEBOARD_BG_IMAGE_URL_KV_KEY, String(params?.value))
+                  emitEvent('KV_PUT', { key: WHITEBOARD_BG_IMAGE_URL_KV_KEY })
+                }
+                if (key === WHITEBOARD_BG_IMAGE_OPACITY_UI_STATE_KEY) {
+                  const raw = params?.value
+                  const n = typeof raw === 'number' ? raw : typeof raw === 'string' ? Number(raw) : NaN
+                  if (Number.isFinite(n)) {
+                    const v = Math.max(0, Math.min(1, n))
+                    await putValue(db, WHITEBOARD_BG_IMAGE_OPACITY_KV_KEY, v)
+                    emitEvent('KV_PUT', { key: WHITEBOARD_BG_IMAGE_OPACITY_KV_KEY })
+                  }
+                }
+              }
+            }
             requestMain({ type: 'RPC_RESPONSE', id, ok: true, result: null })
             return
           }
