@@ -52,12 +52,13 @@ export function MultiPageControlWindow() {
           <Button
             size="sm"
             kind="text"
-            ariaLabel="页码"
-            title="页码"
+            ariaLabel="页面缩略图查看菜单"
+            title="页面缩略图查看菜单"
+            onClick={() => postCommand('app.togglePageThumbnailsMenu', {}).catch(() => undefined)}
             style={{
               height: 40,
               minWidth: 86,
-              cursor: 'default',
+              cursor: 'pointer',
               fontWeight: 600,
               fontVariantNumeric: 'tabular-nums'
             }}

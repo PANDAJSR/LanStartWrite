@@ -54,6 +54,11 @@ export const WHITEBOARD_BG_COLOR_UI_STATE_KEY = 'whiteboardBgColor'
 export const WHITEBOARD_BG_IMAGE_URL_KV_KEY = 'whiteboard-bg-image-url'
 export const WHITEBOARD_BG_IMAGE_URL_UI_STATE_KEY = 'whiteboardBgImageUrl'
 
+export const WHITEBOARD_BG_IMAGE_OPACITY_KV_KEY = 'whiteboard-bg-image-opacity'
+export const WHITEBOARD_BG_IMAGE_OPACITY_UI_STATE_KEY = 'whiteboardBgImageOpacity'
+
+export const WHITEBOARD_CANVAS_PAGES_KV_KEY = 'whiteboard-canvas-pages'
+
 export const NOTICE_KIND_UI_STATE_KEY = 'noticeKind'
 
 export type LeaferRendererEngine = 'canvas2d' | 'svg' | 'webgl' | 'webgpu'
