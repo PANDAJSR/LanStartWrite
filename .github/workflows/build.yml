@@ -132,7 +132,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: dist-win-${{ needs.parse.outputs.version }}
-          path: dist/*.exe
+          path: dist/*.appx
 
   build_mac:
     needs: parse

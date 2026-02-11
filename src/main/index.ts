@@ -2317,9 +2317,13 @@ function startBackend(): void {
       }
     }
   } else {
-    const backendEntry = join(__dirname, '..', 'elysia', 'index.js')
+    const appPath = app.getAppPath()
+    const unpackedAppPath = appPath.replace('app.asar', 'app.asar.unpacked')
+    const backendEntryUnpacked = join(unpackedAppPath, 'out', 'elysia', 'index.js')
+    const backendEntryPacked = join(appPath, 'out', 'elysia', 'index.js')
+    const backendEntry = existsSync(backendEntryUnpacked) ? backendEntryUnpacked : backendEntryPacked
     backendProcess = spawn(process.execPath, [backendEntry], {
-      cwd: join(__dirname, '..'),
+      cwd: existsSync(unpackedAppPath) ? unpackedAppPath : process.resourcesPath,
       env: { ...env, ELECTRON_RUN_AS_NODE: '1' },
       stdio: ['pipe', 'pipe', 'pipe']
     })

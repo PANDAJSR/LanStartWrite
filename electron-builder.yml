@@ -8,6 +8,8 @@ files:
   - package.json
 asarUnpack:
   - "**/*.node"
+  - out/elysia/**/*
+  - out/LeavelDB/**/*
 npmRebuild: false
 extraResources:
   - from: iconpack/LanStartWrite.png
@@ -16,8 +18,12 @@ publish:
   provider: github
 win:
   target:
-    - target: portable
+    - target: appx
       arch:
         - x64
   icon: LanStartWrite.png
   signAndEditExecutable: false
+appx:
+  applicationId: LanStartWrite
+  identityName: LanStart.LanStartWrite
+  publisherDisplayName: LanStart
