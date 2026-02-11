@@ -49,6 +49,14 @@ const TabIcons: Record<SettingsTab, React.ReactNode> = {
       <path d="M12 18v2" />
     </svg>
   ),
+  'video-show': (
+    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.5">
+      <rect x="3" y="6" width="18" height="12" rx="2" />
+      <path d="M8 18h8" />
+      <path d="M12 6V4" />
+      <path d="M9 4h6" />
+    </svg>
+  ),
   'lanstart-bar': (
     <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.5">
       <rect x="2" y="6" width="20" height="12" rx="2" />
@@ -73,6 +81,7 @@ const tabs: SettingsTabItem[] = [
   { id: 'feature-panel', label: '功能面板', icon: TabIcons['feature-panel'] },
   { id: 'annotation', label: '批注系统', icon: TabIcons.annotation },
   { id: 'whiteboard', label: '白板', icon: TabIcons.whiteboard },
+  { id: 'video-show', label: '视频展台', icon: TabIcons['video-show'] },
   { id: 'lanstart-bar', label: 'LanStartBar', icon: TabIcons['lanstart-bar'] },
   { id: 'about', label: '关于', icon: TabIcons.about },
 ]

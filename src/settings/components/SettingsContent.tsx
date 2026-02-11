@@ -2,11 +2,14 @@ import React from 'react'
 import { Box, Select, Switch } from '@mantine/core'
 import { motion } from '../../Framer_Motion'
 import {
+  APP_MODE_UI_STATE_KEY,
   LEAFER_SETTINGS_KV_KEY,
   LEAFER_SETTINGS_UI_STATE_KEY,
   TOOLBAR_STATE_KEY,
   TOOLBAR_STATE_UI_STATE_KEY,
   UI_STATE_APP_WINDOW_ID,
+  VIDEO_SHOW_MERGE_LAYERS_KV_KEY,
+  VIDEO_SHOW_MERGE_LAYERS_UI_STATE_KEY,
   WHITEBOARD_BG_COLOR_KV_KEY,
   WHITEBOARD_BG_COLOR_UI_STATE_KEY,
   WHITEBOARD_BG_IMAGE_OPACITY_UI_STATE_KEY,
@@ -1463,12 +1466,59 @@ function AboutSettings() {
   )
 }
 
+function VideoShowSettings() {
+  const bus = useUiStateBus(UI_STATE_APP_WINDOW_ID)
+  const mode = bus.state[APP_MODE_UI_STATE_KEY]
+
+  const [mergeLayers, setMergeLayers] = usePersistedState<boolean>(VIDEO_SHOW_MERGE_LAYERS_KV_KEY, true, {
+    validate: (v): v is boolean => typeof v === 'boolean'
+  })
+
+  const persistMergeLayers = (next: boolean) => {
+    setMergeLayers(next)
+    void (async () => {
+      try {
+        await putKv(VIDEO_SHOW_MERGE_LAYERS_KV_KEY, next)
+      } catch {
+        return
+      }
+      try {
+        await putUiStateKey(UI_STATE_APP_WINDOW_ID, VIDEO_SHOW_MERGE_LAYERS_UI_STATE_KEY, next)
+      } catch {
+        return
+      }
+    })()
+  }
+
+  const disabled = mode !== 'video-show'
+
+  return (
+    <div className="settingsContentSection">
+      <h2 className="settingsContentTitle">视频展台</h2>
+      <p className="settingsContentDescription">配置视频展台模式下的画面与批注设置</p>
+
+      <div className="settingsFormCard">
+        <div className="settingsFormTitle">图像与批注层</div>
+        <div className="settingsFormDescription">仅在进入视频展台模式后生效</div>
+        <Switch
+          checked={mergeLayers}
+          onChange={(e) => persistMergeLayers(e.currentTarget.checked)}
+          label="合并图像与批注层"
+          size="md"
+          disabled={disabled}
+        />
+      </div>
+    </div>
+  )
+}
+
 const contentComponents: Record<SettingsTab, React.FC> = {
   appearance: AppearanceSettings,
   toolbar: ToolbarSettings,
   'feature-panel': FeaturePanelSettings,
   annotation: AnnotationSettings,
   whiteboard: WhiteboardSettings,
+  'video-show': VideoShowSettings,
   'lanstart-bar': LanStartBarSettings,
   about: AboutSettings,
 }

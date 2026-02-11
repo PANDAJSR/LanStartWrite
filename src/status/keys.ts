@@ -65,6 +65,11 @@ export const VIDEO_SHOW_LIVE_THUMB_UI_STATE_KEY = 'videoShowLiveThumb'
 export const VIDEO_SHOW_DEVICE_ID_UI_STATE_KEY = 'videoShowDeviceId'
 export const VIDEO_SHOW_QUALITY_UI_STATE_KEY = 'videoShowQuality'
 export const VIDEO_SHOW_QUALITY_PRESETS_UI_STATE_KEY = 'videoShowQualityPresets'
+export const VIDEO_SHOW_VIEW_UI_STATE_KEY = 'videoShowView'
+export const VIDEO_SHOW_MERGE_LAYERS_KV_KEY = 'video-show-merge-layers'
+export const VIDEO_SHOW_MERGE_LAYERS_UI_STATE_KEY = 'videoShowMergeLayers'
+
+export type VideoShowViewTransform = { x: number; y: number; scale: number; rot: number }
 
 export const NOTICE_KIND_UI_STATE_KEY = 'noticeKind'
 

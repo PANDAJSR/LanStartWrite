@@ -6,9 +6,12 @@ import {
   VIDEO_SHOW_CAPTURE_REV_UI_STATE_KEY,
   VIDEO_SHOW_DEVICE_ID_UI_STATE_KEY,
   VIDEO_SHOW_LIVE_THUMB_UI_STATE_KEY,
+  VIDEO_SHOW_MERGE_LAYERS_KV_KEY,
+  VIDEO_SHOW_MERGE_LAYERS_UI_STATE_KEY,
   VIDEO_SHOW_PAGES_KV_KEY,
   VIDEO_SHOW_QUALITY_UI_STATE_KEY,
   VIDEO_SHOW_QUALITY_PRESETS_UI_STATE_KEY,
+  VIDEO_SHOW_VIEW_UI_STATE_KEY,
   getKv,
   putKv,
   useUiStateBus
@@ -140,6 +143,7 @@ async function captureVideoFrameToJpegDataUrlAsync(
 
 export function VideoShowBackgroundApp() {
   const videoRef = useRef<HTMLVideoElement | null>(null)
+  const renderCanvasRef = useRef<HTMLCanvasElement | null>(null)
   const captureCanvasRef = useRef<HTMLCanvasElement | null>(null)
   const liveThumbCanvasRef = useRef<HTMLCanvasElement | null>(null)
   const liveThumbBusyRef = useRef(false)
@@ -156,10 +160,58 @@ export function VideoShowBackgroundApp() {
   const { index, total } = useMemo(() => coercePageIndexTotal(pageIndexRaw, pageTotalRaw), [pageIndexRaw, pageTotalRaw])
   const photoTotal = Math.max(0, total - 1)
 
+  const viewRaw = bus.state[VIDEO_SHOW_VIEW_UI_STATE_KEY]
+  const view = useMemo(() => {
+    if (!viewRaw || typeof viewRaw !== 'object') return null
+    const v = viewRaw as any
+    const x = Number(v.x)
+    const y = Number(v.y)
+    const scale = Number(v.scale)
+    const rot = Number(v.rot)
+    if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(scale) || !Number.isFinite(rot)) return null
+    return { x, y, scale: Math.max(0.0001, scale), rot }
+  }, [viewRaw])
+
+  const viewTransform = useMemo(() => {
+    const x = view?.x ?? 0
+    const y = view?.y ?? 0
+    const scale = view?.scale ?? 1
+    const rot = view?.rot ?? 0
+    const cos = Math.cos(rot) * scale
+    const sin = Math.sin(rot) * scale
+    return `matrix(${cos} ${sin} ${-sin} ${cos} ${x} ${y})`
+  }, [view])
+
   const deviceIdRaw = bus.state[VIDEO_SHOW_DEVICE_ID_UI_STATE_KEY]
   const qualityRaw = bus.state[VIDEO_SHOW_QUALITY_UI_STATE_KEY]
   const deviceId = typeof deviceIdRaw === 'string' ? deviceIdRaw : ''
   const qualityIdx = useMemo(() => parseVideoShowQualityIndex(qualityRaw), [qualityRaw])
+
+  const mergeLayersRaw = bus.state[VIDEO_SHOW_MERGE_LAYERS_UI_STATE_KEY]
+  const [mergeLayers, setMergeLayers] = useState(true)
+
+  useEffect(() => {
+    let cancelled = false
+    const run = async () => {
+      try {
+        const loaded = await getKv<unknown>(VIDEO_SHOW_MERGE_LAYERS_KV_KEY)
+        if (cancelled) return
+        if (typeof loaded !== 'boolean') return
+        setMergeLayers(loaded)
+      } catch {
+        return
+      }
+    }
+    void run()
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  useEffect(() => {
+    if (typeof mergeLayersRaw !== 'boolean') return
+    setMergeLayers(mergeLayersRaw)
+  }, [mergeLayersRaw])
 
   const qualityPresetsRaw = bus.state[VIDEO_SHOW_QUALITY_PRESETS_UI_STATE_KEY]
   const qualityPresetsHeights = useMemo(() => {
@@ -398,6 +450,62 @@ export function VideoShowBackgroundApp() {
   const frozenUrl =
     currentPhoto && typeof currentPhoto.imageUrl === 'string' && currentPhoto.imageUrl ? currentPhoto.imageUrl : ''
 
+  useEffect(() => {
+    if (!mergeLayers) return
+    if (status.kind !== 'ready') return
+    if (frozenUrl) return
+
+    const video = videoRef.current
+    const canvas = renderCanvasRef.current
+    if (!video || !canvas) return
+
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return
+
+    let raf = 0
+    let cancelled = false
+
+    const resize = () => {
+      const dpr = typeof window.devicePixelRatio === 'number' && Number.isFinite(window.devicePixelRatio) ? window.devicePixelRatio : 1
+      const w = Math.max(1, Math.floor(window.innerWidth * dpr))
+      const h = Math.max(1, Math.floor(window.innerHeight * dpr))
+      if (canvas.width !== w) canvas.width = w
+      if (canvas.height !== h) canvas.height = h
+    }
+
+    const draw = () => {
+      if (cancelled) return
+      if (video.videoWidth > 1 && video.videoHeight > 1) {
+        const cw = canvas.width
+        const ch = canvas.height
+        const vw = video.videoWidth
+        const vh = video.videoHeight
+        const s = Math.min(cw / vw, ch / vh)
+        const dw = vw * s
+        const dh = vh * s
+        const dx = (cw - dw) / 2
+        const dy = (ch - dh) / 2
+        ctx.setTransform(1, 0, 0, 1, 0, 0)
+        ctx.clearRect(0, 0, cw, ch)
+        ctx.fillStyle = '#000'
+        ctx.fillRect(0, 0, cw, ch)
+        ctx.imageSmoothingEnabled = true
+        ctx.drawImage(video, dx, dy, dw, dh)
+      }
+      raf = requestAnimationFrame(draw)
+    }
+
+    resize()
+    window.addEventListener('resize', resize)
+    raf = requestAnimationFrame(draw)
+
+    return () => {
+      cancelled = true
+      window.removeEventListener('resize', resize)
+      if (raf) cancelAnimationFrame(raf)
+    }
+  }, [frozenUrl, mergeLayers, status.kind])
+
   return (
     <div
       style={{
@@ -408,18 +516,33 @@ export function VideoShowBackgroundApp() {
         overflow: 'hidden'
       }}
     >
-      <video
-        ref={videoRef}
-        muted
-        playsInline
-        style={{
-          width: '100%',
-          height: '100%',
-          objectFit: 'contain',
-          display: status.kind === 'ready' && !frozenUrl ? 'block' : 'none'
-        }}
-      />
-      {frozenUrl ? <img src={frozenUrl} style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block' }} /> : null}
+      <div style={{ position: 'absolute', inset: 0, transform: viewTransform, transformOrigin: '0 0' }}>
+        <video
+          ref={videoRef}
+          muted
+          playsInline
+          style={{
+            width: mergeLayers ? 1 : '100%',
+            height: mergeLayers ? 1 : '100%',
+            objectFit: 'contain',
+            position: mergeLayers ? 'absolute' : 'static',
+            left: mergeLayers ? -10000 : undefined,
+            top: mergeLayers ? 0 : undefined,
+            opacity: mergeLayers ? 0 : 1,
+            pointerEvents: 'none',
+            display: status.kind === 'ready' && !frozenUrl ? 'block' : 'none'
+          }}
+        />
+        <canvas
+          ref={renderCanvasRef}
+          style={{
+            width: '100%',
+            height: '100%',
+            display: status.kind === 'ready' && !frozenUrl && mergeLayers ? 'block' : 'none'
+          }}
+        />
+        {frozenUrl ? <img src={frozenUrl} style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block' }} /> : null}
+      </div>
       {overlayText ? (
         <div
           style={{

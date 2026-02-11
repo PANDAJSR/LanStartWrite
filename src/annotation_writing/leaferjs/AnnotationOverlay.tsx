@@ -18,12 +18,14 @@ import {
   TOOL_UI_STATE_KEY,
   UNDO_REV_UI_STATE_KEY,
   UI_STATE_APP_WINDOW_ID,
+  VIDEO_SHOW_VIEW_UI_STATE_KEY,
   getKv,
   putKv,
   putUiStateKey,
   isLeaferSettings,
   postCommand,
   type LeaferSettings,
+  type VideoShowViewTransform,
   useUiStateBus
 } from '../../status'
 
@@ -172,6 +174,11 @@ const DEFAULT_LEAFER_SETTINGS: LeaferSettings = {
 export function AnnotationOverlayApp() {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const bus = useUiStateBus(UI_STATE_APP_WINDOW_ID)
+  const setUiStateKeyRef = useRef(bus.setKey)
+
+  useEffect(() => {
+    setUiStateKeyRef.current = bus.setKey
+  }, [bus.setKey])
 
   const tool = bus.state[TOOL_UI_STATE_KEY] === 'pen' ? 'pen' : bus.state[TOOL_UI_STATE_KEY] === 'eraser' ? 'eraser' : 'mouse'
   const penType = bus.state[PEN_TYPE_UI_STATE_KEY] === 'highlighter' ? 'highlighter' : bus.state[PEN_TYPE_UI_STATE_KEY] === 'laser' ? 'laser' : 'writing'
@@ -1660,12 +1667,25 @@ struct VSOut {
       let camX = 0
       let camY = 0
       let camScale = 1
+      let camRot = 0
+
+      let lastVideoShowViewKey = ''
+      const publishVideoShowView = () => {
+        if (appMode !== 'video-show') return
+        const payload: VideoShowViewTransform = { x: camX, y: camY, scale: camScale, rot: camRot }
+        const k = `${Math.round(camX * 1000)},${Math.round(camY * 1000)},${Math.round(camScale * 10000)},${Math.round(camRot * 100000)}`
+        if (k === lastVideoShowViewKey) return
+        lastVideoShowViewKey = k
+        setUiStateKeyRef.current(VIDEO_SHOW_VIEW_UI_STATE_KEY, payload).catch(() => undefined)
+      }
 
       const applyCamera = () => {
         ;(leafer as any).x = camX
         ;(leafer as any).y = camY
         ;(leafer as any).scaleX = camScale
         ;(leafer as any).scaleY = camScale
+        ;(leafer as any).rotation = (camRot * 180) / Math.PI
+        publishVideoShowView()
         try {
           ;(leafer as any).forceRender?.()
         } catch {}
@@ -1679,8 +1699,13 @@ struct VSOut {
       }
 
       const clientToWorld = (cx: number, cy: number) => {
-        const x = (cx - camX) / Math.max(0.0001, camScale)
-        const y = (cy - camY) / Math.max(0.0001, camScale)
+        const dx = cx - camX
+        const dy = cy - camY
+        const s = Math.max(0.0001, camScale)
+        const cos = Math.cos(camRot)
+        const sin = Math.sin(camRot)
+        const x = (dx * cos + dy * sin) / s
+        const y = (-dx * sin + dy * cos) / s
         return { x, y }
       }
 
@@ -1933,7 +1958,17 @@ struct VSOut {
         | { kind: 'pan'; pointerId: number; startCx: number; startCy: number; startX: number; startY: number }
         | { kind: 'lasso'; pointerId: number; points: number[] }
         | { kind: 'transform'; pointerId: number; mode: 'move' | 'scale' | 'rotate'; startX: number; startY: number; centerX: number; centerY: number; before: number[][]; baseAngle: number; baseDist: number }
-        | { kind: 'pinch'; target: 'camera'; ids: [number, number]; startDist: number; startScale: number; anchorWorldX: number; anchorWorldY: number }
+        | {
+            kind: 'pinch'
+            target: 'camera'
+            ids: [number, number]
+            startDist: number
+            startScale: number
+            startAngle: number
+            startRot: number
+            anchorWorldX: number
+            anchorWorldY: number
+          }
         | { kind: 'pinch'; target: 'selection'; ids: [number, number]; startDist: number; startAngle: number; startMidX: number; startMidY: number; before: number[][] }
         | { kind: 'none' }
       let mouseToolOp: MouseToolOp = { kind: 'none' }
@@ -2054,6 +2089,7 @@ struct VSOut {
         const mid = clientToWorld(cx, cy)
         const dist = Math.max(1e-6, Math.hypot(p2.cx - p1.cx, p2.cy - p1.cy))
         const ang = Math.atan2(w2.y - w1.y, w2.x - w1.x)
+        const clientAng = Math.atan2(p2.cy - p1.cy, p2.cx - p1.cx)
 
         if (selection) {
           const pad = 10 / Math.max(0.2, camScale)
@@ -2070,7 +2106,17 @@ struct VSOut {
           }
         }
 
-        mouseToolOp = { kind: 'pinch', target: 'camera', ids, startDist: dist, startScale: camScale, anchorWorldX: mid.x, anchorWorldY: mid.y }
+        mouseToolOp = {
+          kind: 'pinch',
+          target: 'camera',
+          ids,
+          startDist: dist,
+          startScale: camScale,
+          startAngle: clientAng,
+          startRot: camRot,
+          anchorWorldX: mid.x,
+          anchorWorldY: mid.y
+        }
       }
 
       const updatePinch = () => {
@@ -2086,9 +2132,13 @@ struct VSOut {
 
         if (mouseToolOp.target === 'camera') {
           const nextScale = clamp(mouseToolOp.startScale * factor, 0.2, 6)
+          const nextRot = appMode === 'video-show' ? mouseToolOp.startRot + (Math.atan2(p2.cy - p1.cy, p2.cx - p1.cx) - mouseToolOp.startAngle) : mouseToolOp.startRot
           camScale = nextScale
-          camX = cx - mouseToolOp.anchorWorldX * camScale
-          camY = cy - mouseToolOp.anchorWorldY * camScale
+          camRot = nextRot
+          const cos = Math.cos(camRot)
+          const sin = Math.sin(camRot)
+          camX = cx - camScale * (mouseToolOp.anchorWorldX * cos - mouseToolOp.anchorWorldY * sin)
+          camY = cy - camScale * (mouseToolOp.anchorWorldX * sin + mouseToolOp.anchorWorldY * cos)
           applyCamera()
           updateSelectionOverlays()
           try {
@@ -2253,6 +2303,10 @@ struct VSOut {
               startPinch(ids)
               return
             }
+            if (appMode === 'video-show') {
+              mouseToolOp = { kind: 'pan', pointerId: e.pointerId, startCx: cx, startCy: cy, startX: camX, startY: camY }
+              return
+            }
             const { x, y } = clientToWorld(cx, cy)
             mouseToolOp = { kind: 'lasso', pointerId: e.pointerId, points: [x, y, x, y] }
             updateLassoPreview(mouseToolOp.points)
@@ -2266,7 +2320,12 @@ struct VSOut {
           }
 
           if ((e as any).button === 0) {
-            const { x, y } = getPoint(e)
+            const { cx, cy } = getClientPoint(e)
+            if (appMode === 'video-show') {
+              mouseToolOp = { kind: 'pan', pointerId: e.pointerId, startCx: cx, startCy: cy, startX: camX, startY: camY }
+              return
+            }
+            const { x, y } = clientToWorld(cx, cy)
             const pad = 10 / Math.max(0.2, camScale)
             if (selection && isPointInBounds(selection.bounds, x, y, pad)) {
               const mode: 'move' | 'scale' | 'rotate' = e.altKey ? 'rotate' : e.shiftKey ? 'scale' : 'move'
@@ -2832,10 +2891,16 @@ struct VSOut {
         const cx = e.clientX - r.left
         const cy = e.clientY - r.top
         const w = clientToWorld(cx, cy)
-        const factor = e.deltaY > 0 ? 0.9 : 1.1
-        camScale = clamp(camScale * factor, 0.2, 6)
-        camX = cx - w.x * camScale
-        camY = cy - w.y * camScale
+        if (appMode === 'video-show' && e.altKey) {
+          camRot = camRot + (e.deltaY > 0 ? -1 : 1) * 0.06
+        } else {
+          const factor = e.deltaY > 0 ? 0.9 : 1.1
+          camScale = clamp(camScale * factor, 0.2, 6)
+        }
+        const cos = Math.cos(camRot)
+        const sin = Math.sin(camRot)
+        camX = cx - camScale * (w.x * cos - w.y * sin)
+        camY = cy - camScale * (w.x * sin + w.y * cos)
         applyCamera()
         updateSelectionOverlays()
         clearLassoPreview()
@@ -2965,6 +3030,17 @@ struct VSOut {
     let camX = 0
     let camY = 0
     let camScale = 1
+    let camRot = 0
+
+    let lastVideoShowViewKey = ''
+    const publishVideoShowView = () => {
+      if (appMode !== 'video-show') return
+      const payload: VideoShowViewTransform = { x: camX, y: camY, scale: camScale, rot: camRot }
+      const k = `${Math.round(camX * 1000)},${Math.round(camY * 1000)},${Math.round(camScale * 10000)},${Math.round(camRot * 100000)}`
+      if (k === lastVideoShowViewKey) return
+      lastVideoShowViewKey = k
+      setUiStateKeyRef.current(VIDEO_SHOW_VIEW_UI_STATE_KEY, payload).catch(() => undefined)
+    }
 
     const rgbaFromHex = (hex: string, opacity: number): [number, number, number, number] => {
       const parsed = parseHexColor(hex)
@@ -3357,8 +3433,13 @@ struct VSOut {
     }
 
     const clientToWorld = (cx: number, cy: number) => {
-      const x = (cx - camX) / Math.max(0.0001, camScale)
-      const y = (cy - camY) / Math.max(0.0001, camScale)
+      const dx = cx - camX
+      const dy = cy - camY
+      const s = Math.max(0.0001, camScale)
+      const cos = Math.cos(camRot)
+      const sin = Math.sin(camRot)
+      const x = (dx * cos + dy * sin) / s
+      const y = (-dx * sin + dy * cos) / s
       return { x, y }
     }
 
@@ -3512,15 +3593,17 @@ struct VSOut {
           }
           return
         }
-        const needsCamera = camX !== 0 || camY !== 0 || camScale !== 1
+        const needsCamera = camX !== 0 || camY !== 0 || camScale !== 1 || camRot !== 0
         const nodes: DrawNode[] = order.slice()
         const screenNodes: DrawNode[] | null = needsCamera
           ? nodes.map((n) => {
               const pts = n.points
               const out = new Array<number>(pts.length)
+              const cos = Math.cos(camRot)
+              const sin = Math.sin(camRot)
               for (let i = 0; i + 1 < pts.length; i += 2) {
-                out[i] = pts[i] * camScale + camX
-                out[i + 1] = pts[i + 1] * camScale + camY
+                out[i] = (pts[i] * cos - pts[i + 1] * sin) * camScale + camX
+                out[i + 1] = (pts[i] * sin + pts[i + 1] * cos) * camScale + camY
               }
               return { ...n, strokeWidth: n.strokeWidth * camScale, points: out }
             })
@@ -3793,7 +3876,17 @@ struct VSOut {
       | { kind: 'pan'; pointerId: number; startCx: number; startCy: number; startX: number; startY: number }
       | { kind: 'lasso'; pointerId: number; points: number[] }
       | { kind: 'transform'; pointerId: number; mode: 'move' | 'scale' | 'rotate'; startX: number; startY: number; centerX: number; centerY: number; before: number[][]; baseAngle: number; baseDist: number }
-      | { kind: 'pinch'; target: 'camera'; ids: [number, number]; startDist: number; startScale: number; anchorWorldX: number; anchorWorldY: number }
+      | {
+          kind: 'pinch'
+          target: 'camera'
+          ids: [number, number]
+          startDist: number
+          startScale: number
+          startAngle: number
+          startRot: number
+          anchorWorldX: number
+          anchorWorldY: number
+        }
       | { kind: 'pinch'; target: 'selection'; ids: [number, number]; startDist: number; startAngle: number; startMidX: number; startMidY: number; before: number[][] }
       | { kind: 'none' }
     let mouseToolOp: MouseToolOp = { kind: 'none' }
@@ -3802,9 +3895,12 @@ struct VSOut {
     const isPointInBounds = (b: Selection['bounds'], x: number, y: number, pad: number) => x >= b.minX - pad && x <= b.maxX + pad && y >= b.minY - pad && y <= b.maxY + pad
 
     const applyCamera = () => {
-      const t = `matrix(${camScale} 0 0 ${camScale} ${camX} ${camY})`
+      const cos = Math.cos(camRot) * camScale
+      const sin = Math.sin(camRot) * camScale
+      const t = `matrix(${cos} ${sin} ${-sin} ${cos} ${camX} ${camY})`
       if (svgLayer) svgLayer.setAttribute('transform', t)
       overlayLayer.setAttribute('transform', t)
+      publishVideoShowView()
       updateSelectionOverlays()
       if (mouseToolOp.kind === 'lasso') updateLassoPreview(mouseToolOp.points)
       requestRender()
@@ -3896,6 +3992,7 @@ struct VSOut {
       const mid = clientToWorld(cx, cy)
       const dist = Math.max(1e-6, Math.hypot(p2.cx - p1.cx, p2.cy - p1.cy))
       const ang = Math.atan2(w2.y - w1.y, w2.x - w1.x)
+      const clientAng = Math.atan2(p2.cy - p1.cy, p2.cx - p1.cx)
 
       if (selection) {
         const pad = 10 / Math.max(0.2, camScale)
@@ -3908,7 +4005,17 @@ struct VSOut {
         }
       }
 
-      mouseToolOp = { kind: 'pinch', target: 'camera', ids, startDist: dist, startScale: camScale, anchorWorldX: mid.x, anchorWorldY: mid.y }
+      mouseToolOp = {
+        kind: 'pinch',
+        target: 'camera',
+        ids,
+        startDist: dist,
+        startScale: camScale,
+        startAngle: clientAng,
+        startRot: camRot,
+        anchorWorldX: mid.x,
+        anchorWorldY: mid.y
+      }
     }
 
     const updatePinch = () => {
@@ -3924,9 +4031,13 @@ struct VSOut {
 
       if (mouseToolOp.target === 'camera') {
         const nextScale = clamp(mouseToolOp.startScale * factor, 0.2, 6)
+        const nextRot = appMode === 'video-show' ? mouseToolOp.startRot + (Math.atan2(p2.cy - p1.cy, p2.cx - p1.cx) - mouseToolOp.startAngle) : mouseToolOp.startRot
         camScale = nextScale
-        camX = cx - mouseToolOp.anchorWorldX * camScale
-        camY = cy - mouseToolOp.anchorWorldY * camScale
+        camRot = nextRot
+        const cos = Math.cos(camRot)
+        const sin = Math.sin(camRot)
+        camX = cx - camScale * (mouseToolOp.anchorWorldX * cos - mouseToolOp.anchorWorldY * sin)
+        camY = cy - camScale * (mouseToolOp.anchorWorldX * sin + mouseToolOp.anchorWorldY * cos)
         applyCamera()
         return
       }
@@ -3973,6 +4084,10 @@ struct VSOut {
             startPinch(ids)
             return
           }
+          if (appMode === 'video-show') {
+            mouseToolOp = { kind: 'pan', pointerId: e.pointerId, startCx: cx, startCy: cy, startX: camX, startY: camY }
+            return
+          }
           const { x, y } = clientToWorld(cx, cy)
           mouseToolOp = { kind: 'lasso', pointerId: e.pointerId, points: [x, y, x, y] }
           updateLassoPreview(mouseToolOp.points)
@@ -3986,7 +4101,12 @@ struct VSOut {
         }
 
         if ((e as any).button === 0) {
-          const { x, y } = getPoint(e)
+          const { cx, cy } = getClientPoint(e)
+          if (appMode === 'video-show') {
+            mouseToolOp = { kind: 'pan', pointerId: e.pointerId, startCx: cx, startCy: cy, startX: camX, startY: camY }
+            return
+          }
+          const { x, y } = clientToWorld(cx, cy)
           const pad = 10 / Math.max(0.2, camScale)
           if (selection && isPointInBounds(selection.bounds, x, y, pad)) {
             const mode: 'move' | 'scale' | 'rotate' = e.altKey ? 'rotate' : e.shiftKey ? 'scale' : 'move'
@@ -4458,10 +4578,16 @@ struct VSOut {
       const cx = e.clientX - r.left
       const cy = e.clientY - r.top
       const w = clientToWorld(cx, cy)
-      const factor = e.deltaY > 0 ? 0.9 : 1.1
-      camScale = clamp(camScale * factor, 0.2, 6)
-      camX = cx - w.x * camScale
-      camY = cy - w.y * camScale
+      if (appMode === 'video-show' && e.altKey) {
+        camRot = camRot + (e.deltaY > 0 ? -1 : 1) * 0.06
+      } else {
+        const factor = e.deltaY > 0 ? 0.9 : 1.1
+        camScale = clamp(camScale * factor, 0.2, 6)
+      }
+      const cos = Math.cos(camRot)
+      const sin = Math.sin(camRot)
+      camX = cx - camScale * (w.x * cos - w.y * sin)
+      camY = cy - camScale * (w.x * sin + w.y * cos)
       applyCamera()
       clearLassoPreview()
     }
